@@ -22,6 +22,7 @@ COMMENT_VIEW_INTERNAL = "issue.comment.view_internal"
 WORKLOG_ADD = "issue.worklog.add"
 WORKLOG_EDIT_ANY = "issue.worklog.edit_any"
 SECURITY_LEVEL_SET = "issue.security_level.set"
+BOARD_MANAGE = "issue.board.manage"
 WORKFLOW_MANAGE = "issue.workflow.manage"
 FIELD_MANAGE = "issue.field.manage"
 
@@ -43,6 +44,7 @@ registry.register_many(
         PermissionDef(WORKLOG_ADD, PROJECT, "작업 로그 기록"),
         PermissionDef(WORKLOG_EDIT_ANY, PROJECT, "타인의 작업 로그 수정"),
         PermissionDef(SECURITY_LEVEL_SET, PROJECT, "이슈 보안 레벨 지정"),
+        PermissionDef(BOARD_MANAGE, PROJECT, "보드 정의 편집"),
         # 워크플로우·필드 정의 변경은 프로젝트 전체 동작을 바꾼다.
         PermissionDef(WORKFLOW_MANAGE, GLOBAL, "워크플로우 정의 변경", requires_step_up=True),
         PermissionDef(FIELD_MANAGE, GLOBAL, "커스텀 필드 정의 변경", requires_step_up=True),
@@ -65,6 +67,7 @@ ALL = (
     WORKLOG_ADD,
     WORKLOG_EDIT_ANY,
     SECURITY_LEVEL_SET,
+    BOARD_MANAGE,
     WORKFLOW_MANAGE,
     FIELD_MANAGE,
 )

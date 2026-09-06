@@ -68,7 +68,7 @@ fmt: ## 자동 포맷
 
 .PHONY: typecheck
 typecheck: ## mypy --strict + tsc
-	$(UV) mypy $(API)/src
+	$(UV) mypy --config-file $(API)/pyproject.toml $(API)/src
 	pnpm -r --if-present typecheck
 
 .PHONY: test

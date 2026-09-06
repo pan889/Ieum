@@ -434,3 +434,30 @@ class SavedFilter(Entity):
         UniqueConstraint("owner_id", "name", name="uq_saved_filter_owner_id_name"),
         Index("ix_saved_filter_shared", "is_shared", postgresql_where=text("is_shared")),
     )
+
+
+class Board(Entity):
+    """칸반 보드.
+
+    **컬럼은 IQL 로 정의한다** (D-44). 상태 목록을 따로 들고 있으면 보드가
+    또 하나의 필터 포맷이 되고, 워크플로우가 바뀔 때 두 곳을 고쳐야 한다.
+    """
+
+    __tablename__ = "board"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: [{"name": "진행 중", "iql": "statusCategory = in_progress", "wip_limit": 3}]
+    columns: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    #: 스윔레인 기준 필드 이름. NULL 이면 레인 없이 한 줄.
+    swimlane_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: 보드가 다루는 이슈 범위. 컬럼 IQL 과 AND 로 묶인다.
+    base_iql: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_board_project_id_name"),
+        Index("ix_board_project_id", "project_id"),
+    )

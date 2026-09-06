@@ -21,6 +21,7 @@ from ieum.modules.identity.models import (
     UserSession,
 )
 from ieum.modules.issues.models import (
+    Board,
     FieldDefinition,
     Issue,
     IssueCategory,
@@ -58,6 +59,7 @@ __all__ = [
     "ApiToken",
     "AuditLog",
     "Base",
+    "Board",
     "EntityLink",
     "FieldDefinition",
     "GroupMember",

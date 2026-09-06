@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy import (
     ColumnElement,
     Select,
+    SQLColumnExpression,
     and_,
     exists,
     literal,
@@ -292,7 +293,7 @@ class Compiler:
 
     def _apply(
         self,
-        column: Any,
+        column: SQLColumnExpression[Any],
         node: Comparison,
         values: list[Any],
         *,
@@ -484,7 +485,7 @@ class Compiler:
 
 
 #: 필드 이름 → Issue 컬럼. 화이트리스트이므로 getattr 로 임의 접근하지 않는다.
-_COLUMNS: dict[str, Any] = {
+_COLUMNS: dict[str, SQLColumnExpression[Any]] = {
     "key": Issue.key_seq,
     "summary": Issue.summary,
     "description": Issue.description,
@@ -501,7 +502,7 @@ _COLUMNS: dict[str, Any] = {
 }
 
 
-def _column(name: str) -> Any:
+def _column(name: str) -> SQLColumnExpression[Any]:
     return _COLUMNS[name]
 
 

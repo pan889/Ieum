@@ -14,15 +14,18 @@ from ieum.modules.issues.schemas import (
     CommentCreateRequest,
     CommentResponse,
     CommentUpdateRequest,
+    FieldDefinitionResponse,
     HistoryEntryResponse,
     IssueCreateRequest,
     IssuePageResponse,
     IssueResponse,
     IssueSummaryResponse,
+    IssueTypeResponse,
     IssueUpdateRequest,
     LinkRequest,
     TransitionRequest,
     TransitionResponse,
+    WorkflowStateResponse,
 )
 from ieum.modules.issues.service import (
     CommentService,
@@ -120,6 +123,45 @@ async def list_issues(
         next_cursor=page.next_cursor,
         total=page.total,
     )
+
+
+@issues_router.get("/types", response_model=list[IssueTypeResponse])
+async def list_issue_types(
+    project_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> list[IssueTypeResponse]:
+    """생성 폼의 유형 선택지."""
+    rows = await IssueService(session, permissions).list_types(actor, project_id)
+    return [IssueTypeResponse.model_validate(r) for r in rows]
+
+
+@issues_router.get("/fields", response_model=list[FieldDefinitionResponse])
+async def list_field_definitions(
+    project_id: UUID,
+    type_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> list[FieldDefinitionResponse]:
+    """이 프로젝트·유형에 뜨는 커스텀 필드."""
+    rows = await IssueService(session, permissions).list_field_definitions(
+        actor, project_id, type_id
+    )
+    return [FieldDefinitionResponse.model_validate(r) for r in rows]
+
+
+@issues_router.get("/states", response_model=list[WorkflowStateResponse])
+async def list_workflow_states(
+    project_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> list[WorkflowStateResponse]:
+    """필터 칩과 보드 컬럼 편집기가 쓰는 상태 목록."""
+    rows = await IssueService(session, permissions).list_workflow_states(actor, project_id)
+    return [WorkflowStateResponse.model_validate(r) for r in rows]
 
 
 @issues_router.get("/by-key/{key}", response_model=IssueResponse)

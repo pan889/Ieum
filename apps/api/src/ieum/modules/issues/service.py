@@ -30,6 +30,7 @@ from ieum.modules.issues import events as issue_events
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.fields import validate_value
 from ieum.modules.issues.models import (
+    FieldDefinition,
     Issue,
     IssueComment,
     IssueLink,
@@ -166,7 +167,7 @@ class IssueService:
             scope=Scope.project(issue.project_id),
             subject=issue,
         )
-        return await self._to_view(issue)
+        return await self.to_view(issue)
 
     async def get_by_key(self, actor: Actor, key: str) -> IssueView:
         """`PROJ-123` 형태의 표시용 키로 조회한다."""
@@ -190,7 +191,7 @@ class IssueService:
             scope=Scope.project(issue.project_id),
             subject=issue,
         )
-        return await self._to_view(issue)
+        return await self.to_view(issue)
 
     async def list_for(
         self,
@@ -204,6 +205,30 @@ class IssueService:
         return await self._issues.list_page(
             request, acl=acl, project_id=project_id, include_archived=include_archived
         )
+
+    async def list_types(self, actor: Actor, project_id: UUID) -> list[IssueType]:
+        """이 프로젝트에서 쓸 수 있는 이슈 유형. 생성 폼이 이걸로 채운다."""
+        await self._perms.require(self._s, actor, perms.ISSUE_VIEW, scope=Scope.project(project_id))
+        return await self._types.available_for(project_id)
+
+    async def list_field_definitions(
+        self, actor: Actor, project_id: UUID, issue_type_id: UUID
+    ) -> list[FieldDefinition]:
+        """이 프로젝트·유형에 뜨는 커스텀 필드 정의."""
+        await self._perms.require(self._s, actor, perms.ISSUE_VIEW, scope=Scope.project(project_id))
+        return await self._definitions.applicable_to(
+            project_id=project_id, issue_type_id=issue_type_id
+        )
+
+    async def list_workflow_states(self, actor: Actor, project_id: UUID) -> list[WorkflowState]:
+        """이 프로젝트에서 등장할 수 있는 상태. 보드 컬럼·필터 칩이 쓴다."""
+        await self._perms.require(self._s, actor, perms.ISSUE_VIEW, scope=Scope.project(project_id))
+        types = await self._types.available_for(project_id)
+        seen: dict[UUID, WorkflowState] = {}
+        for workflow_id in dict.fromkeys(t.workflow_id for t in types):
+            for state in await self._workflows.states_of(workflow_id):
+                seen.setdefault(state.id, state)
+        return sorted(seen.values(), key=lambda s: (s.position, s.name))
 
     # ── 생성 ────────────────────────────────────────────────────
 
@@ -271,7 +296,7 @@ class IssueService:
             await self._labels.replace(issue.id, labels)
         for key, value in validated.items():
             await self._values.set(issue.id, key, value)
-        # autoflush 를 꺼 뒀으므로 아래 _to_view 가 방금 쓴 값을 보려면 직접 밀어야 한다.
+        # autoflush 를 꺼 뒀으므로 아래 to_view 가 방금 쓴 값을 보려면 직접 밀어야 한다.
         await self._s.flush()
 
         issue_key = f"{project.key}-{key_seq}"
@@ -288,7 +313,7 @@ class IssueService:
             ),
         )
         log.info("issue.created", issue_key=issue_key, actor=str(actor.user_id))
-        return await self._to_view(issue)
+        return await self.to_view(issue)
 
     # ── 수정 ────────────────────────────────────────────────────
 
@@ -373,7 +398,7 @@ class IssueService:
                 ),
             )
             await self._s.flush()
-        return await self._to_view(issue)
+        return await self.to_view(issue)
 
     async def archive(self, actor: Actor, issue_id: UUID) -> Issue:
         issue = await self._require_issue(issue_id)
@@ -545,7 +570,7 @@ class IssueService:
                 reporter_id=issue.reporter_id,
             ),
         )
-        return await self._to_view(issue)
+        return await self.to_view(issue)
 
     # ── 관계 ────────────────────────────────────────────────────
 
@@ -754,7 +779,7 @@ class IssueService:
         project = await org.get_project(self._s, issue.project_id)
         return f"{project.key}-{issue.key_seq}" if project else str(issue.key_seq)
 
-    async def _to_view(self, issue: Issue) -> IssueView:
+    async def to_view(self, issue: Issue) -> IssueView:
         state = await self._workflows.state(issue.state_id)
         issue_type = await self._types.get(issue.type_id)
         return IssueView(

@@ -60,6 +60,7 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             issue_perms.WORKLOG_ADD,
             issue_perms.WORKLOG_EDIT_ANY,
             issue_perms.SECURITY_LEVEL_SET,
+            issue_perms.BOARD_MANAGE,
         ),
     ),
     "Project Member": (

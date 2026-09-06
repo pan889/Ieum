@@ -65,7 +65,9 @@ jobs:
           uv run --project apps/api ruff format --check apps/api/src apps/api/tests
 
       - name: mypy --strict
-        run: uv run --project apps/api mypy apps/api/src
+        # --config-file 없이 워크스페이스 루트에서 돌리면 루트 pyproject.toml 이
+        # 잡혀 strict 설정이 통째로 무시된다.
+        run: uv run --project apps/api mypy --config-file apps/api/pyproject.toml apps/api/src
 
       - name: bandit (보안 정적 분석)
         # -ll = medium 이상만 실패. Low 는 assert 와 상수 이름 오탐이라

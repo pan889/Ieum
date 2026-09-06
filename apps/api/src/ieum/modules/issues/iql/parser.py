@@ -83,7 +83,7 @@ def parse(source: str) -> Query:
     except LarkError as exc:  # pragma: no cover - 파서 내부 오류
         raise errors.syntax_error(f"문법 오류: {exc}", offset=0) from exc
 
-    where, order_by = _query(cast(Tree[Token], tree))
+    where, order_by = _query(tree)
     return Query(where=where, order_by=order_by, source=source)
 
 
@@ -110,7 +110,10 @@ def _span(node: Tree[Token] | Token) -> Span:
 def _query(tree: Tree[Token]) -> tuple[Node | None, list[SortKey]]:
     where: Node | None = None
     order_by: list[SortKey] = []
-    for child in tree.children:
+    # lark 타입 스텁은 children 에 None 이 없다고 말하지만, 선택적 규칙
+    # (`order_clause?`) 은 실제로 None 자리를 만든다. 스텁을 믿고 가드를
+    # 지우면 ORDER BY 없는 질의가 전부 깨진다.
+    for child in cast("list[Any]", tree.children):
         if child is None:
             continue
         if isinstance(child, Tree) and child.data == "order_clause":

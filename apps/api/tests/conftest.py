@@ -109,6 +109,12 @@ async def app_client(engine: object, settings: Settings) -> AsyncIterator[httpx.
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
+    # 통합 테스트는 커밋을 하므로 끝나고도 데이터가 남는다. 치우지 않으면
+    # 뒤에 도는 단위 테스트의 "전체 목록" 단언에 남의 행이 섞여 들어간다.
+    async with factory() as s:
+        await _truncate_all(s)
+        await s.commit()
+
 
 async def _truncate_all(session: AsyncSession) -> None:
     """테스트 간 격리. 통합 테스트는 커밋을 하므로 롤백으로는 부족하다."""

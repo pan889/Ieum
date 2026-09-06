@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 from ieum.core.exceptions import ValidationError
@@ -31,7 +31,7 @@ def _register(kind: str) -> Callable[[Validator], Validator]:
     return decorator
 
 
-def _fail(message: str, **details: Any) -> None:
+def _fail(message: str, **details: Any) -> NoReturn:
     raise ValidationError(message, code="issues.invalid_field_value", details=details)
 
 
@@ -114,7 +114,6 @@ def _version(value: Any, _config: dict[str, Any]) -> str:
 def _bool(value: Any, _config: dict[str, Any]) -> bool:
     if not isinstance(value, bool):
         _fail("true/false 여야 한다.", got=type(value).__name__)
-    assert isinstance(value, bool)
     return value
 
 

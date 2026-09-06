@@ -37,7 +37,6 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_seed()
         case _:  # pragma: no cover
             parser.error(f"알 수 없는 명령: {args.command}")
-            return 2
 
 
 if __name__ == "__main__":

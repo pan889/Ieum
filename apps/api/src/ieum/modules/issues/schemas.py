@@ -144,3 +144,24 @@ class FieldDefinitionResponse(BaseModel):
     config: dict[str, Any]
     is_required: bool
     position: int
+
+
+class IssueTypeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    icon: str | None
+    is_subtask: bool
+    workflow_id: UUID
+    position: int
+
+
+class WorkflowStateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    category: str
+    position: int
+    is_initial: bool
