@@ -738,3 +738,40 @@ class TestValidateApi:
         assert result.error is not None
         assert result.error["code"] == "iql.unknown_field"
         assert "offset" in result.error
+
+
+class TestFilterChipShapes:
+    """프론트 필터 칩이 만들어 내는 질의 모양.
+
+    칩 → IQL 변환은 웹에 있고 문법은 여기 있다. 둘이 갈라지면 사용자는
+    필터를 켜는 순간 422 를 본다. 그 조합을 여기서 고정한다
+    (apps/web/src/features/issues/iql.ts 와 짝).
+    """
+
+    @pytest.mark.parametrize(
+        "iql",
+        [
+            'project = "ENG"',
+            'statusCategory = "todo"',
+            'statusCategory IN ("todo", "done")',
+            'type = "Task"',
+            'type IN ("Task", "Bug")',
+            "priority = 1",
+            "priority IN (1, 2)",
+            "assignee = currentUser()",
+            "assignee IS EMPTY",
+            'assignee = "01a07619-e13a-751c-96f4-079a061f393f"',
+            'summary ~ "login"',
+            'project = "ENG" AND statusCategory = "in_progress"'
+            ' AND assignee = currentUser() AND summary ~ "login"',
+        ],
+    )
+    def test_chip_query_compiles(self, iql: str) -> None:
+        from ieum.modules.issues.iql.compiler import compile_query
+
+        compile_query(
+            parse(iql),
+            acl=Acl(permission=perms.ISSUE_VIEW, is_global=True),
+            ctx=FunctionContext(actor_id=new_id()),
+            project_ids={"ENG": new_id()},
+        )

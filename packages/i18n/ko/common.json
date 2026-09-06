@@ -13,6 +13,7 @@
   "state.error": "문제가 발생했습니다",
   "nav.projects": "프로젝트",
   "nav.issues": "이슈",
+  "nav.boards": "보드",
   "nav.wiki": "위키",
   "nav.desk": "서비스데스크",
   "nav.settings": "설정",

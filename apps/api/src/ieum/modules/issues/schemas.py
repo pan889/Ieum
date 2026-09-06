@@ -28,7 +28,12 @@ class IssueUpdateRequest(BaseModel):
     """부분 수정. 미포함과 null 을 구분한다 (conventions.md API 규약).
 
     `changes` 에 키가 없으면 '건드리지 않음', null 이면 '비움'이다.
+
+    extra="forbid" 다. `{"summary": "..."}` 처럼 changes 를 빼먹은 요청을
+    조용히 무시하면 클라이언트는 200 을 받고 아무것도 안 바뀐 걸 모른다.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     changes: dict[str, Any] = Field(default_factory=dict)
     labels: list[str] | None = None
@@ -83,15 +88,20 @@ class IssueResponse(BaseModel):
 
 
 class IssueSummaryResponse(BaseModel):
-    """목록용. 상세보다 가볍다."""
+    """목록용. 상세보다 가볍다.
 
-    model_config = ConfigDict(from_attributes=True)
+    key 와 상태 이름이 들어 있다 — 클라이언트가 프로젝트·상태 목록을 따로
+    받아 이어 붙이게 하면, 그 목록에 없는 이슈는 키도 상태도 못 그린다.
+    """
 
     id: UUID
+    key: str
     key_seq: int
     project_id: UUID
     summary: str
     state_id: UUID
+    state_name: str
+    state_category: str
     assignee_id: UUID | None
     priority: int
     due_date: date | None

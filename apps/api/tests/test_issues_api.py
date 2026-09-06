@@ -202,3 +202,231 @@ class TestBoardRoutes:
         )
         assert r.status_code == 422, r.text
         assert r.json()["error"]["code"] == "iql.syntax_error"
+
+
+class TestUserDirectory:
+    """담당자 피커가 쓰는 목록. `ids` 로 아는 id 만 이름으로 바꿀 수 있어야 한다."""
+
+    async def test_lists_and_filters_by_ids(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        invited = await app_client.post(
+            f"{BASE}/users/invite",
+            json={"email": f"pick-{secrets.token_hex(4)}@example.com", "display_name": "Picker"},
+            headers=headers,
+        )
+        assert invited.status_code == 201, invited.text
+        target = invited.json()["id"]
+
+        all_users = await app_client.get(f"{BASE}/users", headers=headers)
+        assert all_users.status_code == 200, all_users.text
+        assert target in {u["id"] for u in all_users.json()["items"]}
+
+        only = await app_client.get(f"{BASE}/users", params={"ids": target}, headers=headers)
+        assert only.status_code == 200, only.text
+        assert [u["id"] for u in only.json()["items"]] == [target]
+
+    async def test_search_by_name(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        name = f"Needle{secrets.token_hex(3)}"
+        await app_client.post(
+            f"{BASE}/users/invite",
+            json={"email": f"n-{secrets.token_hex(4)}@example.com", "display_name": name},
+            headers=headers,
+        )
+        r = await app_client.get(f"{BASE}/users", params={"q": name}, headers=headers)
+        assert r.status_code == 200, r.text
+        assert [u["display_name"] for u in r.json()["items"]] == [name]
+
+    async def test_rejects_malformed_ids(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        r = await app_client.get(f"{BASE}/users", params={"ids": "not-a-uuid"}, headers=headers)
+        assert r.status_code == 422, r.text
+
+
+class TestListRowShape:
+    """목록 응답은 화면이 필요한 걸 스스로 담고 있어야 한다.
+
+    key 와 상태 이름을 클라이언트가 별도 목록으로 이어 붙이게 하면, 그
+    목록에 없는 프로젝트의 이슈는 키도 상태도 못 그린다.
+    """
+
+    async def test_summary_carries_key_and_state(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        project = await _project(app_client, headers)
+        types = (
+            await app_client.get(
+                f"{BASE}/issues/types", params={"project_id": project["id"]}, headers=headers
+            )
+        ).json()
+        created = (
+            await app_client.post(
+                f"{BASE}/issues",
+                json={"project_id": project["id"], "type_id": types[0]["id"], "summary": "row"},
+                headers=headers,
+            )
+        ).json()
+
+        listed = await app_client.get(
+            f"{BASE}/issues", params={"project_id": project["id"]}, headers=headers
+        )
+        assert listed.status_code == 200, listed.text
+        row = next(i for i in listed.json()["items"] if i["id"] == created["id"])
+        assert row["key"] == created["key"]
+        assert row["state_name"] == created["state_name"]
+        assert row["state_category"] == "todo"
+
+    async def test_search_rows_match_list_rows(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        project = await _project(app_client, headers)
+        types = (
+            await app_client.get(
+                f"{BASE}/issues/types", params={"project_id": project["id"]}, headers=headers
+            )
+        ).json()
+        await app_client.post(
+            f"{BASE}/issues",
+            json={"project_id": project["id"], "type_id": types[0]["id"], "summary": "searchable"},
+            headers=headers,
+        )
+
+        listed = (
+            await app_client.get(
+                f"{BASE}/issues", params={"project_id": project["id"]}, headers=headers
+            )
+        ).json()["items"]
+        found = (
+            await app_client.post(
+                f"{BASE}/search/issues",
+                json={"iql": f'project = "{project["key"]}"'},
+                headers=headers,
+            )
+        ).json()["items"]
+        assert [i["key"] for i in found] == [i["key"] for i in listed]
+        assert found[0].keys() == listed[0].keys()
+
+
+class TestPatchShape:
+    """PATCH 계약. 조용히 아무것도 안 하는 게 제일 나쁜 실패다."""
+
+    async def _issue(self, client: httpx.AsyncClient, headers: dict[str, str]) -> dict[str, Any]:
+        project = await _project(client, headers)
+        types = (
+            await client.get(
+                f"{BASE}/issues/types", params={"project_id": project["id"]}, headers=headers
+            )
+        ).json()
+        return dict(
+            (
+                await client.post(
+                    f"{BASE}/issues",
+                    json={
+                        "project_id": project["id"],
+                        "type_id": types[0]["id"],
+                        "summary": "before",
+                    },
+                    headers=headers,
+                )
+            ).json()
+        )
+
+    async def test_rejects_fields_outside_changes(self, app_client: httpx.AsyncClient) -> None:
+        """`{"summary": "x"}` 를 200 으로 삼키면 클라이언트는 안 바뀐 걸 모른다."""
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        r = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}", json={"summary": "sneaky"}, headers=headers
+        )
+        assert r.status_code == 422, r.text
+
+    async def test_applies_changes(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        r = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"summary": "after", "priority": 1}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["summary"] == "after"
+        assert r.json()["priority"] == 1
+
+    async def test_null_clears_a_nullable_field(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=headers)).json()
+
+        assigned = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"assignee_id": me["id"]}},
+            headers=headers,
+        )
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()["assignee_id"] == me["id"]
+
+        cleared = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"assignee_id": None}},
+            headers=headers,
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["assignee_id"] is None
+
+    async def test_uuid_arrives_as_a_string_and_is_coerced(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """JSON 에는 UUID 타입이 없다. str 을 그대로 넣으면 같은 값을 다시
+        보내도 '바뀐 것' 으로 기록되고 version 이 계속 올라간다."""
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=headers)).json()
+
+        first = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"assignee_id": me["id"]}},
+            headers=headers,
+        )
+        again = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"assignee_id": me["id"]}},
+            headers=headers,
+        )
+        assert again.json()["version"] == first.json()["version"], "같은 값 재전송은 no-op"
+
+    async def test_rejects_a_malformed_uuid(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        r = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"assignee_id": "not-a-uuid"}},
+            headers=headers,
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "issues.invalid_field_value"
+
+    async def test_rejects_null_on_a_required_field(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        r = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}", json={"changes": {"summary": None}}, headers=headers
+        )
+        assert r.status_code == 422, r.text
+
+    async def test_rejects_bool_as_priority(self, app_client: httpx.AsyncClient) -> None:
+        """bool 은 int 의 서브클래스다. True 가 우선순위 1 이 되면 안 된다."""
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        r = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}", json={"changes": {"priority": True}}, headers=headers
+        )
+        assert r.status_code == 422, r.text
+
+    async def test_accepts_an_iso_date_string(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        r = await app_client.patch(
+            f"{BASE}/issues/{issue['id']}",
+            json={"changes": {"due_date": "2026-12-24"}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["due_date"] == "2026-12-24"

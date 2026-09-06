@@ -1,4 +1,12 @@
-import { ApiClient, createAuthApi, createProjectsApi } from '@ieum/api-client'
+import {
+  ApiClient,
+  createAuthApi,
+  createBoardsApi,
+  createIssuesApi,
+  createProjectsApi,
+  createSearchApi,
+  createUsersApi,
+} from '@ieum/api-client'
 
 import { useAuthStore } from '@/features/auth/store'
 
@@ -12,3 +20,7 @@ export const apiClient = new ApiClient({
 
 export const authApi = createAuthApi(apiClient)
 export const projectsApi = createProjectsApi(apiClient)
+export const issuesApi = createIssuesApi(apiClient)
+export const searchApi = createSearchApi(apiClient)
+export const boardsApi = createBoardsApi(apiClient)
+export const usersApi = createUsersApi(apiClient)

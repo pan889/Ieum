@@ -11,6 +11,7 @@ import { Button } from '@/shared/ui/primitives'
 const NAV = [
   { to: '/projects', labelKey: 'common:nav.projects' },
   { to: '/issues', labelKey: 'common:nav.issues' },
+  { to: '/boards', labelKey: 'common:nav.boards' },
   { to: '/wiki', labelKey: 'common:nav.wiki' },
 ] as const
 

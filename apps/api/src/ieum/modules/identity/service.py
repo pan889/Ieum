@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -36,6 +37,7 @@ from ieum.core.exceptions import (
 from ieum.core.ids import new_id, new_token
 from ieum.core.logging import get_logger
 from ieum.core.outbox import publish
+from ieum.core.pagination import Page, PageRequest
 from ieum.core.time import in_seconds, utcnow
 from ieum.modules.identity import events as identity_events
 from ieum.modules.identity.models import MFACredential, User, UserSession
@@ -556,6 +558,20 @@ class UserService:
             ),
         )
         return user
+
+    async def directory(
+        self,
+        request: PageRequest,
+        *,
+        query: str | None = None,
+        ids: Sequence[UUID] | None = None,
+    ) -> Page[User]:
+        """담당자·멘션 피커가 쓰는 사용자 목록.
+
+        `ids` 를 주면 그 사용자들만 돌려준다 — 목록 화면이 이미 알고 있는
+        담당자 id 를 이름으로 바꿀 때 쓴다. 전체를 훑지 않아도 된다.
+        """
+        return await self._users.list_page(request, query=query, ids=ids)
 
     async def set_password(self, *, user_id: UUID, new_password: str) -> None:
         user = await self._users.get(user_id)

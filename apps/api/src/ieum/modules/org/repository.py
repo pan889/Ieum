@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import Select, select
@@ -43,6 +44,12 @@ class ProjectRepository:
     async def get_by_key(self, key: str) -> Project | None:
         stmt = select(Project).where(Project.key == key.upper())
         return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def get_many(self, project_ids: Sequence[UUID]) -> list[Project]:
+        if not project_ids:
+            return []
+        stmt = select(Project).where(Project.id.in_(project_ids))
+        return list((await self._s.execute(stmt)).scalars().all())
 
     def add(self, project: Project) -> Project:
         self._s.add(project)

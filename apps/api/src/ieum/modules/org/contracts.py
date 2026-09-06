@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -33,6 +34,17 @@ def _to_ref(project: Project) -> ProjectRef:
 async def get_project(session: AsyncSession, project_id: UUID) -> ProjectRef | None:
     project = await ProjectRepository(session).get(project_id)
     return _to_ref(project) if project else None
+
+
+async def get_projects(
+    session: AsyncSession, project_ids: Iterable[UUID]
+) -> dict[UUID, ProjectRef]:
+    """여러 프로젝트를 한 번에. 목록 화면이 행마다 조회하지 않게 한다."""
+    unique = list(dict.fromkeys(project_ids))
+    if not unique:
+        return {}
+    rows = await ProjectRepository(session).get_many(unique)
+    return {row.id: _to_ref(row) for row in rows}
 
 
 async def get_project_by_key(session: AsyncSession, key: str) -> ProjectRef | None:

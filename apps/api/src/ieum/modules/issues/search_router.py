@@ -10,13 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
-from ieum.modules.issues.schemas import IssuePageResponse, IssueSummaryResponse
+from ieum.modules.issues.router import summary_rows
+from ieum.modules.issues.schemas import IssuePageResponse
 from ieum.modules.issues.search import (
     SavedFilterService,
     SearchService,
     field_catalog,
     function_catalog,
 )
+from ieum.modules.issues.service import IssueService
 
 search_router = APIRouter(tags=["search"])
 
@@ -67,7 +69,7 @@ async def search_issues(
         actor, body.iql, PageRequest(limit=body.limit, cursor=body.cursor)
     )
     return IssuePageResponse(
-        items=[IssueSummaryResponse.model_validate(i) for i in page.items],
+        items=await summary_rows(IssueService(session, permissions), page.items),
         next_cursor=page.next_cursor,
     )
 
@@ -136,7 +138,7 @@ async def run_filter(
         actor, filter_id, PageRequest(limit=limit, cursor=cursor)
     )
     return IssuePageResponse(
-        items=[IssueSummaryResponse.model_validate(i) for i in page.items],
+        items=await summary_rows(IssueService(session, permissions), page.items),
         next_cursor=page.next_cursor,
     )
 

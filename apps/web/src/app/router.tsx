@@ -5,6 +5,11 @@ import {
   redirect,
 } from '@tanstack/react-router'
 
+import { BoardScreen } from '@/features/boards/BoardScreen'
+import { BoardsScreen } from '@/features/boards/BoardsScreen'
+import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
+import { IssuesScreen } from '@/features/issues/IssuesScreen'
+import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
 import { PlaceholderScreen } from '@/features/projects/PlaceholderScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 
@@ -31,7 +36,33 @@ const projectsRoute = createRoute({
 const issuesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/issues',
-  component: () => <PlaceholderScreen titleKey="common:nav.issues" />,
+  component: IssuesScreen,
+})
+
+// `/issues/new` 는 `/issues/$issueKey` 보다 **먼저** 등록해야 한다.
+// 뒤에 두면 "new" 가 이슈 키로 잡혀 404 를 부른다.
+const newIssueRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/issues/new',
+  component: NewIssueScreen,
+})
+
+const issueDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/issues/$issueKey',
+  component: IssueDetailScreen,
+})
+
+const boardsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/boards',
+  component: BoardsScreen,
+})
+
+const boardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/boards/$boardId',
+  component: BoardScreen,
 })
 
 const wikiRoute = createRoute({
@@ -44,6 +75,10 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   projectsRoute,
   issuesRoute,
+  newIssueRoute,
+  issueDetailRoute,
+  boardsRoute,
+  boardRoute,
   wikiRoute,
 ])
 

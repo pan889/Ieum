@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from ieum.core.deps import (
     AppSettings,
@@ -15,6 +16,8 @@ from ieum.core.deps import (
     PermissionDep,
     UserAgent,
 )
+from ieum.core.exceptions import ValidationError
+from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.core.permissions import Scope
 from ieum.modules.identity import permissions as perms
 from ieum.modules.identity.schemas import (
@@ -28,6 +31,7 @@ from ieum.modules.identity.schemas import (
     SessionResponse,
     TokenResponse,
     TOTPEnrollResponse,
+    UserPageResponse,
     UserResponse,
 )
 from ieum.modules.identity.service import (
@@ -197,6 +201,43 @@ async def issue_backup_codes(
 
 
 # ── 사용자 ──────────────────────────────────────────────────────
+
+
+@users_router.get("", response_model=UserPageResponse)
+async def list_users(
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+    q: str | None = None,
+    ids: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> UserPageResponse:
+    """담당자·멘션 피커가 쓰는 사용자 목록.
+
+    `ids` 는 쉼표로 구분한 UUID 목록이다. 목록 화면이 이미 아는 담당자 id 를
+    이름으로 바꿀 때 쓴다 — 전체를 훑지 않아도 된다.
+    """
+    await permissions.require(session, actor, perms.USER_VIEW, scope=Scope.global_())
+    parsed: list[UUID] | None = None
+    if ids is not None:
+        try:
+            parsed = [UUID(raw) for raw in ids.split(",") if raw.strip()]
+        except ValueError as exc:
+            raise ValidationError(
+                "ids 는 쉼표로 구분한 UUID 목록이어야 한다.", code="common.validation_failed"
+            ) from exc
+        if not parsed:
+            return UserPageResponse(items=[])
+
+    page = await UserService(session, settings).directory(
+        PageRequest(limit=limit, cursor=cursor), query=q, ids=parsed
+    )
+    return UserPageResponse(
+        items=[UserResponse.model_validate(u) for u in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
 @users_router.post("/invite", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

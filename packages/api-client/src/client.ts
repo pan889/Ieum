@@ -13,6 +13,8 @@ interface RequestOptions {
   signal?: AbortSignal
   /** true 면 401 이어도 리프레시를 시도하지 않는다 (로그인·리프레시 자체). */
   anonymous?: boolean
+  /** 추가 헤더. 낙관적 잠금의 If-Match 가 여기로 간다. */
+  headers?: Record<string, string>
 }
 
 /**
@@ -62,6 +64,10 @@ export class ApiClient {
     return this.request<T>(path, { ...options, method: 'POST', body })
   }
 
+  patch<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method'>): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'PATCH', body })
+  }
+
   delete<T>(path: string, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
     return this.request<T>(path, { ...options, method: 'DELETE' })
   }
@@ -72,6 +78,7 @@ export class ApiClient {
 
     const token = tokenStore.access
     if (token && !options.anonymous) headers['Authorization'] = `Bearer ${token}`
+    Object.assign(headers, options.headers)
 
     const init: RequestInit = {
       method: options.method ?? 'GET',

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, Query, status
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
+from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import HistoryRepository
 from ieum.modules.issues.schemas import (
     CommentCreateRequest,
@@ -45,6 +46,31 @@ def _parse_if_match(raw: str | None) -> int | None:
         return None
     value = raw.strip().strip('"')
     return int(value) if value.isdigit() else None
+
+
+async def summary_rows(service: IssueService, issues: list[Issue]) -> list[IssueSummaryResponse]:
+    """목록 응답 행. key·상태 이름을 배치 조회로 채운다.
+
+    search_router 도 이걸 쓴다 — 두 목록이 서로 다른 모양을 내보내면
+    프론트가 화면마다 분기해야 한다.
+    """
+    return [
+        IssueSummaryResponse(
+            id=row.issue.id,
+            key=row.key,
+            key_seq=row.issue.key_seq,
+            project_id=row.issue.project_id,
+            summary=row.issue.summary,
+            state_id=row.issue.state_id,
+            state_name=row.state_name,
+            state_category=row.state_category,
+            assignee_id=row.issue.assignee_id,
+            priority=row.issue.priority,
+            due_date=row.issue.due_date,
+            updated_at=row.issue.updated_at,
+        )
+        for row in await service.to_summaries(issues)
+    ]
 
 
 def _to_response(view: IssueView) -> IssueResponse:
@@ -112,14 +138,15 @@ async def list_issues(
     cursor: str | None = None,
     include_archived: bool = False,
 ) -> IssuePageResponse:
-    page = await IssueService(session, permissions).list_for(
+    service = IssueService(session, permissions)
+    page = await service.list_for(
         actor,
         PageRequest(limit=limit, cursor=cursor),
         project_id=project_id,
         include_archived=include_archived,
     )
     return IssuePageResponse(
-        items=[IssueSummaryResponse.model_validate(i) for i in page.items],
+        items=await summary_rows(service, page.items),
         next_cursor=page.next_cursor,
         total=page.total,
     )

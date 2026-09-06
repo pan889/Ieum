@@ -62,6 +62,11 @@ class UserResponse(BaseModel):
     last_login_at: datetime | None = None
 
 
+class UserPageResponse(BaseModel):
+    items: list[UserResponse]
+    next_cursor: str | None = None
+
+
 class TOTPEnrollResponse(BaseModel):
     """등록 시작. 확인 코드를 넣기 전까지 활성화되지 않는다."""
 

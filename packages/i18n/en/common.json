@@ -13,6 +13,7 @@
   "state.error": "Something went wrong",
   "nav.projects": "Projects",
   "nav.issues": "Issues",
+  "nav.boards": "Boards",
   "nav.wiki": "Wiki",
   "nav.desk": "Service Desk",
   "nav.settings": "Settings",

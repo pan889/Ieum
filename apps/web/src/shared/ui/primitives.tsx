@@ -4,6 +4,8 @@ import type {
   HTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
 } from 'react'
 import { forwardRef, useId } from 'react'
 
@@ -130,6 +132,141 @@ export function Card({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
     <div
       className={clsx(
         'rounded-card border border-border bg-surface p-6 shadow-sm',
+        className,
+      )}
+      {...rest}
+    />
+  )
+}
+
+type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
+  label?: string
+  hint?: string
+}
+
+export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
+  { label, hint, className, children, ...rest },
+  ref,
+) {
+  const id = useId()
+  return (
+    <div className="flex flex-col gap-1.5">
+      {label ? (
+        <label htmlFor={id} className="text-sm font-medium text-fg">
+          {label}
+        </label>
+      ) : null}
+      <select
+        ref={ref}
+        id={id}
+        aria-describedby={hint ? `${id}-hint` : undefined}
+        className={clsx(
+          'rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg',
+          className,
+        )}
+        {...rest}
+      >
+        {children}
+      </select>
+      {hint ? (
+        <p id={`${id}-hint`} className="text-xs text-muted">
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  )
+})
+
+type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  label?: string
+  hint?: string
+  error?: string | undefined
+}
+
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
+  { label, hint, error, className, ...rest },
+  ref,
+) {
+  const id = useId()
+  const describedBy = [hint ? `${id}-hint` : null, error ? `${id}-error` : null]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {label ? (
+        <label htmlFor={id} className="text-sm font-medium text-fg">
+          {label}
+        </label>
+      ) : null}
+      <textarea
+        ref={ref}
+        id={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy || undefined}
+        className={clsx(
+          'min-h-24 rounded-md border bg-surface px-3 py-2 text-sm text-fg',
+          'placeholder:text-muted',
+          error ? 'border-danger' : 'border-border',
+          className,
+        )}
+        {...rest}
+      />
+      {hint ? (
+        <p id={`${id}-hint`} className="text-xs text-muted">
+          {hint}
+        </p>
+      ) : null}
+      {error ? (
+        <p id={`${id}-error`} className="text-xs text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  )
+})
+
+/**
+ * 토글 칩. `aria-pressed` 를 쓴다 — 눌린 상태를 색으로만 알리면
+ * 스크린리더 사용자에게는 아무 정보도 없다.
+ */
+export function Chip({
+  pressed,
+  className,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { pressed: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      className={clsx(
+        'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+        pressed
+          ? 'border-accent bg-accent text-accent-fg'
+          : 'border-border bg-surface text-muted hover:text-fg',
+        className,
+      )}
+      {...rest}
+    />
+  )
+}
+
+export function Badge({
+  tone = 'neutral',
+  className,
+  ...rest
+}: HTMLAttributes<HTMLSpanElement> & { tone?: 'neutral' | 'todo' | 'in_progress' | 'done' }) {
+  const TONES: Record<string, string> = {
+    neutral: 'bg-surface-raised text-muted',
+    todo: 'bg-surface-raised text-muted',
+    in_progress: 'bg-accent/15 text-accent',
+    done: 'bg-success/15 text-success',
+  }
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium',
+        TONES[tone] ?? TONES['neutral'],
         className,
       )}
       {...rest}

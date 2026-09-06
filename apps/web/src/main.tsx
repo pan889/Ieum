@@ -13,9 +13,10 @@ const queryClient = new QueryClient({
       staleTime: 30_000,
       refetchOnWindowFocus: false,
       retry: (failureCount, error) => {
-        // 401/403 은 재시도해도 같다. 권한 문제를 세 번 물어볼 이유가 없다.
+        // 4xx 는 재시도해도 같은 답이 온다. 잘못된 IQL 을 세 번 보내면
+        // 사용자는 오류 하나에 서버 왕복 세 번을 기다린다.
         const status = (error as { status?: number }).status
-        if (status === 401 || status === 403 || status === 404) return false
+        if (status !== undefined && status >= 400 && status < 500) return false
         return failureCount < 2
       },
     },

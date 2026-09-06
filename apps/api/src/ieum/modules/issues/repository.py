@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -43,6 +44,14 @@ class WorkflowRepository:
 
     async def state(self, state_id: UUID) -> WorkflowState | None:
         return await self._s.get(WorkflowState, state_id)
+
+    async def states_by_ids(self, state_ids: Sequence[UUID]) -> dict[UUID, WorkflowState]:
+        """여러 상태를 한 번에. 목록 화면이 행마다 조회하지 않게 한다."""
+        unique = list(dict.fromkeys(state_ids))
+        if not unique:
+            return {}
+        stmt = select(WorkflowState).where(WorkflowState.id.in_(unique))
+        return {row.id: row for row in (await self._s.execute(stmt)).scalars()}
 
     async def states_of(self, workflow_id: UUID) -> list[WorkflowState]:
         stmt = (

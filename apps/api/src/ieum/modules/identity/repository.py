@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -47,11 +48,24 @@ class UserRepository:
         self._s.add(user)
         return user
 
-    async def list_page(self, request: PageRequest, *, query: str | None = None) -> Page[User]:
+    async def list_page(
+        self,
+        request: PageRequest,
+        *,
+        query: str | None = None,
+        ids: Sequence[UUID] | None = None,
+        include_customers: bool = False,
+    ) -> Page[User]:
         stmt: Select[tuple[User]] = select(User)
         if query:
             like = f"%{query.strip().lower()}%"
             stmt = stmt.where(func.lower(User.display_name).like(like) | User.email.like(like))
+        if ids is not None:
+            stmt = stmt.where(User.id.in_(ids))
+        if not include_customers:
+            # 담당자·멘션 피커는 내부 사용자만 고른다. 포털 고객이 섞이면
+            # 실수로 고객을 담당자로 지정하게 된다.
+            stmt = stmt.where(User.is_customer.is_(False))
         # 커서는 (created_at, id) 복합. 같은 시각에 만들어진 행도 안정적으로 넘긴다.
         payload = request.cursor_payload
         if payload:

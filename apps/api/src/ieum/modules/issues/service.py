@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -81,6 +81,58 @@ EDITABLE_FIELDS = frozenset(
 )
 
 
+#: PATCH 로 들어오는 값의 타입. JSON 에는 UUID 도 date 도 없으므로 여기서
+#: 바꿔 준다. 문자열을 그대로 setattr 하면 (a) UUID 컬럼에 str 이 들어가
+#: 값이 안 바뀌어도 "바뀐 것"으로 기록되고, (b) 잘못된 값이 드라이버
+#: 오류로 500 이 된다.
+_UUID_CHANGES = frozenset({"assignee_id", "parent_id", "category_id", "fix_version_id"})
+_DATE_CHANGES = frozenset({"start_date", "due_date"})
+_INT_CHANGES = frozenset({"priority", "estimate_minutes", "progress"})
+_TEXT_CHANGES = frozenset({"summary", "description"})
+#: null 로 비울 수 있는 필드. 나머지에 null 이 오면 거절한다.
+_NULLABLE_CHANGES = EDITABLE_FIELDS - {"summary", "priority", "progress"}
+
+
+def _bad_change(field: str, expected: str) -> ValidationError:
+    return ValidationError(
+        f"'{field}' 값이 {expected} 이(가) 아니다.",
+        code="issues.invalid_field_value",
+        details={"field": field},
+    )
+
+
+def _coerce_change(field: str, value: Any) -> Any:
+    """PATCH 값 하나를 컬럼 타입으로 바꾼다. 못 바꾸면 422 로 거절한다."""
+    if value is None:
+        if field not in _NULLABLE_CHANGES:
+            raise _bad_change(field, "비울 수 없는 값")
+        return None
+    if field in _UUID_CHANGES:
+        if isinstance(value, UUID):
+            return value
+        try:
+            return UUID(str(value))
+        except ValueError as exc:
+            raise _bad_change(field, "UUID") from exc
+    if field in _DATE_CHANGES:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        try:
+            return date.fromisoformat(str(value))
+        except ValueError as exc:
+            raise _bad_change(field, "YYYY-MM-DD 날짜") from exc
+    if field in _INT_CHANGES:
+        # bool 은 int 의 서브클래스다. True 가 우선순위 1 이 되면 안 된다.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise _bad_change(field, "정수")
+        return value
+    if field in _TEXT_CHANGES and not isinstance(value, str):
+        raise _bad_change(field, "문자열")
+    return value
+
+
 @dataclass(slots=True)
 class NewIssue:
     project_id: UUID
@@ -106,6 +158,20 @@ class IssueView:
     type_name: str
     labels: list[str]
     custom_fields: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class IssueSummaryView:
+    """목록 한 줄. 상세보다 가볍지만 화면이 필요한 건 다 들어 있다.
+
+    key 와 상태 이름을 여기서 채운다. 클라이언트가 프로젝트·상태 목록을
+    따로 받아 이어 붙이면, 목록에 없는 프로젝트의 이슈는 영영 키가 안 뜬다.
+    """
+
+    issue: Issue
+    key: str
+    state_name: str
+    state_category: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +296,26 @@ class IssueService:
                 seen.setdefault(state.id, state)
         return sorted(seen.values(), key=lambda s: (s.position, s.name))
 
+    async def to_summaries(self, issues: list[Issue]) -> list[IssueSummaryView]:
+        """목록 행을 만든다. 프로젝트·상태를 각각 **한 번씩만** 조회한다."""
+        if not issues:
+            return []
+        projects = await org.get_projects(self._s, [i.project_id for i in issues])
+        states = await self._workflows.states_by_ids([i.state_id for i in issues])
+        rows: list[IssueSummaryView] = []
+        for issue in issues:
+            project = projects.get(issue.project_id)
+            state = states.get(issue.state_id)
+            rows.append(
+                IssueSummaryView(
+                    issue=issue,
+                    key=f"{project.key}-{issue.key_seq}" if project else str(issue.key_seq),
+                    state_name=state.name if state else "",
+                    state_category=state.category if state else "",
+                )
+            )
+        return rows
+
     # ── 생성 ────────────────────────────────────────────────────
 
     async def create(self, actor: Actor, payload: NewIssue) -> IssueView:
@@ -338,6 +424,8 @@ class IssueService:
                 code="issues.field_not_editable",
                 details={"fields": unknown},
             )
+
+        changes = {name: _coerce_change(name, value) for name, value in changes.items()}
 
         if "assignee_id" in changes and changes["assignee_id"] != issue.assignee_id:
             await self._perms.require(

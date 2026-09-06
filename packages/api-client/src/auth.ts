@@ -39,6 +39,29 @@ export interface SessionInfo {
 }
 
 const BASE = '/api/v1/auth'
+const USERS = '/api/v1/users'
+
+export interface UserPage {
+  items: CurrentUser[]
+  next_cursor: string | null
+}
+
+/** 담당자·멘션 피커. `ids` 를 주면 그 사용자들만 돌려준다. */
+export function createUsersApi(client: ApiClient) {
+  return {
+    list: (params: { q?: string; ids?: string[]; limit?: number; cursor?: string } = {}) => {
+      const query = new URLSearchParams()
+      if (params.q) query.set('q', params.q)
+      if (params.ids?.length) query.set('ids', params.ids.join(','))
+      if (params.limit) query.set('limit', String(params.limit))
+      if (params.cursor) query.set('cursor', params.cursor)
+      const suffix = query.size > 0 ? `?${query.toString()}` : ''
+      return client.get<UserPage>(`${USERS}${suffix}`)
+    },
+  }
+}
+
+export type UsersApi = ReturnType<typeof createUsersApi>
 
 export function createAuthApi(client: ApiClient) {
   return {
