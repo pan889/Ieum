@@ -6,21 +6,11 @@
  * 실제로 돌려야 결과가 나온다.
  */
 
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, createSpace, expect, projectKey, signIn, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 function spaceKey(): string {
   return 'D' + Math.random().toString(36).slice(2, 6).toUpperCase()
-}
-
-async function createSpace(page: Page, key: string): Promise<void> {
-  await page.goto('/wiki')
-  await page.getByRole('button', { name: /new space/i }).click()
-  await page.getByLabel(/^key$/i).fill(key)
-  await page.getByLabel(/^name$/i).fill(`Docs ${key}`)
-  await page.getByRole('button', { name: /create space/i }).click()
-  await page.getByLabel(/find a space/i).fill(key)
-  await expect(page.getByText(key).first()).toBeVisible()
 }
 
 async function writePage(page: Page, title: string, body: string): Promise<void> {

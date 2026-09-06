@@ -33,6 +33,8 @@
   "filter.chipsLockedHint": "Chips can't represent this query. Edit it as IQL.",
   "filter.suggestions": "Suggestions",
   "filter.suggestionsHint": "↑↓ to choose, Enter to insert, Ctrl+Space to reopen, Ctrl+Enter to run",
+  "filter.goToProblem": "Jump to the problem",
+  "filter.didYouMean": "Did you mean",
   "filter.kind.field": "field",
   "filter.kind.operator": "operator",
   "filter.kind.function": "function",

@@ -6,20 +6,10 @@
  * 확인할 수 없다.
  */
 
-import { expect, signIn, test } from './fixtures'
+import { createSpace, expect, signIn, test } from './fixtures'
 
 function spaceKey(): string {
   return 'W' + Math.random().toString(36).slice(2, 6).toUpperCase()
-}
-
-async function createSpace(page: import('@playwright/test').Page, key: string): Promise<void> {
-  await page.goto('/wiki')
-  await page.getByRole('button', { name: /new space/i }).click()
-  await page.getByLabel(/^key$/i).fill(key)
-  await page.getByLabel(/^name$/i).fill(`Docs ${key}`)
-  await page.getByRole('button', { name: /create space/i }).click()
-  await page.getByLabel(/find a space/i).fill(key)
-  await expect(page.getByText(key).first()).toBeVisible()
 }
 
 async function createPage(

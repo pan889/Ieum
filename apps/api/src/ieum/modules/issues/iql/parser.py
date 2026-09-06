@@ -175,6 +175,7 @@ def _comparison(item: Tree[Token]) -> Comparison:
         operator=_operator(cast(Tree[Token], op_node)),
         value=_value(value_node),
         span=_span(item),
+        operator_span=_span(cast(Tree[Token], op_node)),
     )
 
 

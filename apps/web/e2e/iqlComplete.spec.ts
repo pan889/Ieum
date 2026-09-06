@@ -116,3 +116,68 @@ test('깨진 질의에는 아무것도 제안하지 않는다', async ({ page, c
 
   expect(consoleErrors).toEqual([])
 })
+
+test('어디가 틀렸는지 자리를 짚어 준다', async ({ page, consoleErrors }) => {
+  await signIn(page)
+  const box = await openIql(page)
+
+  // 서버는 offset/length 를 늘 준다. 그걸 안 쓰면 "질의 어딘가가 틀렸다"
+  // 까지만 말하게 된다.
+  await box.fill('priority = 1 AND assigne = 1')
+  const problem = page.getByRole('status')
+  await expect(problem).toContainText(/assigne/)
+
+  // 캐럿 줄이 그 낱말 바로 아래에 온다.
+  const lines = (await problem.innerText()).split('\n').filter((line) => line !== '')
+  const source = lines[1] ?? ''
+  const caret = lines[2] ?? ''
+  expect(source.slice(caret.indexOf('^'), caret.lastIndexOf('^') + 1)).toBe('assigne')
+
+  // 한 번 눌러 고친다. 오타는 흔하고, 고치는 데 두 손을 쓰게 하면 안 된다.
+  await page.getByRole('button', { name: 'assignee', exact: true }).click()
+  await expect(box).toHaveValue('priority = 1 AND assignee = 1')
+  await expect(page.getByRole('status')).toHaveCount(0)
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('연산자가 틀리면 연산자를 고른다', async ({ page, consoleErrors }) => {
+  await signIn(page)
+  const box = await openIql(page)
+
+  await box.fill('archived > 3')
+  await expect(page.getByRole('status')).toContainText(/archived/)
+
+  // 발췌를 누르면 고쳐야 할 글자가 선택된다 — 조건 전체가 아니라.
+  await page.getByRole('status').getByRole('button').first().click()
+  const selected = await box.evaluate((element) => {
+    const field = element as HTMLTextAreaElement
+    return field.value.slice(field.selectionStart, field.selectionEnd)
+  })
+  expect(selected).toBe('>')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('덜 쓴 질의를 붙잡고 늘어지지 않는다', async ({ page, consoleErrors }) => {
+  await signIn(page)
+  const box = await openIql(page)
+
+  // 끝에서 계속 치는 중이면 "아직 덜 썼다" 는 뜻이다. 한 글자 칠 때마다
+  // 빨간 글씨가 뜨면 알림이 아니라 재촉이다.
+  for (const partial of ['pro', 'project = ', 'priority = 1 AND']) {
+    await box.fill(partial)
+    await expect(page.getByRole('status')).toHaveCount(0)
+  }
+
+  // 끝을 떠나면 문법 오류도 말한다 — 그때는 다 쓴 것으로 본다.
+  await box.fill('project = = =')
+  await box.press('Home')
+  await expect(page.getByRole('status')).toContainText(/syntax|문법/i)
+
+  // 뜻이 틀린 것은 덜 썼든 아니든 틀린 것이다.
+  await box.fill('archived > 3')
+  await expect(page.getByRole('status')).toContainText(/archived/)
+
+  expect(consoleErrors).toEqual([])
+})

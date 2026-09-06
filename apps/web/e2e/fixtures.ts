@@ -24,11 +24,28 @@ export async function createProject(page: Page, key: string, name = 'E2E'): Prom
   await page.getByLabel(/^key$/i).fill(key)
   await page.getByLabel(/^name$/i).fill(name)
   await page.getByRole('button', { name: /create project/i }).click()
+  // 폼이 닫히면 생성이 끝난 것이다. 끝나기 전에 검색하면 목록 질의가
+  // 생성보다 먼저 끝나 버려서 방금 만든 프로젝트를 못 찾는다.
+  await expect(page.getByRole('button', { name: /create project/i })).toHaveCount(0)
   // 목록의 첫 페이지에 있으리라 기대하지 않는다. 프로젝트는 키 순이라
   // 새로 만든 게 몇 페이지 뒤에 있을 수 있다 — 검색으로 확인한다.
   await page.getByLabel(/find a project/i).fill(key)
   await expect(page.getByText(key).first()).toBeVisible()
   await page.getByLabel(/find a project/i).fill('')
+}
+
+/** 위키 스페이스를 만든다. 여섯 개 스펙이 같은 것을 여섯 번 적어 두고 있었다. */
+export async function createSpace(page: Page, key: string): Promise<void> {
+  await page.goto('/wiki')
+  await page.getByRole('button', { name: /new space/i }).click()
+  await page.getByLabel(/^key$/i).fill(key)
+  await page.getByLabel(/^name$/i).fill(`Docs ${key}`)
+  await page.getByRole('button', { name: /create space/i }).click()
+  // 폼이 닫히면 생성이 끝난 것이다. 끝나기 전에 검색하면 목록 질의가
+  // 생성보다 먼저 끝나 버려서 방금 만든 스페이스를 못 찾는다.
+  await expect(page.getByRole('button', { name: /create space/i })).toHaveCount(0)
+  await page.getByLabel(/find a space/i).fill(key)
+  await expect(page.getByText(key).first()).toBeVisible()
 }
 
 export async function createIssue(

@@ -21,6 +21,19 @@ export function describeError(error: unknown): string {
   })
 }
 
+/**
+ * 200 으로 돌아온 에러 서술을 문구로 (IQL 검증처럼).
+ *
+ * 타이핑 중에 부르는 엔드포인트는 오류를 4xx 로 던지지 않는다. 그래도 화면에
+ * 보일 문구는 같은 길로 나와야 한다 — 서버 message 는 한국어 고정이다.
+ */
+export function describeErrorCode(code: string, params: Record<string, unknown> = {}): string {
+  return i18next.t(`errors:${code}`, {
+    ...params,
+    defaultValue: i18next.t('errors:internal.error'),
+  })
+}
+
 /** 화면 안내가 필요한 특정 상황인지 판별한다. */
 export function hasCode(error: unknown, code: string): boolean {
   return isApiError(error) && error.code === code

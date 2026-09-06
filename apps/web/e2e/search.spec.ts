@@ -7,7 +7,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, createSpace, expect, projectKey, signIn, test } from './fixtures'
 
 function unique(prefix: string): string {
   return prefix + Math.random().toString(36).slice(2, 8)
@@ -38,16 +38,6 @@ async function writeDoc(page: Page, key: string, title: string, body: string): P
   await page.getByLabel(/^body$/i).fill(body)
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
-}
-
-async function createSpace(page: Page, key: string): Promise<void> {
-  await page.goto('/wiki')
-  await page.getByRole('button', { name: /new space/i }).click()
-  await page.getByLabel(/^key$/i).fill(key)
-  await page.getByLabel(/^name$/i).fill(`Docs ${key}`)
-  await page.getByRole('button', { name: /create space/i }).click()
-  await page.getByLabel(/find a space/i).fill(key)
-  await expect(page.getByText(key).first()).toBeVisible()
 }
 
 test('방금 만든 이슈가 곧바로 검색된다', async ({ page, consoleErrors }) => {

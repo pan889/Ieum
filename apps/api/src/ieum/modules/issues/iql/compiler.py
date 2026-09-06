@@ -242,7 +242,7 @@ class Compiler:
             case Operator.NOT_CONTAINS:
                 return not_(exists(base().where(as_text.ilike(f"%{values[0]}%"))))
             case _:
-                span = node.field.span or Span(0, 1)
+                span = node.operator_span or node.field.span or Span(0, 1)
                 raise errors.operator_not_allowed(
                     node.field.label(),
                     node.operator.value,
@@ -476,7 +476,9 @@ class Compiler:
     def _check_operator(self, spec: FieldSpec, node: Comparison) -> None:
         if spec.allows(node.operator):
             return
-        span = node.span or Span(0, 1)
+        # 연산자 자리를 가리킨다. 조건 전체를 가리키면 "이 줄 어딘가" 로만
+        # 읽혀서, 정작 고쳐야 할 글자를 여전히 안 알려준다.
+        span = node.operator_span or node.span or Span(0, 1)
         raise errors.operator_not_allowed(
             spec.name,
             node.operator.value,

@@ -23,10 +23,22 @@ export interface IqlCatalog {
   functions: IqlFunctionSpec[]
 }
 
+export interface IqlError {
+  code: string
+  /** 서버 문구(한국어 고정, 디버깅용). 화면은 code 로 번역한다. */
+  message: string
+  /** 틀린 자리. 서버는 이걸 반드시 준다 (query-language.md 4절). */
+  offset?: number
+  length?: number
+  /** 오타에 가까운 이름. 있으면 한 번 눌러 고칠 수 있다. */
+  suggestions?: string[]
+  /** ICU 변수로 넘길 나머지(field, operator, milestone …). */
+  [key: string]: unknown
+}
+
 export interface IqlValidation {
   valid: boolean
-  /** offset/length 로 에디터가 밑줄을 긋는다. */
-  error: { code: string; message: string; offset?: number; length?: number } | null
+  error: IqlError | null
   fields: string[] | null
 }
 

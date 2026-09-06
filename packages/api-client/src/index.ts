@@ -48,6 +48,7 @@ export {
 export {
   createSearchApi,
   type IqlCatalog,
+  type IqlError,
   type IqlFieldSpec,
   type IqlFunctionSpec,
   type IqlSuggestion,

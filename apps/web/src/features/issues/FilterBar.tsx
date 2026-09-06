@@ -50,6 +50,7 @@ export function FilterBar({
             value={iqlDraft}
             onChange={onIqlDraftChange}
             onRun={() => { onRun(iqlDraft); }}
+            invalid={invalid}
           />
           <div className="flex flex-col gap-2">
             <Button onClick={() => { onRun(iqlDraft); }}>{t('issues:filter.run')}</Button>
@@ -67,7 +68,6 @@ export function FilterBar({
         {!canReturn ? (
           <p className="text-xs text-muted">{t('issues:filter.chipsLockedHint')}</p>
         ) : null}
-        {invalid ? <Alert>{invalid}</Alert> : null}
       </div>
     )
   }

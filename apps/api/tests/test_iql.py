@@ -161,6 +161,22 @@ class TestValidation:
         assert exc.value.code == "iql.operator_not_allowed"
         assert "=" in exc.value.details["allowed"]
 
+    def test_operator_error_points_at_the_operator(self) -> None:
+        """조건 전체를 가리키면 "이 줄 어딘가" 로만 읽힌다. 고쳐야 할 글자를
+        집어 줘야 에디터가 그 자리를 골라 줄 수 있다."""
+        source = "priority = 1 AND archived > 3"
+        with pytest.raises(iql_errors.IQLError) as exc:
+            compile_only(source)
+        details = exc.value.details
+        assert source[details["offset"] : details["offset"] + details["length"]] == ">"
+
+    def test_custom_field_operator_error_points_at_the_operator(self) -> None:
+        source = 'cf["severity"] >= 3'
+        with pytest.raises(iql_errors.IQLError) as exc:
+            compile_only(source)
+        details = exc.value.details
+        assert source[details["offset"] : details["offset"] + details["length"]] == ">="
+
     def test_number_field_rejects_text(self) -> None:
         with pytest.raises(iql_errors.IQLError) as exc:
             compile_only("priority = high")

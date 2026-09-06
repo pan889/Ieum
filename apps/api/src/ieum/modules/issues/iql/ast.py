@@ -80,6 +80,9 @@ class Comparison:
     operator: Operator
     value: Value
     span: Span | None = None
+    #: 연산자 자체의 위치. "이 필드엔 그 연산자를 못 쓴다" 는 오류가 조건
+    #: 전체를 가리키면 어느 글자를 고쳐야 하는지 여전히 알려주지 않는다.
+    operator_span: Span | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -58,7 +58,13 @@ export function ProjectsScreen() {
         <CreateProjectForm
           onCreated={() => {
             setCreating(false)
-            void queryClient.invalidateQueries({ queryKey: ['projects', 'list'] })
+            void (async () => {
+              // 먼저 취소한다. 만드는 동안 검색어를 친 경우, 그 목록 질의가
+              // 생성보다 늦게 끝나면 "없음" 이라는 낡은 답이 무효화 뒤에
+              // 앉아 버려서 방금 만든 프로젝트가 안 보인다.
+              await queryClient.cancelQueries({ queryKey: ['projects', 'list'] })
+              await queryClient.invalidateQueries({ queryKey: ['projects', 'list'] })
+            })()
           }}
         />
       ) : null}

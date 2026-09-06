@@ -33,6 +33,8 @@
   "filter.chipsLockedHint": "이 질의는 필터로 표현할 수 없습니다. IQL 로 편집하세요.",
   "filter.suggestions": "제안",
   "filter.suggestionsHint": "↑↓ 로 고르고 Enter 로 넣는다. Ctrl+Space 로 다시 열고, Ctrl+Enter 로 실행한다",
+  "filter.goToProblem": "틀린 자리로 가기",
+  "filter.didYouMean": "혹시 이건가요",
   "filter.kind.field": "필드",
   "filter.kind.operator": "연산자",
   "filter.kind.function": "함수",
