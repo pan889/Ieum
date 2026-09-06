@@ -30,6 +30,26 @@ export interface IqlValidation {
   fields: string[] | null
 }
 
+export type SuggestKind = 'field' | 'operator' | 'function' | 'value' | 'keyword'
+
+export interface IqlSuggestion {
+  /** 목록에 보이는 글자. */
+  label: string
+  /** 실제로 끼워 넣을 글자. 사용자 값은 label(이름)과 다르다(ID). */
+  insert: string
+  kind: SuggestKind
+  detail: string
+  /** insert 안에서 커서가 멈출 자리. 함수는 괄호 안이다. */
+  caret: number
+}
+
+export interface IqlSuggestions {
+  /** 갈아 끼울 범위. 닫는 따옴표를 삼키느라 커서보다 뒤로 갈 수 있다. */
+  offset: number
+  length: number
+  items: IqlSuggestion[]
+}
+
 export interface SavedFilter {
   id: string
   owner_id: string
@@ -77,6 +97,10 @@ export function createSearchApi(client: ApiClient) {
     validate: (iql: string) => client.post<IqlValidation>('/api/v1/iql/validate', { iql }),
 
     catalog: () => client.get<IqlCatalog>('/api/v1/iql/fields'),
+
+    /** 커서 위치 기반 자동완성. 깨진 질의에는 빈 목록이 온다 — 오류는 validate 가 말한다. */
+    suggest: (body: { iql: string; offset: number; limit?: number }) =>
+      client.post<IqlSuggestions>('/api/v1/iql/suggest', body),
 
     /**
      * IQL 결과를 CSV 로. 스트리밍 응답이라 blob 으로 받는다.

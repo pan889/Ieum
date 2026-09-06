@@ -9,6 +9,8 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.core.pagination import PageRequest
+from ieum.core.permissions import Acl
 from ieum.modules.org.models import EntityLink, Project
 from ieum.modules.org.repository import ProjectRepository
 
@@ -51,6 +53,20 @@ async def get_projects(
 async def get_project_by_key(session: AsyncSession, key: str) -> ProjectRef | None:
     project = await ProjectRepository(session).get_by_key(key)
     return _to_ref(project) if project else None
+
+
+async def search_projects(
+    session: AsyncSession, *, acl: Acl, query: str | None = None, limit: int = 20
+) -> list[ProjectRef]:
+    """볼 수 있는 프로젝트를 키·이름으로 찾는다. IQL 자동완성이 쓴다.
+
+    목록은 검사하지 않고 필터링한다 (auth.md 5절) — 없는 것과 못 보는 것을
+    화면에서 구별할 수 없게 한다.
+    """
+    page = await ProjectRepository(session).list_page(
+        PageRequest(limit=limit), acl=acl, query=query
+    )
+    return [_to_ref(row) for row in page.items]
 
 
 async def next_issue_number(session: AsyncSession, project_id: UUID) -> int:

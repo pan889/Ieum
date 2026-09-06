@@ -50,11 +50,14 @@ export {
   type IqlCatalog,
   type IqlFieldSpec,
   type IqlFunctionSpec,
+  type IqlSuggestion,
+  type IqlSuggestions,
   type IqlValidation,
   type SavedFilter,
   type SearchApi,
   type SearchHit,
   type SearchKind,
+  type SuggestKind,
   type UnifiedSearchPage,
 } from './search'
 export {

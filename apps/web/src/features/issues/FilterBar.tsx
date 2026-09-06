@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Alert, Button, Chip, Field, Select } from '@/shared/ui/primitives'
 
+import { IqlEditor } from './IqlEditor'
 import type { IssueFilters } from './iql'
 import { EMPTY_FILTERS, isEmptyFilters, matchesChips, toIql, toggle } from './iql'
 import { useIssueTypes, useProjects } from './hooks'
@@ -43,19 +44,12 @@ export function FilterBar({
     return (
       <div className="flex flex-col gap-2">
         <div className="flex items-start gap-2">
-          <textarea
-            aria-label={t('issues:filter.iql')}
-            className="min-h-16 flex-1 rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg"
+          <IqlEditor
+            label={t('issues:filter.iql')}
             placeholder={t('issues:filter.iqlPlaceholder')}
             value={iqlDraft}
-            onChange={(e) => { onIqlDraftChange(e.target.value); }}
-            onKeyDown={(e) => {
-              // Ctrl/Cmd+Enter 로 실행. Enter 는 줄바꿈이어야 한다.
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                onRun(iqlDraft)
-              }
-            }}
+            onChange={onIqlDraftChange}
+            onRun={() => { onRun(iqlDraft); }}
           />
           <div className="flex flex-col gap-2">
             <Button onClick={() => { onRun(iqlDraft); }}>{t('issues:filter.run')}</Button>
@@ -69,6 +63,7 @@ export function FilterBar({
             </Button>
           </div>
         </div>
+        <p className="text-xs text-muted">{t('issues:filter.suggestionsHint')}</p>
         {!canReturn ? (
           <p className="text-xs text-muted">{t('issues:filter.chipsLockedHint')}</p>
         ) : null}

@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
 from ieum.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService
+from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.iql import errors as iql_errors
 from ieum.modules.issues.iql.compiler import (
@@ -28,10 +29,27 @@ from ieum.modules.issues.iql.parser import parse
 from ieum.modules.issues.iql.registry import (
     FIELDS,
     FUNCTIONS,
+    FieldType,
     FunctionContext,
     known_field_names,
 )
-from ieum.modules.issues.models import Issue, SavedFilter
+from ieum.modules.issues.iql.suggest import (
+    Context,
+    Suggestion,
+    SuggestKind,
+    analyze,
+    quote_value,
+    rank,
+    static_candidates,
+)
+from ieum.modules.issues.models import (
+    FieldDefinition,
+    Issue,
+    IssueLabel,
+    IssueType,
+    SavedFilter,
+    WorkflowState,
+)
 from ieum.modules.org import contracts as org
 
 
@@ -42,6 +60,21 @@ class ValidationResult:
     error: dict[str, Any] | None = None
     #: 질의가 참조하는 필드. UI 가 컬럼을 자동 선택할 때 쓴다.
     fields: list[str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestResult:
+    """갈아 끼울 범위와 후보. 범위는 커서보다 뒤로 갈 수 있다 (닫는 따옴표)."""
+
+    start: int
+    length: int
+    items: list[Suggestion]
+
+
+#: 상태 분류는 워크플로우가 아니라 코드가 정한다 (data-model).
+_STATUS_CATEGORIES = ("todo", "in_progress", "done")
+#: 우선순위는 1~5 고정이다. 테이블이 없으므로 여기서 낸다.
+_PRIORITIES = ("1", "2", "3", "4", "5")
 
 
 class SearchService:
@@ -109,6 +142,160 @@ class SearchService:
 
         rows = list((await self._s.execute(stmt)).scalars().all())
         return Page.from_rows(rows, request, lambda i: {"id": str(i.id)})
+
+    # ── 자동완성 ────────────────────────────────────────────────
+
+    async def suggest(self, actor: Actor, iql: str, offset: int, limit: int = 20) -> SuggestResult:
+        """커서 자리에서 올 수 있는 것을 제안한다.
+
+        자리 판단은 문법이 하고(`iql.suggest`), 값은 여기서 채운다 — 프로젝트
+        키도 사용자도 권한을 타기 때문이다. 목록은 검사하지 않고 필터링한다.
+        """
+        ctx = analyze(iql, offset)
+        if ctx is None:
+            return SuggestResult(start=min(max(offset, 0), len(iql)), length=0, items=[])
+
+        candidates = static_candidates(ctx)
+        candidates.extend(await self._value_candidates(actor, ctx, limit))
+        candidates.extend(await self._custom_field_candidates(ctx))
+        return SuggestResult(start=ctx.start, length=ctx.length, items=rank(ctx, candidates, limit))
+
+    def _value(self, ctx: Context, value: str, detail: str = "") -> Suggestion:
+        return Suggestion(
+            label=value,
+            insert=f"{quote_value(ctx, value)} ",
+            kind=SuggestKind.VALUE,
+            detail=detail,
+        )
+
+    async def _value_candidates(self, actor: Actor, ctx: Context, limit: int) -> list[Suggestion]:
+        # `x IN` 다음은 괄호 자리다. 값을 끼우면 목록이 아니라 단일 값이 된다.
+        if not ctx.wants_value or ctx.after_in:
+            return []
+        if ctx.custom_key is not None:
+            return await self._custom_value_candidates(ctx)
+        spec = ctx.spec
+        if spec is None:
+            return []
+
+        match spec.name:
+            case "statuscategory":
+                return [self._value(ctx, name) for name in _STATUS_CATEGORIES]
+            case "priority":
+                # 숫자 리터럴이라 따옴표를 씌우지 않는다.
+                return [
+                    Suggestion(label=n, insert=f"{n} ", kind=SuggestKind.VALUE) for n in _PRIORITIES
+                ]
+            case "project":
+                acl = await self._perms.acl_for(self._s, actor, perms.ISSUE_VIEW)
+                rows = await org.search_projects(
+                    self._s, acl=acl, query=ctx.prefix or None, limit=limit
+                )
+                return [self._value(ctx, row.key, row.name) for row in rows]
+            case "status":
+                return await self._distinct(ctx, WorkflowState.name, limit)
+            case "type":
+                acl = await self._perms.acl_for(self._s, actor, perms.ISSUE_VIEW)
+                if acl.is_empty:
+                    return []
+                # 유형 이름은 그냥 이름이 아니다 ("Security Incident"). 프로젝트
+                # 전용 유형은 그 프로젝트를 볼 수 있는 사람에게만 보인다.
+                scope = (
+                    None
+                    if acl.is_global
+                    else or_(
+                        IssueType.project_id.is_(None),
+                        IssueType.project_id.in_(acl.project_ids),
+                    )
+                )
+                return await self._distinct(ctx, IssueType.name, limit, where=scope)
+            case "labels":
+                return await self._label_candidates(actor, ctx, limit)
+            case _:
+                pass
+
+        if spec.type is FieldType.USER:
+            users = await identity.search_users(self._s, query=ctx.prefix or None, limit=limit)
+            # 값은 UUID 로 컴파일된다. 보이는 건 이름, 들어가는 건 ID 다.
+            return [
+                Suggestion(
+                    label=user.display_name,
+                    insert=f"{quote_value(ctx, str(user.id))} ",
+                    kind=SuggestKind.VALUE,
+                    detail=user.email,
+                )
+                for user in users
+            ]
+        return []
+
+    async def _distinct(
+        self,
+        ctx: Context,
+        column: Any,
+        limit: int,
+        *,
+        where: ColumnElement[bool] | None = None,
+    ) -> list[Suggestion]:
+        """설정 테이블에서 이름을 뽑는다. 같은 이름이 여러 프로젝트에 있어도 한 번만."""
+        stmt = select(column).distinct().order_by(column).limit(limit)
+        if where is not None:
+            stmt = stmt.where(where)
+        if ctx.prefix:
+            stmt = stmt.where(func.lower(column).like(f"%{ctx.prefix.lower()}%"))
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [self._value(ctx, str(row)) for row in rows]
+
+    async def _label_candidates(self, actor: Actor, ctx: Context, limit: int) -> list[Suggestion]:
+        acl = await self._perms.acl_for(self._s, actor, perms.ISSUE_VIEW)
+        if acl.is_empty:
+            return []
+        stmt = (
+            select(IssueLabel.label)
+            .join(Issue, Issue.id == IssueLabel.issue_id)
+            .distinct()
+            .order_by(IssueLabel.label)
+            .limit(limit)
+        )
+        if not acl.is_global:
+            stmt = stmt.where(Issue.project_id.in_(acl.project_ids))
+        if ctx.prefix:
+            stmt = stmt.where(func.lower(IssueLabel.label).like(f"%{ctx.prefix.lower()}%"))
+        rows = (await self._s.execute(stmt)).scalars().all()
+        return [self._value(ctx, row) for row in rows]
+
+    async def _custom_field_candidates(self, ctx: Context) -> list[Suggestion]:
+        """`cf["key"]`. 필드 자리에서만 낸다."""
+        if "CF" not in ctx.accepts:
+            return []
+        stmt = (
+            select(FieldDefinition.key, FieldDefinition.name)
+            .order_by(FieldDefinition.key)
+            .limit(50)
+        )
+        rows = (await self._s.execute(stmt)).all()
+        return [
+            Suggestion(
+                label=f'cf["{row.key}"]',
+                insert=f'cf["{row.key}"] ',
+                kind=SuggestKind.FIELD,
+                detail=row.name,
+                # 기본 필드가 먼저다. 커스텀 필드가 알파벳 순으로 앞에
+                # 끼어들면 `created` 를 찾으러 스크롤해야 한다.
+                weight=1,
+            )
+            for row in rows
+        ]
+
+    async def _custom_value_candidates(self, ctx: Context) -> list[Suggestion]:
+        """select 커스텀 필드는 고를 값이 정해져 있다."""
+        stmt = select(FieldDefinition.kind, FieldDefinition.config).where(
+            FieldDefinition.key == ctx.custom_key
+        )
+        row = (await self._s.execute(stmt)).one_or_none()
+        if row is None or row.kind not in {"select", "multiselect"}:
+            return []
+        options = row.config.get("options", [])
+        return [self._value(ctx, option) for option in options if isinstance(option, str)]
 
 
 class SavedFilterService:
@@ -290,6 +477,7 @@ def function_catalog() -> list[dict[str, Any]]:
 __all__ = [
     "SavedFilterService",
     "SearchService",
+    "SuggestResult",
     "ValidationResult",
     "field_catalog",
     "function_catalog",

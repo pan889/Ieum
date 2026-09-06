@@ -42,6 +42,29 @@ class ValidateResponse(BaseModel):
     fields: list[str] | None = None
 
 
+class SuggestRequest(BaseModel):
+    iql: str = Field(default="", max_length=4000)
+    #: 커서 위치. 문자열 끝이 아니라 사람이 지금 서 있는 자리다.
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class SuggestionResponse(BaseModel):
+    label: str
+    insert: str
+    kind: str
+    detail: str = ""
+    #: insert 안에서 커서가 멈출 자리. 함수는 괄호 안이다.
+    caret: int
+
+
+class SuggestResponse(BaseModel):
+    #: 갈아 끼울 범위. 닫는 따옴표를 삼키느라 커서보다 뒤로 갈 수 있다.
+    offset: int
+    length: int
+    items: list[SuggestionResponse]
+
+
 class SavedFilterCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     iql: str = Field(min_length=1, max_length=4000)
@@ -105,6 +128,37 @@ async def validate_iql(
 async def list_iql_fields(actor: CurrentActor) -> dict[str, Any]:
     """필터 칩과 자동완성이 쓰는 카탈로그."""
     return {"fields": field_catalog(), "functions": function_catalog()}
+
+
+@search_router.post("/iql/suggest", response_model=SuggestResponse)
+async def suggest_iql(
+    body: SuggestRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> SuggestResponse:
+    """커서 위치 기반 자동완성 (query-language.md 4절).
+
+    타이핑 중에 불리므로 절대 4xx 를 던지지 않는다 — 깨진 질의에는 빈 목록을
+    준다. 오류는 `validate` 가 말한다.
+    """
+    result = await SearchService(session, permissions).suggest(
+        actor, body.iql, body.offset, limit=body.limit
+    )
+    return SuggestResponse(
+        offset=result.start,
+        length=result.length,
+        items=[
+            SuggestionResponse(
+                label=item.label,
+                insert=item.insert,
+                kind=item.kind.value,
+                detail=item.detail,
+                caret=item.caret_at(),
+            )
+            for item in result.items
+        ],
+    )
 
 
 # ── 저장 필터 ───────────────────────────────────────────────────

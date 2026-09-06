@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
+from ieum.core.pagination import PageRequest
 from ieum.modules.identity.models import User
 from ieum.modules.identity.repository import UserRepository
 
@@ -53,6 +54,18 @@ async def get_users(session: AsyncSession, user_ids: Iterable[UUID]) -> dict[UUI
         return {}
     rows = await UserRepository(session).get_many(unique)
     return {row.id: _to_ref(row) for row in rows}
+
+
+async def search_users(
+    session: AsyncSession, *, query: str | None = None, limit: int = 20
+) -> list[UserRef]:
+    """이름·메일로 사용자를 찾는다. 담당자 값을 제안할 때 쓴다.
+
+    사용자 값은 UUID 로 컴파일된다 — 사람이 손으로 칠 수 있는 값이 아니라서,
+    이름으로 골라 ID 를 끼워 넣는 길이 없으면 담당자 조건 자체를 못 쓴다.
+    """
+    page = await UserRepository(session).list_page(PageRequest(limit=limit), query=query)
+    return [_to_ref(row) for row in page.items]
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> UserRef | None:

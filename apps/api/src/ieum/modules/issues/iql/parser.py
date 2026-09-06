@@ -53,6 +53,11 @@ def _lark() -> Lark:
     )
 
 
+def grammar() -> Lark:
+    """파서 객체 자체가 필요한 곳(자동완성)에 넘긴다."""
+    return _lark()
+
+
 def parse(source: str) -> Query:
     """IQL 문자열을 AST 로. 실패하면 위치가 담긴 IQLError."""
     if len(source) > MAX_QUERY_LENGTH:

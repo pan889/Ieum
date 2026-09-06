@@ -9,6 +9,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 import pytest_asyncio
@@ -25,6 +26,7 @@ from ieum.modules.issues.iql import errors as iql_errors
 from ieum.modules.issues.iql.ast import And, Comparison, Not, Operator, Or
 from ieum.modules.issues.iql.parser import parse
 from ieum.modules.issues.iql.registry import FunctionContext
+from ieum.modules.issues.iql.suggest import Suggestion
 from ieum.modules.issues.models import (
     FieldDefinition,
     IssueType,
@@ -863,3 +865,196 @@ class TestFilterChipShapes:
             ctx=FunctionContext(actor_id=new_id()),
             project_ids={"ENG": new_id()},
         )
+
+
+@pytest.mark.integration
+class TestSuggest:
+    """자동완성의 값 제안. 자리 판단은 test_iql_suggest.py 가 본다.
+
+    값은 권한을 탄다 — 못 보는 프로젝트의 키가 목록에 뜨면 그 자체가
+    정보 누출이다 (auth.md 5절).
+    """
+
+    async def ask(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        iql: str,
+        offset: int | None = None,
+    ) -> list[Suggestion]:
+        result = await SearchService(session, permissions).suggest(
+            actor, iql, len(iql) if offset is None else offset
+        )
+        return result.items
+
+    async def test_project_values_come_from_the_catalog(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        project = cast("Project", fixture_set["project"])
+        items = await self.ask(session, permissions, actor, 'project = "')
+        assert project.key in [i.label for i in items]
+        # 이름은 옆에 붙여 준다 — 키만으로는 어느 프로젝트인지 모른다.
+        assert [i.detail for i in items if i.label == project.key] == ["Query Test"]
+
+    async def test_invisible_projects_are_not_listed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        hidden = Project(key=f"H{secrets.token_hex(3).upper()}", name="Hidden")
+        session.add(hidden)
+        await session.flush()
+
+        actor = cast("Actor", fixture_set["actor"])
+        items = await self.ask(session, permissions, actor, "project = ")
+        assert hidden.key not in [i.label for i in items]
+
+    async def test_status_values_come_from_the_workflow(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        items = await self.ask(session, permissions, actor, "status = ")
+        assert "Open" in [i.label for i in items]
+
+    async def test_type_values_come_from_the_project(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        issue_type = cast("IssueType", fixture_set["type"])
+        items = await self.ask(session, permissions, actor, "type = ")
+        assert issue_type.name in [i.label for i in items]
+
+    async def test_types_of_invisible_projects_are_not_listed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """유형 이름은 그냥 이름이 아니다 ("Security Incident")."""
+        hidden_project = Project(key=f"S{secrets.token_hex(3).upper()}", name="Secret")
+        session.add(hidden_project)
+        await session.flush()
+        visible_type = cast("IssueType", fixture_set["type"])
+        hidden_type = IssueType(
+            project_id=hidden_project.id,
+            name=f"Secret-{secrets.token_hex(3)}",
+            workflow_id=visible_type.workflow_id,
+        )
+        session.add(hidden_type)
+        await session.flush()
+
+        actor = cast("Actor", fixture_set["actor"])
+        found = [i.label for i in await self.ask(session, permissions, actor, "type = ")]
+        assert hidden_type.name not in found
+        # 전역 유형(프로젝트 없음)은 그대로 보인다.
+        assert visible_type.name in found
+
+    async def test_label_values_come_from_visible_issues(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        items = await self.ask(session, permissions, actor, "labels = ")
+        assert {"urgent", "auth", "perf"} <= {i.label for i in items}
+
+    async def test_label_prefix_narrows(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        items = await self.ask(session, permissions, actor, 'labels = "ur')
+        assert [i.label for i in items] == ["urgent"]
+
+    async def test_user_values_show_the_name_but_insert_the_id(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """사용자 값은 UUID 로 컴파일된다. 손으로 칠 수 있는 값이 아니다."""
+        actor = cast("Actor", fixture_set["actor"])
+        owner = cast("User", fixture_set["owner"])
+        items = await self.ask(session, permissions, actor, "assignee = Own")
+        picked = next(i for i in items if i.label == "Owner")
+        assert picked.insert == f'"{owner.id}" '
+        assert picked.detail == owner.email
+
+    async def test_picked_value_compiles(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """제안을 그대로 끼운 질의는 반드시 실행된다.
+
+        고르는 순간 오류가 나는 제안은 없는 것만 못하다.
+        """
+        actor = cast("Actor", fixture_set["actor"])
+        service = SearchService(session, permissions)
+        heads = (
+            "project = ",
+            "status = ",
+            "labels = ",
+            "assignee = ",
+            "priority = ",
+            "archived = ",
+            "created > ",
+        )
+        for head in heads:
+            result = await service.suggest(actor, head, len(head))
+            assert result.items, head
+            for item in result.items[:3]:
+                candidate = head[: result.start] + item.insert
+                validation = await service.validate(actor, candidate)
+                assert validation.valid, f"{candidate!r}: {validation.error}"
+
+    async def test_custom_field_is_offered_and_its_options_too(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        fields = await self.ask(session, permissions, actor, "cf")
+        assert 'cf["severity"]' in [i.label for i in fields]
+
+        values = await self.ask(session, permissions, actor, 'cf["severity"] = ')
+        assert {"low", "high"} == {i.label for i in values}
+
+    async def test_broken_query_gives_an_empty_list_not_an_error(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        result = await SearchService(session, permissions).suggest(actor, "project = = =", 13)
+        assert result.items == []
+        assert result.length == 0
+
+    async def test_list_position_offers_values_inside_the_parenthesis(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = cast("Actor", fixture_set["actor"])
+        assert [i.label for i in await self.ask(session, permissions, actor, "labels IN ")] == ["("]
+        inside = await self.ask(session, permissions, actor, "labels IN (")
+        assert "urgent" in [i.label for i in inside]
