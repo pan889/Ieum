@@ -97,8 +97,7 @@ async def seed(session: AsyncSession, settings: Settings) -> None:
         log.info("seed.admin_created", email=email)
 
     admin_role = created_roles["Administrator"]
-    existing = await session.get(type(admin_role), admin_role.id)
-    assert existing is not None
+
     from sqlalchemy import select
 
     from ieum.modules.org.models import RoleAssignment

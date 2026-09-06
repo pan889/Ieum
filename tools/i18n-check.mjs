@@ -132,7 +132,14 @@ function walk(dir, acc = []) {
     if (entry === 'node_modules' || entry.startsWith('.')) continue
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) walk(full, acc)
-    else if (['.ts', '.tsx'].includes(extname(entry)) && !entry.endsWith('.d.ts')) acc.push(full)
+    else if (
+      ['.ts', '.tsx'].includes(extname(entry)) &&
+      !entry.endsWith('.d.ts') &&
+      // 테스트 설명문은 사용자에게 보이지 않는다. 번역 대상이 아니다.
+      !/\.(test|spec)\.tsx?$/.test(entry)
+    ) {
+      acc.push(full)
+    }
   }
   return acc
 }
