@@ -101,6 +101,12 @@
     @apply rounded bg-accent/15 px-1 py-0.5 font-medium text-accent;
   }
 
+  /* 코멘트가 달린 인용. 배경만 얹고 글자는 건드리지 않는다 — 본문을
+     읽는 흐름을 끊으면 코멘트가 방해물이 된다. */
+  .ieum-quote {
+    @apply rounded-sm bg-accent/15 text-inherit;
+  }
+
   /* 디렉티브(매크로) 블록. 본문과 구별되게 살짝 들여 놓는다. */
   .ieum-directive {
     @apply my-3 rounded-md border border-border bg-surface-raised px-3 py-2;

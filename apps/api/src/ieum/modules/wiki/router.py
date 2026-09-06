@@ -13,10 +13,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
+from ieum.core.markdown.anchors import MAX_CONTEXT, MAX_QUOTE, Anchor
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.modules.wiki.models import SPACE_KINDS
 from ieum.modules.wiki.portable import MAX_ARCHIVE_BYTES, content_disposition
-from ieum.modules.wiki.service import NewPage, PageService, PageView, SpaceService
+from ieum.modules.wiki.service import (
+    CommentView,
+    NewPage,
+    PageCommentService,
+    PageService,
+    PageView,
+    SpaceService,
+)
 
 spaces_router = APIRouter(prefix="/spaces", tags=["wiki"])
 pages_router = APIRouter(prefix="/pages", tags=["wiki"])
@@ -543,6 +551,176 @@ async def export_page(
             "Cache-Control": "no-store",
         },
     )
+
+
+# ── 코멘트 ──────────────────────────────────────────────────────
+
+
+class AnchorPayload(BaseModel):
+    """인용으로 위치를 잡는다 (wiki-markdown.md 6절).
+
+    **평문 기준**이다. 사람은 렌더된 글을 드래그하지 `**굵게**` 같은 원문을
+    고르지 않는다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    exact: str = Field(min_length=1, max_length=MAX_QUOTE)
+    prefix: str = Field(default="", max_length=MAX_CONTEXT)
+    suffix: str = Field(default="", max_length=MAX_CONTEXT)
+    #: 같은 인용이 여러 번 나올 때 몇 번째인지. 1부터.
+    occurrence: int = Field(default=1, ge=1, le=1000)
+    #: 달 때의 판. 진단용이라 앵커링에는 쓰지 않는다.
+    version_number: int | None = None
+
+
+class CommentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=MAX_BODY_LENGTH)
+    #: 없으면 문서 전체에 다는 코멘트다.
+    anchor: AnchorPayload | None = None
+    parent_id: UUID | None = None
+
+
+class CommentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=MAX_BODY_LENGTH)
+
+
+class CommentResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolved: bool = True
+
+
+class CommentAnchorResponse(BaseModel):
+    exact: str
+    prefix: str
+    suffix: str
+    occurrence: int
+    version_number: int | None
+
+
+class CommentMatchResponse(BaseModel):
+    """지금 문서에서 인용이 붙은 자리. 평문 기준 오프셋."""
+
+    start: int
+    end: int
+    how: str
+    score: float
+    #: 지금 문서에 실제로 있는 글자. 퍼지로 붙었으면 인용문과 다르다.
+    found: str
+
+
+class CommentResponse(BaseModel):
+    id: UUID
+    page_id: UUID
+    author_id: UUID | None
+    body: str
+    parent_id: UUID | None
+    anchor: CommentAnchorResponse | None
+    #: 못 붙었으면 `orphaned`. 인용문은 그대로 남는다 — 조용히 지우지 않는다.
+    anchor_status: str
+    match: CommentMatchResponse | None
+    resolved_at: datetime | None
+    edited_at: datetime | None
+    created_at: datetime
+
+
+def _comment(view: CommentView) -> CommentResponse:
+    row = view.comment
+    return CommentResponse(
+        id=row.id,
+        page_id=row.page_id,
+        author_id=row.author_id,
+        body=row.body,
+        parent_id=row.parent_id,
+        anchor=CommentAnchorResponse(**Anchor.from_json(row.anchor).as_json())
+        if row.anchor
+        else None,
+        anchor_status=row.anchor_status,
+        match=CommentMatchResponse(
+            start=view.match.start,
+            end=view.match.end,
+            how=view.match.how,
+            score=round(view.match.score, 3),
+            found=view.match.found,
+        )
+        if view.match
+        else None,
+        resolved_at=row.resolved_at,
+        edited_at=row.edited_at,
+        created_at=row.created_at,
+    )
+
+
+@pages_router.get("/{page_id}/comments", response_model=list[CommentResponse])
+async def list_page_comments(
+    page_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[CommentResponse]:
+    views = await PageCommentService(session, permissions).list_for(actor, page_id)
+    # 읽을 때마다 다시 앵커링한다. 상태가 바뀌었으면 그걸 남긴다.
+    await session.commit()
+    return [_comment(v) for v in views]
+
+
+@pages_router.post(
+    "/{page_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED
+)
+async def add_page_comment(
+    page_id: UUID,
+    body: CommentCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> CommentResponse:
+    view = await PageCommentService(session, permissions).add(
+        actor,
+        page_id,
+        body=body.body,
+        anchor=body.anchor.model_dump() if body.anchor else None,
+        parent_id=body.parent_id,
+    )
+    await session.commit()
+    return _comment(view)
+
+
+@pages_router.patch("/comments/{comment_id}", response_model=CommentResponse)
+async def edit_page_comment(
+    comment_id: UUID,
+    body: CommentUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> CommentResponse:
+    view = await PageCommentService(session, permissions).edit(actor, comment_id, body.body)
+    await session.commit()
+    return _comment(view)
+
+
+@pages_router.post("/comments/{comment_id}/resolve", response_model=CommentResponse)
+async def resolve_page_comment(
+    comment_id: UUID,
+    body: CommentResolveRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> CommentResponse:
+    view = await PageCommentService(session, permissions).resolve(
+        actor, comment_id, resolved=body.resolved
+    )
+    await session.commit()
+    return _comment(view)
+
+
+@pages_router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_page_comment(
+    comment_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> None:
+    await PageCommentService(session, permissions).delete(actor, comment_id)
+    await session.commit()
 
 
 __all__ = ["pages_router", "spaces_router"]

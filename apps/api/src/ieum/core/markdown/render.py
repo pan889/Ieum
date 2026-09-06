@@ -22,20 +22,27 @@ def to_html(text: str) -> str:
     return rendered
 
 
-def to_plaintext(text: str) -> str:
+def to_plaintext(text: str, *, include_code: bool = False) -> str:
     """검색 색인·발췌·알림 미리보기에 쓰는 평문.
 
     렌더 결과가 아니라 토큰에서 뽑는다. HTML 을 만들었다가 태그를 지우면
     표 셀이 붙어 버리고 링크 URI 가 본문에 섞인다.
+
+    코드 블록은 기본으로 뺀다 — 색인이 코드로 오염되면 안 된다
+    (wiki-markdown.md 10절: 코드는 별도 필드로 색인). 다만 **인라인 코멘트
+    앵커**는 코드에도 달 수 있어야 하므로 그쪽은 `include_code=True` 로
+    부른다. 코드에 단 코멘트가 항상 고아가 되면 코드 리뷰를 못 한다.
     """
     tokens = parser().parse(text)
     pieces: list[str] = []
     for token in tokens:
         if token.type in _SKIP_BLOCKS:
+            if include_code and token.type in {"fence", "code_block"}:
+                pieces.append(token.content + "\n")
             continue
         if token.type == "colon_fence":
             # 강조 상자 안쪽도 산문이다. 빼면 검색에서 안 잡힌다.
-            pieces.append(to_plaintext(token.content) + "\n")
+            pieces.append(to_plaintext(token.content, include_code=include_code) + "\n")
         elif token.type == "inline":
             pieces.append(_inline_text(token))
         elif token.type in {"paragraph_close", "heading_close", "list_item_close"}:

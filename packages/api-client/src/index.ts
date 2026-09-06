@@ -70,8 +70,12 @@ export {
 } from './boards'
 export {
   createWikiApi,
+  type CommentAnchor,
+  type CommentMatch,
+  type NewPageComment,
   type NewSpace,
   type NewWikiPage,
+  type PageComment,
   type PageNode,
   type PageRestriction,
   type PageVersionDetail,

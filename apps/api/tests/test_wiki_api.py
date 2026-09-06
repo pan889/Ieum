@@ -342,3 +342,204 @@ class TestImportExport:
         assert zipped.status_code == 200, zipped.text
         with zipfile.ZipFile(io.BytesIO(zipped.content)) as archive:
             assert archive.namelist() == ["배포-절차.md"]
+
+
+async def _page(
+    client: httpx.AsyncClient, headers: dict[str, str], space_id: str, body: str
+) -> dict[str, Any]:
+    r = await client.post(
+        f"{BASE}/pages",
+        json={"space_id": space_id, "title": "Runbook", "body": body, "publish": True},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return dict(r.json())
+
+
+class TestComments:
+    """문서 코멘트와 인라인 앵커 (wiki-markdown.md 6절)."""
+
+    BODY = "배포 전 마이그레이션을 검토한다. 운영 반영 시 롤백 계획을 준비한다."
+
+    async def test_a_page_comment_needs_no_anchor(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+
+        r = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments", json={"body": "잘 읽었다."}, headers=headers
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["anchor"] is None
+        assert r.json()["anchor_status"] == "ok"
+
+    async def test_an_inline_comment_reports_where_it_landed(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+
+        r = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments",
+            json={
+                "body": "여기 확인이 필요하다.",
+                "anchor": {"exact": "마이그레이션을 검토한다", "prefix": "배포 전 "},
+            },
+            headers=headers,
+        )
+        assert r.status_code == 201, r.text
+        match = r.json()["match"]
+        assert match["how"] == "exact"
+        assert match["found"] == "마이그레이션을 검토한다"
+
+    async def test_editing_the_page_orphans_a_lost_quote(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """조용히 지우지 않는다. 인용문은 남고 고아로 표시된다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments",
+            json={"body": "확인", "anchor": {"exact": "마이그레이션을 검토한다"}},
+            headers=headers,
+        )
+
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}",
+            json={"body": "이제 완전히 다른 내용만 남았다."},
+            headers=headers,
+        )
+
+        listed = await app_client.get(f"{BASE}/pages/{page['id']}/comments", headers=headers)
+        assert listed.status_code == 200, listed.text
+        row = listed.json()[0]
+        assert row["anchor_status"] == "orphaned"
+        assert row["match"] is None
+        # 인용문은 그대로다 — 무엇에 달았던 코멘트인지 보여야 한다.
+        assert row["anchor"]["exact"] == "마이그레이션을 검토한다"
+
+    async def test_a_restored_page_re_anchors(self, app_client: httpx.AsyncClient) -> None:
+        """되돌리면 다시 붙는다. 한 번 고아면 영영 고아인 것은 틀렸다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments",
+            json={"body": "확인", "anchor": {"exact": "마이그레이션을 검토한다"}},
+            headers=headers,
+        )
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}", json={"body": "딴 얘기."}, headers=headers
+        )
+        orphaned = await app_client.get(f"{BASE}/pages/{page['id']}/comments", headers=headers)
+        assert orphaned.json()[0]["anchor_status"] == "orphaned"
+
+        await app_client.post(f"{BASE}/pages/{page['id']}/versions/1/restore", headers=headers)
+
+        again = await app_client.get(f"{BASE}/pages/{page['id']}/comments", headers=headers)
+        assert again.json()[0]["anchor_status"] == "ok"
+
+    async def test_a_small_edit_still_matches(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments",
+            json={"body": "확인", "anchor": {"exact": "마이그레이션을 검토한다"}},
+            headers=headers,
+        )
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}",
+            json={"body": "배포 전에 마이그레이션을 꼭 검토한다. 뒤 문장."},
+            headers=headers,
+        )
+
+        listed = await app_client.get(f"{BASE}/pages/{page['id']}/comments", headers=headers)
+        row = listed.json()[0]
+        assert row["anchor_status"] == "ok"
+        assert row["match"]["how"] == "fuzzy"
+
+    async def test_resolve_and_reopen(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        created = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments", json={"body": "확인 부탁"}, headers=headers
+        )
+        comment_id = created.json()["id"]
+
+        resolved = await app_client.post(
+            f"{BASE}/pages/comments/{comment_id}/resolve", json={"resolved": True}, headers=headers
+        )
+        assert resolved.json()["resolved_at"] is not None
+
+        reopened = await app_client.post(
+            f"{BASE}/pages/comments/{comment_id}/resolve",
+            json={"resolved": False},
+            headers=headers,
+        )
+        assert reopened.json()["resolved_at"] is None
+
+    async def test_edit_marks_the_time(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        created = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments", json={"body": "처음"}, headers=headers
+        )
+        edited = await app_client.patch(
+            f"{BASE}/pages/comments/{created.json()['id']}",
+            json={"body": "고쳤다"},
+            headers=headers,
+        )
+        assert edited.json()["body"] == "고쳤다"
+        assert edited.json()["edited_at"] is not None
+
+    async def test_replies_are_one_level_deep(self, app_client: httpx.AsyncClient) -> None:
+        """더 깊어지면 화면에서 읽을 수 없다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        root = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments", json={"body": "질문"}, headers=headers
+        )
+        reply = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments",
+            json={"body": "답", "parent_id": root.json()["id"]},
+            headers=headers,
+        )
+        assert reply.status_code == 201, reply.text
+
+        deeper = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments",
+            json={"body": "또 답", "parent_id": reply.json()["id"]},
+            headers=headers,
+        )
+        assert deeper.status_code == 422
+        assert deeper.json()["error"]["code"] == "wiki.comment_nesting_too_deep"
+
+    async def test_an_empty_comment_is_rejected(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        r = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments", json={"body": "   "}, headers=headers
+        )
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "wiki.comment_empty"
+
+    async def test_delete_removes_it(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], self.BODY)
+        created = await app_client.post(
+            f"{BASE}/pages/{page['id']}/comments", json={"body": "지울 것"}, headers=headers
+        )
+        gone = await app_client.delete(
+            f"{BASE}/pages/comments/{created.json()['id']}", headers=headers
+        )
+        assert gone.status_code == 204
+        listed = await app_client.get(f"{BASE}/pages/{page['id']}/comments", headers=headers)
+        assert listed.json() == []

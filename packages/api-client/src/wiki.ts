@@ -95,6 +95,54 @@ export interface PageRestriction {
   principal_id: string
 }
 
+
+/**
+ * 인용으로 위치를 잡는 앵커 (wiki-markdown.md 6절).
+ *
+ * **평문 기준**이다. 사람은 렌더된 글을 드래그하지 `**굵게**` 같은 원문을
+ * 고르지 않는다.
+ */
+export interface CommentAnchor {
+  exact: string
+  prefix: string
+  suffix: string
+  /** 같은 인용이 여러 번 나올 때 몇 번째인지. 1부터. */
+  occurrence: number
+  version_number: number | null
+}
+
+/** 지금 문서에서 인용이 붙은 자리. 못 붙었으면 코멘트의 match 가 null. */
+export interface CommentMatch {
+  start: number
+  end: number
+  how: 'exact' | 'fuzzy'
+  score: number
+  /** 지금 문서에 실제로 있는 글자. 퍼지로 붙었으면 인용문과 다르다. */
+  found: string
+}
+
+export interface PageComment {
+  id: string
+  page_id: string
+  author_id: string | null
+  body: string
+  parent_id: string | null
+  anchor: CommentAnchor | null
+  /** 못 붙었으면 `orphaned`. 인용문은 남는다 — 조용히 지우지 않는다. */
+  anchor_status: 'ok' | 'orphaned'
+  match: CommentMatch | null
+  resolved_at: string | null
+  edited_at: string | null
+  created_at: string
+}
+
+export interface NewPageComment {
+  body: string
+  /** 없으면 문서 전체에 다는 코멘트다. */
+  anchor?: Omit<CommentAnchor, 'version_number'> & { version_number?: number | null }
+  parent_id?: string | null
+}
+
 const SPACES = '/api/v1/spaces'
 const PAGES = '/api/v1/pages'
 
@@ -151,6 +199,17 @@ export function createWikiApi(client: ApiClient) {
         client.post<WikiPage>(`${PAGES}/${id}/versions/${String(number)}/restore`),
 
       exportMarkdown: (id: string) => client.getBlob(`${PAGES}/${id}/export`),
+
+      comments: {
+        list: (pageId: string) => client.get<PageComment[]>(`${PAGES}/${pageId}/comments`),
+        add: (pageId: string, body: NewPageComment) =>
+          client.post<PageComment>(`${PAGES}/${pageId}/comments`, body),
+        edit: (commentId: string, body: string) =>
+          client.patch<PageComment>(`${PAGES}/comments/${commentId}`, { body }),
+        resolve: (commentId: string, resolved: boolean) =>
+          client.post<PageComment>(`${PAGES}/comments/${commentId}/resolve`, { resolved }),
+        remove: (commentId: string) => client.delete<void>(`${PAGES}/comments/${commentId}`),
+      },
 
       restrictions: (id: string) => client.get<PageRestriction[]>(`${PAGES}/${id}/restrictions`),
       setRestrictions: (

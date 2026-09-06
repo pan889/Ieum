@@ -41,5 +41,22 @@
   "page.versionLine": "v{number} · updated {when}",
   "transfer.import": "Import .md",
   "transfer.export": "Export ZIP",
-  "transfer.exportPage": "Export .md"
+  "transfer.exportPage": "Export .md",
+  "comments.title": "Comments",
+  "comments.add": "Comment on selection",
+  "comments.selectHint": "Select text in the page, then choose “Comment on selection”.",
+  "comments.wholePage": "This comment is on the whole page.",
+  "comments.body": "Comment",
+  "comments.post": "Post",
+  "comments.empty": "No comments yet.",
+  "comments.reply": "Reply",
+  "comments.resolve": "Resolve",
+  "comments.reopen": "Reopen",
+  "comments.resolved": "Resolved",
+  "comments.jump": "Go to quote",
+  "comments.edited": "edited",
+  "comments.orphaned": "Quote gone",
+  "comments.orphanedHint": "The quoted text is no longer in the page. The comment is kept so you can see what it was about.",
+  "comments.showResolved": "Show resolved ({count, number})",
+  "comments.hideResolved": "Hide resolved"
 }

@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { PageNode, WikiPage } from '@ieum/api-client'
@@ -15,6 +15,7 @@ import { DocumentPlaceProvider, RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
 
+import { Comments } from './Comments'
 import { ancestorsOf } from './tree'
 import { usePageHistory } from './hooks'
 
@@ -29,6 +30,8 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
   const { t } = useTranslation(['wiki', 'common'])
   const [editing, setEditing] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  // 인용 하이라이트는 렌더된 DOM 위에 얹는다. 그래서 본문 요소가 필요하다.
+  const body = useRef<HTMLDivElement | null>(null)
 
   // 자기 자신은 제목으로 따로 그린다. 빵부스러기에는 조상만 남긴다.
   const trail = ancestorsOf(allNodes, page.id).slice(0, -1)
@@ -108,10 +111,12 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
       ) : (
         <Card>
           {page.body.trim() ? (
-            // `::children` 은 지금 문서가 어디에 있는지 알아야 한다.
-            <DocumentPlaceProvider place={{ spaceKey, path: page.path, nodes: allNodes }}>
-              <RichText source={page.body} />
-            </DocumentPlaceProvider>
+            <div ref={body}>
+              {/* `::children` 은 지금 문서가 어디에 있는지 알아야 한다. */}
+              <DocumentPlaceProvider place={{ spaceKey, path: page.path, nodes: allNodes }}>
+                <RichText source={page.body} />
+              </DocumentPlaceProvider>
+            </div>
           ) : (
             <p className="text-sm text-muted">{t('wiki:page.emptyBody')}</p>
           )}
@@ -129,6 +134,15 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
       ) : null}
 
       {showHistory ? <History page={page} onRestored={onChanged} /> : null}
+
+      {!editing ? (
+        <Comments
+          pageId={page.id}
+          versionNumber={page.version_number}
+          bodyRef={body}
+          bodyKey={page.body}
+        />
+      ) : null}
 
       {!page.archived_at && !editing ? (
         <Button

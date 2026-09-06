@@ -45,6 +45,9 @@ export function SpaceScreen() {
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['wiki', 'tree', space.data?.id] })
     void queryClient.invalidateQueries({ queryKey: ['wiki', 'page', spaceKey] })
+    // 코멘트는 여기서 건드리지 않는다. 판 번호가 키에 들어 있어 본문이
+    // 바뀌면 저절로 다시 받는다. 여기서 무효화하면 휴지통으로 보낸 직후
+    // 사라진 문서의 코멘트를 부르러 가서 404 가 난다.
   }
 
   if (space.isPending) {

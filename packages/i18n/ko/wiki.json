@@ -41,5 +41,22 @@
   "page.versionLine": "v{number} · {when} 수정",
   "transfer.import": ".md 가져오기",
   "transfer.export": "ZIP 내보내기",
-  "transfer.exportPage": ".md 내보내기"
+  "transfer.exportPage": ".md 내보내기",
+  "comments.title": "코멘트",
+  "comments.add": "선택한 곳에 코멘트",
+  "comments.selectHint": "본문에서 글을 선택한 뒤 “선택한 곳에 코멘트”를 누른다.",
+  "comments.wholePage": "문서 전체에 다는 코멘트다.",
+  "comments.body": "코멘트",
+  "comments.post": "남기기",
+  "comments.empty": "아직 코멘트가 없다.",
+  "comments.reply": "답글",
+  "comments.resolve": "해결",
+  "comments.reopen": "다시 열기",
+  "comments.resolved": "해결됨",
+  "comments.jump": "인용 위치로",
+  "comments.edited": "수정됨",
+  "comments.orphaned": "인용 사라짐",
+  "comments.orphanedHint": "인용한 글이 문서에서 사라졌다. 무엇에 달았던 코멘트인지 알 수 있게 남겨 둔다.",
+  "comments.showResolved": "해결된 것 보기 ({count, number})",
+  "comments.hideResolved": "해결된 것 숨기기"
 }

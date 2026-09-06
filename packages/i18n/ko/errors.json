@@ -123,5 +123,9 @@
   "wiki.import_too_large": "업로드가 너무 큽니다.",
   "wiki.invalid_front_matter": "파일의 front matter 를 읽을 수 없습니다.",
   "wiki.invalid_archive": "읽을 수 있는 ZIP 이 아닙니다.",
-  "wiki.invalid_encoding": "UTF-8 로 저장된 파일만 가져올 수 있습니다."
+  "wiki.invalid_encoding": "UTF-8 로 저장된 파일만 가져올 수 있습니다.",
+  "wiki.comment_empty": "내용을 적고 남긴다.",
+  "wiki.comment_anchor_empty": "코멘트를 달 글을 선택한다.",
+  "wiki.comment_parent_not_found": "그 코멘트가 사라졌다. 새로고침하고 다시 시도한다.",
+  "wiki.comment_nesting_too_deep": "답글에는 답글을 달 수 없다. 원래 코멘트에 답글을 단다."
 }

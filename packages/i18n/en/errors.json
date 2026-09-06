@@ -123,5 +123,9 @@
   "wiki.import_too_large": "That upload is too large.",
   "wiki.invalid_front_matter": "The front matter in that file couldn't be read.",
   "wiki.invalid_archive": "That file isn't a readable ZIP.",
-  "wiki.invalid_encoding": "Only UTF-8 files can be imported."
+  "wiki.invalid_encoding": "Only UTF-8 files can be imported.",
+  "wiki.comment_empty": "Write something before posting.",
+  "wiki.comment_anchor_empty": "Select some text to comment on.",
+  "wiki.comment_parent_not_found": "That comment is gone — reload and try again.",
+  "wiki.comment_nesting_too_deep": "Replies can't have replies. Reply to the original comment instead."
 }

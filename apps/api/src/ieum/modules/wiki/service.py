@@ -19,11 +19,14 @@ from ieum.core.exceptions import (
     ConflictError,
     NotFoundError,
     OptimisticLockError,
+    PermissionDeniedError,
     ValidationError,
 )
 from ieum.core.logging import get_logger
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown import normalize as normalize_markdown
+from ieum.core.markdown import to_plaintext
+from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
@@ -33,6 +36,7 @@ from ieum.modules.wiki.models import (
     MAX_DEPTH,
     SPACE_KINDS,
     Page,
+    PageComment,
     PageRestriction,
     PageVersion,
     Space,
@@ -45,6 +49,7 @@ from ieum.modules.wiki.portable import (
     write_archive,
 )
 from ieum.modules.wiki.repository import (
+    PageCommentRepository,
     PageLabelRepository,
     PageRepository,
     PageRestrictionRepository,
@@ -813,8 +818,197 @@ class PageService:
         return list(dict.fromkeys(cleaned))
 
 
+@dataclass(frozen=True, slots=True)
+class CommentView:
+    """코멘트 하나와, 지금 문서에서 그 인용이 어디에 붙는지."""
+
+    comment: PageComment
+    #: 인라인 코멘트일 때만. 못 붙었으면 None(고아).
+    match: AnchorMatch | None
+
+    @property
+    def is_orphaned(self) -> bool:
+        return self.comment.anchor is not None and self.match is None
+
+
+class PageCommentService:
+    """문서 코멘트. `anchor` 가 있으면 인라인 (wiki-markdown.md 6절).
+
+    앵커는 **평문**에서 잡는다. 사람은 렌더된 글을 드래그하지 `**굵게**` 같은
+    원문을 고르지 않는다. 원문에 맞추면 굵게를 기울임으로 바꾸기만 해도
+    멀쩡한 인용이 고아가 된다.
+
+    고아를 지우지 않는다. 소리 없이 사라지는 코멘트는 아무도 믿지 않는다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._comments = PageCommentRepository(session)
+        self._pages = PageRepository(session)
+        self._versions = PageVersionRepository(session)
+
+    async def add(
+        self,
+        actor: Actor,
+        page_id: UUID,
+        *,
+        body: str,
+        anchor: dict[str, Any] | None = None,
+        parent_id: UUID | None = None,
+    ) -> CommentView:
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.COMMENT_ADD, scope=Scope.space(page.space_id), subject=page
+        )
+        text = self._require_text(body)
+
+        parsed = Anchor.from_json(anchor) if anchor else None
+        if parsed is not None and not parsed.exact.strip():
+            raise ValidationError("인용할 텍스트가 비어 있다.", code="wiki.comment_anchor_empty")
+        if parent_id is not None:
+            await self._require_same_page_parent(parent_id, page_id)
+
+        plain = await self._plaintext(page)
+        match = locate(plain, parsed) if parsed is not None else None
+        comment = self._comments.add(
+            PageComment(
+                page_id=page_id,
+                author_id=actor.user_id,
+                body=text,
+                anchor=parsed.as_json() if parsed else None,
+                # 달자마자 고아면 인용을 잘못 보낸 것이다. 그래도 거절하지
+                # 않는다 — 쓴 글을 잃는 쪽이 더 나쁘다.
+                anchor_status="ok" if parsed is None or match else "orphaned",
+                parent_id=parent_id,
+            )
+        )
+        await self._s.flush()
+        log.info(
+            "wiki.comment_added",
+            actor=str(actor.user_id),
+            page=str(page_id),
+            inline=parsed is not None,
+            orphaned=comment.anchor_status == "orphaned",
+        )
+        return CommentView(comment=comment, match=match)
+
+    async def list_for(self, actor: Actor, page_id: UUID) -> list[CommentView]:
+        """코멘트를 모으면서 **읽을 때마다** 다시 앵커링한다.
+
+        본문이 바뀔 때 한 번만 다시 붙이면, 되돌리기·복원으로 본문이 원래대로
+        돌아와도 고아로 남는다. 다시 붙는 게 맞다.
+        """
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
+        )
+        rows = await self._comments.for_page(page_id)
+        plain = await self._plaintext(page)
+
+        views: list[CommentView] = []
+        for row in rows:
+            match = locate(plain, Anchor.from_json(row.anchor)) if row.anchor else None
+            status = "ok" if row.anchor is None or match else "orphaned"
+            if row.anchor_status != status:
+                row.anchor_status = status
+            views.append(CommentView(comment=row, match=match))
+        return views
+
+    async def edit(self, actor: Actor, comment_id: UUID, body: str) -> CommentView:
+        comment, page = await self._require_comment(comment_id)
+        scope = Scope.space(page.space_id)
+        if not await self._perms.has(
+            self._s, actor, perms.COMMENT_EDIT_ANY, scope=scope, subject=page
+        ):
+            if comment.author_id != actor.user_id:
+                raise PermissionDeniedError(
+                    "타인의 코멘트를 수정할 권한이 없다.",
+                    details={"permission": perms.COMMENT_EDIT_ANY},
+                )
+            await self._perms.require(
+                self._s, actor, perms.COMMENT_EDIT_OWN, scope=scope, subject=page
+            )
+        comment.body = self._require_text(body)
+        comment.edited_at = utcnow()
+        plain = await self._plaintext(page)
+        match = locate(plain, Anchor.from_json(comment.anchor)) if comment.anchor else None
+        return CommentView(comment=comment, match=match)
+
+    async def resolve(self, actor: Actor, comment_id: UUID, *, resolved: bool) -> CommentView:
+        """해결 표시. 지우지 않는다 — 왜 그렇게 됐는지가 이력이다."""
+        comment, page = await self._require_comment(comment_id)
+        await self._perms.require(
+            self._s, actor, perms.COMMENT_ADD, scope=Scope.space(page.space_id), subject=page
+        )
+        comment.resolved_at = utcnow() if resolved else None
+        plain = await self._plaintext(page)
+        match = locate(plain, Anchor.from_json(comment.anchor)) if comment.anchor else None
+        return CommentView(comment=comment, match=match)
+
+    async def delete(self, actor: Actor, comment_id: UUID) -> None:
+        comment, page = await self._require_comment(comment_id)
+        scope = Scope.space(page.space_id)
+        if not await self._perms.has(
+            self._s, actor, perms.COMMENT_EDIT_ANY, scope=scope, subject=page
+        ):
+            if comment.author_id != actor.user_id:
+                raise PermissionDeniedError(
+                    "타인의 코멘트를 지울 권한이 없다.",
+                    details={"permission": perms.COMMENT_EDIT_ANY},
+                )
+            await self._perms.require(
+                self._s, actor, perms.COMMENT_EDIT_OWN, scope=scope, subject=page
+            )
+        await self._s.delete(comment)
+
+    async def _plaintext(self, page: Page) -> str:
+        """앵커를 맞출 대상. 지금 보이는 판의 평문이다."""
+        if page.current_version_id is None:
+            latest = await self._versions.history(page.id, limit=1)
+            body = latest[0].body if latest else ""
+        else:
+            version = await self._versions.get(page.current_version_id)
+            body = version.body if version else ""
+        # 코드에 단 코멘트가 항상 고아가 되면 코드 리뷰를 못 한다.
+        return to_plaintext(body, include_code=True)
+
+    async def _require_page(self, page_id: UUID) -> Page:
+        page = await self._pages.get(page_id)
+        if page is None or page.is_archived:
+            raise NotFoundError("문서를 찾을 수 없다.")
+        return page
+
+    async def _require_comment(self, comment_id: UUID) -> tuple[PageComment, Page]:
+        comment = await self._comments.get(comment_id)
+        if comment is None:
+            raise NotFoundError("코멘트를 찾을 수 없다.")
+        return comment, await self._require_page(comment.page_id)
+
+    async def _require_same_page_parent(self, parent_id: UUID, page_id: UUID) -> None:
+        parent = await self._comments.get(parent_id)
+        if parent is None or parent.page_id != page_id:
+            raise ValidationError(
+                "답글을 달 코멘트를 찾을 수 없다.", code="wiki.comment_parent_not_found"
+            )
+        if parent.parent_id is not None:
+            # 한 단계까지만. 더 깊어지면 화면에서 읽을 수 없다.
+            raise ValidationError(
+                "답글에는 답글을 달 수 없다.", code="wiki.comment_nesting_too_deep"
+            )
+
+    @staticmethod
+    def _require_text(body: str) -> str:
+        text = normalize_markdown(body)
+        if not text:
+            raise ValidationError("내용을 비울 수 없다.", code="wiki.comment_empty")
+        return text
+
+
 __all__ = [
+    "CommentView",
     "NewPage",
+    "PageCommentService",
     "PageRestrictionGuard",
     "PageService",
     "PageView",
