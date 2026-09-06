@@ -38,8 +38,8 @@ describe('본문 나누기', () => {
   it('모르는 이름은 그냥 텍스트다', () => {
     // 남의 도구가 만든 문서에서 `::` 로 시작하는 줄 하나 때문에 화면이
     // 비면 안 된다. 미지원 뷰어에서 텍스트로 읽히는 것과 같은 성질이다.
-    const segments = splitDirectives('::excerpt{page="ENG/x"}')
-    expect(segments).toEqual([{ kind: 'markdown', text: '::excerpt{page="ENG/x"}' }])
+    const segments = splitDirectives('::gallery{album="2026"}')
+    expect(segments).toEqual([{ kind: 'markdown', text: '::gallery{album="2026"}' }])
   })
 
   it('코드 펜스 안은 예제다', () => {

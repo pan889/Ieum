@@ -12,6 +12,8 @@
   "markdown.directive_needs_query": "`::{directive}` 에는 query 가 필요하다.",
   "markdown.unknown_issue_column": "그릴 수 없는 열이다: {unknown}. 쓸 수 있는 열: {allowed}.",
   "markdown.invalid_directive_limit": "`::{directive}` 의 limit 은 1 이상 {max} 이하여야 한다.",
+  "markdown.directive_needs_page": "`::{directive}` 에는 page 가 필요합니다 (예: page=\"ENG/deploy\").",
+  "markdown.invalid_page_path": "문서 경로 모양이 아닙니다: {value}. SPACE/경로 로 적습니다.",
   "common.payload_too_large": "너무 깁니다. {max}자 이하로 줄여 주세요.",
   "attachments.unknown_owner": "여기에는 파일을 붙일 수 없습니다.",
   "attachments.invalid_name": "파일 이름이 필요합니다.",

@@ -19,5 +19,9 @@
   "issues.column.assignee": "Assignee",
   "issues.column.priority": "Priority",
   "issues.column.due_date": "Due",
-  "issues.column.updated": "Updated"
+  "issues.column.updated": "Updated",
+  "excerpt.needsPage": "This excerpt needs a page, like page=\"ENG/deploy\".",
+  "excerpt.loading": "Loading the excerpt…",
+  "excerpt.missing": "That page doesn't exist, or you can't see it.",
+  "excerpt.empty": "That page has no text yet."
 }

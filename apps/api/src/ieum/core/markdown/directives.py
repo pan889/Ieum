@@ -47,8 +47,10 @@ TOC = "toc"
 CHILDREN = "children"
 #: IQL 결과 표. 권한은 서버가 거른다.
 ISSUES = "issues"
+#: 다른 문서의 앞부분. 권한은 서버가 거른다 — 못 보는 문서는 존재도 모른다.
+EXCERPT = "excerpt"
 
-LEAF_NAMES = (TOC, CHILDREN, ISSUES)
+LEAF_NAMES = (TOC, CHILDREN, ISSUES, EXCERPT)
 
 #: 강조 상자. 이름이 곧 톤이다.
 CONTAINER_NAMES = ("info", "note", "tip", "warning", "danger")
@@ -118,6 +120,9 @@ def validate(directive: Directive) -> None:
     elif name == ISSUES:
         _reject_unknown_keys(directive, {"query", "columns", "limit"})
         _issues(directive)
+    elif name == EXCERPT:
+        _reject_unknown_keys(directive, {"page"})
+        _excerpt(directive)
 
 
 def _fail(directive: Directive, message: str, *, code: str, **details: Any) -> ValidationError:
@@ -153,6 +158,29 @@ def _depth(directive: Directive, maximum: int) -> None:
             code="markdown.invalid_directive_depth",
             value=raw,
             max=maximum,
+        )
+
+
+#: `SPACE/조각/조각`. 스페이스 키는 대문자·숫자, 나머지는 슬러그다.
+_PAGE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:/[^/\s][^/]*)*$")
+
+
+def _excerpt(directive: Directive) -> None:
+    path = directive.attrs.get("page", "").strip()
+    if not path:
+        # 어느 문서인지 없으면 그릴 것이 정해지지 않는다. "이 문서" 를 기본으로
+        # 두면 자기를 끌어와 무한히 감긴다.
+        raise _fail(
+            directive,
+            "`::excerpt` 에는 page 가 필요하다.",
+            code="markdown.directive_needs_page",
+        )
+    if not _PAGE_PATH_RE.match(path):
+        raise _fail(
+            directive,
+            f"page 는 `SPACE/경로` 모양이어야 한다: {path}",
+            code="markdown.invalid_page_path",
+            value=path,
         )
 
 

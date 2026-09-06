@@ -11,7 +11,7 @@
  */
 
 /** 데이터가 필요해 컴포넌트로 그리는 리프 디렉티브. */
-export const LEAF_NAMES = ['toc', 'children', 'issues'] as const
+export const LEAF_NAMES = ['toc', 'children', 'issues', 'excerpt'] as const
 /** 강조 상자. 이름이 곧 톤이다. */
 export const CONTAINER_NAMES = ['info', 'note', 'tip', 'warning', 'danger'] as const
 
@@ -190,4 +190,52 @@ function uniqueSlug(text: string, seen: Map<string, number>): string {
   const count = seen.get(base) ?? 0
   seen.set(base, count + 1)
   return count === 0 ? base : `${base}-${String(count + 1)}`
+}
+
+/**
+ * `::excerpt` 가 보여 줄 앞부분 — 문서의 첫 문단.
+ *
+ * 앞부분을 표시하는 별도 문법(`<!-- more -->` 같은 것)을 새로 만들지 않는다.
+ * 문서마다 표시를 달아야 인용이 되는 기능은 아무도 쓰지 않는다. 첫 문단은
+ * 사람이 이미 요약으로 쓰고 있는 자리다.
+ *
+ * 제목·디렉티브·코드 펜스·front matter 는 건너뛴다 — 제목만 뜨는 인용은
+ * 원문 링크보다 나을 게 없다.
+ */
+export function firstParagraph(source: string): string {
+  const lines = source.split('\n')
+  const paragraph: string[] = []
+  let index = 0
+
+  // front matter 는 문서 첫 줄에서만 인정한다 (dialect.ts 와 같은 규칙).
+  if (lines[0]?.trimEnd() === '---') {
+    const close = lines.findIndex((line, i) => i > 0 && line.trimEnd() === '---')
+    if (close > 0) index = close + 1
+  }
+
+  for (; index < lines.length; index += 1) {
+    const line = lines[index] as string
+    const trimmed = line.trim()
+
+    if (paragraph.length === 0) {
+      if (trimmed === '') continue
+      // 코드 펜스는 통째로 건너뛴다. 안쪽 글자가 문단처럼 보일 수 있다.
+      const fence = FENCE_RE.exec(trimmed)
+      if (fence) {
+        const marker = fence[1] as string
+        index += 1
+        while (index < lines.length && !(lines[index] as string).trimStart().startsWith(marker)) {
+          index += 1
+        }
+        continue
+      }
+      if (/^#{1,6}[ \t]/.test(trimmed)) continue
+      if (trimmed.startsWith('::')) continue
+      if (/^([-*_])\1{2,}$/.test(trimmed.replace(/\s/g, ''))) continue
+    }
+
+    if (trimmed === '') break
+    paragraph.push(trimmed)
+  }
+  return paragraph.join(' ')
 }

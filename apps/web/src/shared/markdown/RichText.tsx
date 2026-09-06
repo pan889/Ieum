@@ -15,12 +15,12 @@ import { createContext, useContext, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { PageNode } from '@ieum/api-client'
-import { searchApi, usersApi } from '@/shared/api'
+import { searchApi, usersApi, wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 
 import { MarkdownHtml } from './Markdown'
 import { renderMarkdown } from './dialect'
-import { collectHeadings, splitDirectives } from './directives'
+import { collectHeadings, firstParagraph, splitDirectives } from './directives'
 import type { Heading, Segment } from './directives'
 
 /**
@@ -92,6 +92,7 @@ function Part({ part, source }: { part: Rendered; source: string }) {
   }
   if (segment.name === 'toc') return <Toc source={source} depth={depthOf(segment.attrs, 3)} />
   if (segment.name === 'children') return <Children depth={depthOf(segment.attrs, 1)} />
+  if (segment.name === 'excerpt') return <Excerpt path={segment.attrs['page'] ?? ''} />
   return <Issues attrs={segment.attrs} />
 }
 
@@ -310,6 +311,50 @@ function useAssigneeNames(rows: { assignee_id: string | null }[]): ReadonlyMap<s
     placeholderData: (previous) => previous,
   })
   return result.data ?? NO_NAMES
+}
+
+/**
+ * `::excerpt{page="SPACE/경로"}` — 다른 문서의 앞부분.
+ *
+ * 권한은 서버가 거른다. 못 보는 문서는 404 로 오고 화면도 "없거나 볼 수 없다"
+ * 라고만 말한다 — "권한이 없다" 는 그 문서가 있다는 뜻이라 그 자체가 정보다.
+ */
+function Excerpt({ path }: { path: string }) {
+  const { t } = useTranslation(['markdown'])
+  const trimmed = path.trim().replace(/^\/+/, '')
+  const slash = trimmed.indexOf('/')
+  const space = slash === -1 ? trimmed : trimmed.slice(0, slash)
+  const rest = slash === -1 ? '' : trimmed.slice(slash + 1)
+
+  const page = useQuery({
+    queryKey: ['wiki', 'excerpt', space, rest],
+    queryFn: () => wikiApi.pages.getByPath(space, rest),
+    enabled: space !== '' && rest !== '',
+    retry: false,
+    staleTime: 30_000,
+  })
+
+  if (space === '' || rest === '') return <DirectiveNote>{t('markdown:excerpt.needsPage')}</DirectiveNote>
+  if (page.isPending) return <DirectiveNote>{t('markdown:excerpt.loading')}</DirectiveNote>
+  if (page.isError) return <DirectiveNote tone="error">{t('markdown:excerpt.missing')}</DirectiveNote>
+
+  const summary = firstParagraph(page.data.body)
+  return (
+    <blockquote className="ieum-directive my-3 border-l-2 border-border pl-3">
+      <Link
+        to="/wiki/$spaceKey/$"
+        params={{ spaceKey: space, _splat: rest }}
+        className="text-sm font-medium text-accent"
+      >
+        {page.data.title}
+      </Link>
+      {summary ? (
+        <MarkdownHtml html={renderMarkdown(summary)} className="text-sm text-muted" />
+      ) : (
+        <p className="text-sm text-muted">{t('markdown:excerpt.empty')}</p>
+      )}
+    </blockquote>
+  )
 }
 
 function DirectiveNote({

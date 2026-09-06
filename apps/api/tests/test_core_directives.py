@@ -72,7 +72,7 @@ class TestValidate:
         [
             "::unknown",
             "::unknown{whatever=1}",
-            '::excerpt{page="ENG/x"}',  # 아직 구현 안 한 이름
+            '::gallery{album="2026"}',  # 아직 없는 이름
         ],
     )
     def test_unknown_names_pass_through(self, source: str) -> None:
@@ -82,6 +82,33 @@ class TestValidate:
     @pytest.mark.parametrize("source", ["::toc", "::toc{depth=1}", "::toc{depth=6}"])
     def test_accepts_valid_toc(self, source: str) -> None:
         validate_source(source)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            '::excerpt{page="ENG/deploy"}',
+            '::excerpt{page="ENG/deploy/rollback"}',
+            '::excerpt{page="ENG"}',
+        ],
+    )
+    def test_accepts_valid_excerpt(self, source: str) -> None:
+        validate_source(source)
+
+    @pytest.mark.parametrize(
+        ("source", "code"),
+        [
+            ("::excerpt", "markdown.directive_needs_page"),
+            ('::excerpt{page=""}', "markdown.directive_needs_page"),
+            ('::excerpt{page="/leading"}', "markdown.invalid_page_path"),
+            ('::excerpt{page="ENG/"}', "markdown.invalid_page_path"),
+            ('::excerpt{pages="ENG/x"}', "markdown.unknown_directive_arg"),
+        ],
+    )
+    def test_rejects_bad_excerpt(self, source: str, code: str) -> None:
+        """아는 이름은 인자까지 엄격하게 본다. 저장 시점에 말해야 쓴 사람이 고친다."""
+        with pytest.raises(ValidationError) as exc:
+            validate_source(source)
+        assert exc.value.code == code
 
     @pytest.mark.parametrize(
         ("source", "code"),

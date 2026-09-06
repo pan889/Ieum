@@ -12,6 +12,8 @@
   "markdown.directive_needs_query": "`::{directive}` needs a query.",
   "markdown.unknown_issue_column": "These columns can't be shown: {unknown}. Available: {allowed}.",
   "markdown.invalid_directive_limit": "`::{directive}` needs a limit between 1 and {max}.",
+  "markdown.directive_needs_page": "`::{directive}` needs a page (for example page=\"ENG/deploy\").",
+  "markdown.invalid_page_path": "That doesn't look like a page path: {value}. Use SPACE/path.",
   "common.payload_too_large": "That's too long — keep it under {max} characters.",
   "attachments.unknown_owner": "You can't attach files to that.",
   "attachments.invalid_name": "That file needs a name.",

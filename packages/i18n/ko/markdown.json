@@ -19,5 +19,9 @@
   "issues.column.assignee": "담당자",
   "issues.column.priority": "우선순위",
   "issues.column.due_date": "기한",
-  "issues.column.updated": "수정"
+  "issues.column.updated": "수정",
+  "excerpt.needsPage": "인용할 문서를 적어야 합니다. 예: page=\"ENG/deploy\"",
+  "excerpt.loading": "인용을 가져오는 중…",
+  "excerpt.missing": "그런 문서가 없거나 볼 수 없습니다.",
+  "excerpt.empty": "그 문서에는 아직 본문이 없습니다."
 }

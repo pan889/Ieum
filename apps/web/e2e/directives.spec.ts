@@ -147,3 +147,61 @@ test('읽을 수 없는 매크로는 저장을 막는다', async ({ page, consol
   // 저장이 막힌 것은 의도한 422 다.
   expect(consoleErrors.filter((e) => !e.startsWith('422'))).toEqual([])
 })
+
+test('::excerpt 는 다른 문서의 앞부분을 끌어온다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+
+  await page.goto(`/wiki/${key}`)
+  await writePage(
+    page,
+    'Deploy policy',
+    '# 배포 정책\n\n운영 배포는 화요일과 목요일에만 한다.\n\n두 번째 문단.',
+  )
+  await page.goto(`/wiki/${key}`)
+  await writePage(page, 'Runbook', `::excerpt{page="${key}/deploy-policy"}`)
+
+  // 제목은 원문으로 가는 링크다.
+  await expect(page.getByRole('link', { name: 'Deploy policy' }).last()).toBeVisible()
+  // 앞부분만 끌어온다. 문서 전체를 박아 넣으면 인용이 아니라 복사다.
+  await expect(page.getByText('운영 배포는 화요일과 목요일에만 한다.')).toBeVisible()
+  await expect(page.getByText('두 번째 문단.')).toHaveCount(0)
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('::excerpt 는 없는 문서를 지어내지 않는다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+
+  await page.goto(`/wiki/${key}`)
+  await writePage(page, 'Broken', `::excerpt{page="${key}/nope"}`)
+
+  // "권한이 없다" 라고 말하지 않는다 — 그 문서가 있다는 뜻이 되어 버린다.
+  await expect(page.getByText(/doesn't exist, or you can't see it/i)).toBeVisible()
+
+  // 없는 문서를 물어본 404 는 의도한 것이다.
+  expect(consoleErrors.filter((e) => !e.startsWith('404'))).toEqual([])
+})
+
+test('page 없는 ::excerpt 는 저장을 막는다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+
+  await page.goto(`/wiki/${key}`)
+  await page.getByRole('button', { name: /^\+ new page$/i }).click()
+  await page.getByLabel(/^title$/i).fill('Needs page')
+  await page.getByRole('button', { name: /^create$/i }).click()
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('::excerpt')
+  await page.getByRole('button', { name: /^save$/i }).click()
+
+  // 보는 시점에 처음 알면 쓴 사람은 이미 떠나고 없다.
+  await expect(page.getByText(/needs a page/i)).toBeVisible()
+
+  // 저장이 막힌 것은 의도한 422 다.
+  expect(consoleErrors.filter((e) => !e.startsWith('422'))).toEqual([])
+})
