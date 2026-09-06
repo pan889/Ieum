@@ -6,10 +6,10 @@
  * 확인할 수 없다.
  */
 
-import { bodyField, createSpace, expect, signIn, test, writeBody } from './fixtures'
+import { bodyField, createSpace, expect, signIn, test, uniqueKey, writeBody } from './fixtures'
 
 function spaceKey(): string {
-  return 'W' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('W')
 }
 
 async function createPage(

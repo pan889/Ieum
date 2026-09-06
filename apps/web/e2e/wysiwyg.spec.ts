@@ -6,10 +6,10 @@
  * 보지만(`doc.test.ts`), 실제 편집기 위에서 도는지는 브라우저 없이 알 수 없다.
  */
 
-import { bodyField, createSpace, expect, signIn, test, writeBody } from './fixtures'
+import { bodyField, createSpace, expect, signIn, test, uniqueKey, writeBody } from './fixtures'
 
 function spaceKey(): string {
-  return 'Y' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('Y')
 }
 
 async function openEditor(page: import('@playwright/test').Page, key: string, title: string) {
@@ -149,6 +149,173 @@ test('서식 모드에 이슈 주소를 붙이면 이슈 링크가 된다', asyn
   // 호스트를 그대로 저장하면 주소가 바뀌는 순간 전부 죽는다.
   const source = await (await bodyField(page)).inputValue()
   expect(source).toBe('참고: [DEV-1](issue:DEV-1)')
+
+  expect(consoleErrors).toEqual([])
+})
+
+/**
+ * 클립보드에 서식 있는 HTML 을 담아 붙여넣는다.
+ *
+ * `navigator.clipboard.write` 로는 임의의 `text/html` 을 못 넣는다(브라우저가
+ * 막는다). 붙여넣기 이벤트를 직접 만들어 던진다 — 편집기가 보는 것은 같다.
+ */
+async function pasteHtml(
+  page: import('@playwright/test').Page,
+  selector: string,
+  html: string,
+  plain: string,
+): Promise<boolean> {
+  await page.locator(selector).click()
+  // 우리가 가로챘는지는 `preventDefault` 로 드러난다. 만들어 던진 이벤트는
+  // 믿을 수 있는 이벤트가 아니라서, 안 가로채도 브라우저가 대신 넣어 주지는
+  // 않는다 — 그러니 "안 넣어졌다" 로는 아무것도 못 가린다.
+  return page.locator(selector).evaluate(
+    (element, [markup, text]) => {
+      const data = new DataTransfer()
+      data.setData('text/html', markup as string)
+      data.setData('text/plain', text as string)
+      const event = new ClipboardEvent('paste', {
+        clipboardData: data,
+        bubbles: true,
+        cancelable: true,
+      })
+      element.dispatchEvent(event)
+      return event.defaultPrevented
+    },
+    [html, plain],
+  )
+}
+
+const CONFLUENCE = [
+  '<h2>배포 절차</h2>',
+  '<p>먼저 <strong>마이그레이션</strong>을 <em>검토</em>한다.</p>',
+  '<ul><li>스테이징 확인</li><li>롤백 계획</li></ul>',
+  '<table><thead><tr><th>단계</th><th>담당</th></tr></thead>',
+  '<tbody><tr><td>빌드</td><td>CI</td></tr></tbody></table>',
+  '<p><a href="https://runbook.example/deploy">런북</a></p>',
+].join('')
+
+test('서식 있는 HTML 을 붙여넣으면 마크다운이 된다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'Pasted html')
+
+  // 평문만 떨어뜨리면 제목·표·링크가 통째로 사라진다.
+  await pasteHtml(page, RICH, CONFLUENCE, '배포 절차 먼저 마이그레이션을 검토한다.')
+
+  await expect(page.locator(`${RICH} h2`)).toHaveText('배포 절차')
+  await expect(page.locator(`${RICH} table td`).first()).toHaveText('빌드')
+
+  const source = await (await bodyField(page)).inputValue()
+  expect(source).toContain('## 배포 절차')
+  expect(source).toContain('먼저 **마이그레이션**을 *검토*한다.')
+  expect(source).toContain('- 스테이징 확인\n- 롤백 계획')
+  expect(source).toContain('| 단계 | 담당 |')
+  expect(source).toContain('[런북](https://runbook.example/deploy)')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('소스 모드에 붙여넣어도 같은 마크다운이 된다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'Pasted into source')
+
+  // 두 모드가 같은 클립보드에서 같은 문서를 만들어야 한다.
+  await bodyField(page)
+  await pasteHtml(page, '[role="tabpanel"] textarea', CONFLUENCE, '배포 절차')
+
+  const source = await (await bodyField(page)).inputValue()
+  expect(source).toContain('## 배포 절차')
+  expect(source).toContain('| 단계 | 담당 |')
+  expect(source).toContain('[런북](https://runbook.example/deploy)')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('색깔만 입힌 코드는 손대지 않는다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'Pasted code')
+
+  // 편집기에서 코드를 복사하면 이렇게 온다. 변환하면 줄이 문단으로 흩어지고
+  // 들여쓰기가 사라진다. 손대지 않고 브라우저가 하던 대로 두어야 한다.
+  const html = '<div><span style="color:#001080">if</span> (a) {</div><div>  b()</div><div>}</div>'
+  await bodyField(page)
+  const handled = await pasteHtml(page, '[role="tabpanel"] textarea', html, 'if (a) {\n  b()\n}')
+  expect(handled).toBe(false)
+
+  // 서식 모드도 같은 판단을 해야 한다 — 모드에 따라 결과가 갈리면 안 된다.
+  // 여기서는 편집기가 자기 식으로 읽어 버리므로 우리가 평문으로 넣는다.
+  await page.getByRole('tab', { name: /rich text/i }).click()
+  await pasteHtml(page, RICH, html, 'if (a) {\n  b()\n}')
+  const rich = await (await bodyField(page)).inputValue()
+  expect(rich).toContain('if (a) {')
+  // 줄마다 문단이 되면 사이에 빈 줄이 낀다.
+  expect(rich).not.toContain('{\n\n')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('성근 목록은 서식 모드에서 고쳐도 성글다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'Loose list')
+
+  // 마크다운에는 촘촘한 목록과 성근 목록이 따로 있다. 편집기 스키마에는
+  // 없으므로 속성으로 들고 있어야 한다 — 안 그러면 글자 하나만 고쳐도
+  // 항목 사이 빈 줄이 사라진다.
+  await writeBody(page, '- 하나\n\n- 둘\n')
+  await page.getByRole('tab', { name: /rich text/i }).click()
+  const rich = page.locator(RICH)
+  await rich.click()
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+
+  const source = await (await bodyField(page)).inputValue()
+  expect(source).toContain('- 하나\n\n- 둘')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('구글 문서에서 가져온 글이 문서 모양 그대로 들어온다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'From docs')
+
+  // 구글 문서는 붙여넣기 전체를 `<b style="font-weight:normal">` 로 감싸고
+  // 굵기·기울임을 span 스타일로 준다. 껍데기를 인라인으로 읽으면 제목도
+  // 목록도 한 문단으로 뭉개진다.
+  const html = [
+    '<meta charset="utf-8"><b style="font-weight:normal" id="docs-internal-guid-1">',
+    '<h1><span style="font-size:20pt;font-weight:700">릴리스 노트</span></h1>',
+    '<p><span style="font-weight:400">이번 판에서 </span>',
+    '<span style="font-weight:700">검색</span>',
+    '<span style="font-weight:400">이 </span>',
+    '<span style="font-style:italic">훨씬</span>',
+    '<span style="font-weight:400"> 빨라졌다.</span></p>',
+    '<ul><li><p><span>색인을 다시 만들었다</span></p></li>',
+    '<li><p><span>느린 질의를 고쳤다</span></p></li></ul></b>',
+  ].join('')
+  await page.getByRole('tab', { name: /rich text/i }).click()
+  await pasteHtml(page, RICH, html, '릴리스 노트')
+
+  const source = await (await bodyField(page)).inputValue()
+  expect(source).toBe(
+    [
+      '# 릴리스 노트',
+      '',
+      '이번 판에서 **검색**이 *훨씬* 빨라졌다.',
+      '',
+      '- 색인을 다시 만들었다',
+      '- 느린 질의를 고쳤다',
+    ].join('\n'),
+  )
 
   expect(consoleErrors).toEqual([])
 })

@@ -4,9 +4,29 @@ import type { Locator, Page } from '@playwright/test'
 export const ADMIN_EMAIL = process.env['SEED_ADMIN_EMAIL'] ?? 'admin@example.com'
 export const ADMIN_PASSWORD = process.env['SEED_ADMIN_PASSWORD'] ?? 'seed-admin-password-1234'
 
-/** 테스트마다 자기 프로젝트를 만든다. 시드 DB 를 공유해도 서로 안 밟는다. */
+/**
+ * 테스트마다 자기 것을 만든다. 시드 DB 를 공유해도 서로 안 밟는다.
+ *
+ * 무작위 네 글자로는 모자란다. 같은 DB 로 수십 번 돌리는 사이 지난 실행이
+ * 남긴 것이 수백 개로 쌓이고, 그러면 생일 문제로 이따금 "이미 쓰는 키" 가
+ * 뜬다 — 코드가 멀쩡한데 테스트만 붉어진다. 시각을 섞어 실행끼리 갈라 두고,
+ * 무작위는 같은 밀리초 안을 가른다.
+ */
+let sequence = 0
+
+export function uniqueKey(prefix: string): string {
+  sequence += 1
+  const when = Date.now().toString(36).slice(-5).toUpperCase()
+  // 한 실행 안에서는 이 번호가 겹치지 않는다. 시각만으로는 같은 밀리초에
+  // 만든 둘이 같아진다.
+  const seq = sequence.toString(36).toUpperCase().padStart(2, '0')
+  const salt = Math.random().toString(36).slice(2, 4).padEnd(2, '0').toUpperCase()
+  return `${prefix}${when}${seq}${salt}`
+}
+
+/** 테스트마다 자기 프로젝트를 만든다. */
 export function projectKey(): string {
-  return 'E' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('E')
 }
 
 export async function signIn(page: Page): Promise<void> {

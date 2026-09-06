@@ -6,11 +6,11 @@
  * 실제로 돌려야 결과가 나온다.
  */
 
-import { bodyField, createIssue, createProject, createSpace, expect, projectKey, signIn, test, writeBody } from './fixtures'
+import { bodyField, createIssue, createProject, createSpace, expect, projectKey, signIn, test, uniqueKey, writeBody } from './fixtures'
 import type { Page } from '@playwright/test'
 
 function spaceKey(): string {
-  return 'D' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('D')
 }
 
 async function writePage(page: Page, title: string, body: string): Promise<void> {

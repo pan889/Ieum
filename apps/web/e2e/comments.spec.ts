@@ -9,10 +9,10 @@
 
 import type { Page } from '@playwright/test'
 
-import { createSpace, expect, signIn, test, writeBody } from './fixtures'
+import { createSpace, expect, signIn, test, uniqueKey, writeBody } from './fixtures'
 
 function spaceKey(): string {
-  return 'C' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('C')
 }
 
 async function writePage(page: Page, title: string, body: string): Promise<void> {

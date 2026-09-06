@@ -6,11 +6,34 @@ import { useUserSearch } from '@/features/issues/hooks'
 
 import { Markdown } from './Markdown'
 import { Wysiwyg, type AttachTo } from './Wysiwyg'
+import { pastedMarkdown } from './html'
 import { applyMention, findMentionQuery, type MentionQuery } from './mention'
 
 /** 서식(WYSIWYG) · 마크다운 · 미리보기. 순서가 곧 탭 순서다. */
 const MODES = ['rich', 'write', 'preview'] as const
 type Mode = (typeof MODES)[number]
+
+/**
+ * 커서 자리에 글자를 끼운다.
+ *
+ * `execCommand` 는 낡았지만, 되돌리기 이력을 남기는 방법이 이것뿐이다. 값을
+ * 직접 갈아 끼우면 Ctrl+Z 로 붙여넣기 직전으로 못 돌아간다 — 긴 글을 쓰다가
+ * 잘못 붙여넣은 사람에게는 그게 전부다. 못 쓰는 브라우저에서는 값을 바꾼다.
+ */
+function insertAtCaret(
+  element: HTMLTextAreaElement,
+  text: string,
+  onChange: (next: string) => void,
+): void {
+  element.focus()
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- 되돌리기 이력을 남기는 유일한 방법
+  if (document.execCommand('insertText', false, text)) return
+  const start = element.selectionStart
+  const end = element.selectionEnd
+  onChange(element.value.slice(0, start) + text + element.value.slice(end))
+  const caret = start + text.length
+  requestAnimationFrame(() => { element.setSelectionRange(caret, caret) })
+}
 
 /**
  * 마크다운 편집기. 서식 모드·소스 모드·미리보기.
@@ -119,6 +142,15 @@ export function MarkdownEditor({
                 syncMention(event.target)
               }}
               onClick={(event) => { syncMention(event.currentTarget); }}
+              onPaste={(event) => {
+                // 서식 있는 HTML 을 그냥 두면 브라우저가 평문만 떨어뜨린다 —
+                // 제목·표·링크가 통째로 사라진다. 서식 모드와 **같은 변환**을
+                // 거쳐 마크다운으로 넣는다.
+                const markdown = pastedMarkdown(event.clipboardData.getData('text/html'))
+                if (markdown === null) return
+                event.preventDefault()
+                insertAtCaret(event.currentTarget, markdown, onChange)
+              }}
               onBlur={() => {
                 // 목록의 버튼을 누르는 동안 blur 가 먼저 온다. 바로 닫으면
                 // 클릭이 사라지므로 한 프레임 미룬다.

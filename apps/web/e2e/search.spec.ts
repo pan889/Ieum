@@ -7,14 +7,14 @@
 
 import type { Page } from '@playwright/test'
 
-import { createIssue, createProject, createSpace, expect, projectKey, signIn, test, writeBody } from './fixtures'
+import { createIssue, createProject, createSpace, expect, projectKey, signIn, test, uniqueKey, writeBody } from './fixtures'
 
 function unique(prefix: string): string {
   return prefix + Math.random().toString(36).slice(2, 8)
 }
 
 function spaceKey(): string {
-  return 'F' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('F')
 }
 
 async function findEverything(page: Page, query: string): Promise<void> {

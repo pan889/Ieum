@@ -9,10 +9,10 @@
 
 import type { Page } from '@playwright/test'
 
-import { createIssue, createProject, createSpace, expect, projectKey, signIn, test, writeBody } from './fixtures'
+import { createIssue, createProject, createSpace, expect, projectKey, signIn, test, uniqueKey, writeBody } from './fixtures'
 
 function spaceKey(): string {
-  return 'L' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('L')
 }
 
 async function writeDoc(page: Page, key: string, title: string, body: string): Promise<void> {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Node } from '@tiptap/core'
+import { Extension, Node } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Image from '@tiptap/extension-image'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
@@ -11,7 +11,8 @@ import { useTranslation } from 'react-i18next'
 import { attachmentsApi } from '@/shared/api'
 import { useUserSearch } from '@/features/issues/hooks'
 
-import { toDoc, toMarkdown, type ElementNode } from './doc'
+import { isText, toDoc, toMarkdown, type ElementNode } from './doc'
+import { copiedFromEditor, pastedMarkdown } from './html'
 import { mentionExtension, type MentionState, type MentionTarget } from './wysiwygMention'
 import { attachmentUri, internalLabel, internalUri, looksLikeUrl } from './paste'
 
@@ -46,6 +47,33 @@ const Verbatim = Node.create({
       'pre',
       { 'data-verbatim': 'true', class: 'ieum-verbatim' },
       String(node.attrs['source'] ?? ''),
+    ]
+  },
+})
+
+/**
+ * 목록의 촘촘함을 편집기가 들고 있게 한다.
+ *
+ * 마크다운에는 촘촘한 목록과 성근 목록이 따로 있는데(항목 사이 빈 줄),
+ * 편집기 스키마에는 그런 것이 없다. 속성으로 넣어 두지 않으면 서식 모드에서
+ * 글자 하나만 고쳐도 성근 목록이 촘촘해진다 — 편집기를 거쳤다는 이유로
+ * 문서가 달라지면 안 된다(ADR-0008).
+ */
+const Tightness = Extension.create({
+  name: 'ieumTightness',
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['bulletList', 'orderedList', 'taskList'],
+        attributes: {
+          tight: {
+            default: true,
+            parseHTML: (element: HTMLElement) => element.getAttribute('data-tight') !== 'false',
+            renderHTML: (attributes: Record<string, unknown>) =>
+              attributes['tight'] === false ? { 'data-tight': 'false' } : {},
+          },
+        },
+      },
     ]
   },
 })
@@ -123,6 +151,7 @@ export function Wysiwyg({ value, onChange, label, attachTo }: WysiwygProps) {
       TaskList,
       TaskItem.configure({ nested: true }),
       Verbatim,
+      Tightness,
       mentionExtension(mentionHooks),
     ],
     content: toDoc(value),
@@ -178,23 +207,57 @@ export function Wysiwyg({ value, onChange, label, attachTo }: WysiwygProps) {
     const files = [...(event.clipboardData?.files ?? [])]
     if (attach(files)) return true
 
+    const html = event.clipboardData?.getData('text/html') ?? ''
+    // 편집기끼리는 편집기가 하게 둔다. 문장 중간을 복사한 조각까지 우리가
+    // 변환하면 이어 붙지 않고 새 문단이 된다.
+    const slice = copiedFromEditor(html)
+    if (!slice && insertHtml(html)) return true
+
     const text = event.clipboardData?.getData('text/plain') ?? ''
-    if (!looksLikeUrl(text)) return false
-    // 우리 주소는 스킴으로 바꿔 저장한다. 호스트가 바뀌어도 안 죽는다.
-    const internal = internalUri(text)
-    const href = internal ?? text.trim()
-    const { from, to } = editor.state.selection
-    if (from === to) {
-      editor.chain().focus().insertContent({
-        type: 'text',
-        // 붙여넣은 사람이 뜻한 것은 그 이슈지 그 주소가 아니다.
-        text: internal ? internalLabel(internal) : text.trim(),
-        marks: [{ type: 'link', attrs: { href } }],
-      }).run()
-    } else {
-      // 고른 글자가 있으면 그 글자를 링크로 만든다 — 주소로 덮어쓰지 않는다.
-      editor.chain().focus().setLink({ href }).run()
+    if (looksLikeUrl(text)) {
+      // 우리 주소는 스킴으로 바꿔 저장한다. 호스트가 바뀌어도 안 죽는다.
+      const internal = internalUri(text)
+      const href = internal ?? text.trim()
+      const { from, to } = editor.state.selection
+      if (from === to) {
+        editor.chain().focus().insertContent({
+          type: 'text',
+          // 붙여넣은 사람이 뜻한 것은 그 이슈지 그 주소가 아니다.
+          text: internal ? internalLabel(internal) : text.trim(),
+          marks: [{ type: 'link', attrs: { href } }],
+        }).run()
+      } else {
+        // 고른 글자가 있으면 그 글자를 링크로 만든다 — 주소로 덮어쓰지 않는다.
+        editor.chain().focus().setLink({ href }).run()
+      }
+      return true
     }
+
+    // 손대지 않기로 한 HTML 을 편집기가 자기 식으로 읽게 두지 않는다. `div`
+    // 하나가 문단 하나가 되어 줄 사이에 빈 줄이 끼고 들여쓰기가 사라진다 —
+    // 코드를 복사해 온 경우가 딱 그것이다. 소스 모드와 같이 평문으로 넣는다.
+    if (!slice && html.trim() !== '' && text !== '') {
+      editor.chain().focus().insertContent({ type: 'text', text }).run()
+      return true
+    }
+    return false
+  }
+
+  /**
+   * 서식 있는 HTML 을 마크다운으로 바꿔 끼운다.
+   *
+   * TipTap 도 HTML 을 읽을 줄 안다. 그런데 그쪽으로 두면 소스 모드와 결과가
+   * 갈린다 — 편집기 스키마가 받아 주는 것과 우리 마크다운이 담을 수 있는
+   * 것이 다르기 때문이다. 같은 클립보드에서 같은 문서가 나와야 한다.
+   */
+  const insertHtml = (html: string): boolean => {
+    const markdown = pastedMarkdown(html)
+    if (markdown === null) return false
+    const content = toDoc(markdown).content ?? []
+    const only = content.length === 1 ? content[0] : undefined
+    // 문단 하나면 쓰던 문장 안에 그대로 잇는다. 블록으로 넣으면 문단이 갈린다.
+    const paragraph = only !== undefined && !isText(only) && only.type === 'paragraph' ? only : null
+    editor.chain().focus().insertContent(paragraph ? (paragraph.content ?? []) : content).run()
     return true
   }
 

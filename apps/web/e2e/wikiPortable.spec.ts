@@ -14,10 +14,10 @@ import { readFile } from 'node:fs/promises'
 
 import type { Page } from '@playwright/test'
 
-import { createSpace, expect, signIn, test } from './fixtures'
+import { createSpace, expect, signIn, test, uniqueKey } from './fixtures'
 
 function spaceKey(): string {
-  return 'P' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  return uniqueKey('P')
 }
 
 /** 숨은 file input 을 직접 건드리지 않는다. 사람이 누르는 버튼을 누른다. */
