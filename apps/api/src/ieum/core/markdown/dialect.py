@@ -17,11 +17,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 from markdown_it import MarkdownIt
+from mdit_py_plugins.colon_fence import colon_fence_plugin
 from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.front_matter import front_matter_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 
-VERSION = 2
+from ieum.core.markdown.directives import CONTAINER_NAMES
+
+VERSION = 3
 PRESET = "commonmark"
 OPTIONS: dict[str, Any] = {
     # 원시 HTML 금지. 유일한 XSS 방어선이다.
@@ -32,7 +35,7 @@ OPTIONS: dict[str, Any] = {
 }
 #: 프리셋에 없어서 따로 켜는 규칙 (GFM).
 CORE_RULES = ("table", "strikethrough")
-PLUGINS = ("front_matter", "tasklists", "footnote")
+PLUGINS = ("front_matter", "tasklists", "footnote", "colon_fence")
 #: 링크로 만들어 줄 스킴. attachment/page/issue/user 는 내부 URI 다 (4·5절).
 #: 멘션은 `[@Alice](user:<uuid>)` 로 저장한다 — 이름이 바뀌어도 안 깨진다.
 LINK_SCHEMES = ("http", "https", "mailto", "attachment", "page", "issue", "user")
@@ -41,6 +44,7 @@ _PLUGIN_FNS = {
     "front_matter": front_matter_plugin,
     "tasklists": tasklists_plugin,
     "footnote": footnote_plugin,
+    "colon_fence": colon_fence_plugin,
 }
 
 
@@ -73,6 +77,22 @@ def validate_link(url: str) -> bool:
     return parsed.scheme.lower() in LINK_SCHEMES
 
 
+def render_colon_fence(tokens: list[Any], idx: int, options: Any, env: Any) -> str:
+    """`:::info` 를 강조 상자로. 기본 렌더러는 코드 블록으로 그린다.
+
+    안쪽은 마크다운이다 — 그대로 이스케이프해서 내보내면 메일에서 표와
+    목록이 원문으로 보인다.
+    """
+    token = tokens[idx]
+    name = token.info.strip().split("{", 1)[0].strip().lower()
+    # 아는 이름만 클래스가 된다. info 문자열은 사용자가 쓴 것이라 그대로
+    # 속성에 넣으면 따옴표 하나로 태그를 빠져나간다.
+    tone = name if name in CONTAINER_NAMES else ""
+    classes = "ieum-admonition" + (f" ieum-admonition-{tone}" if tone else "")
+    inner: str = parser().render(token.content)
+    return f'<div class="{classes}">{inner}</div>\n'
+
+
 @cache
 def parser() -> MarkdownIt:
     """방언대로 설정한 파서. 상태가 없으므로 하나를 공유한다."""
@@ -81,6 +101,9 @@ def parser() -> MarkdownIt:
         md.enable(rule)
     for name in PLUGINS:
         md.use(_PLUGIN_FNS[name])
+    # markdown-it 이 렌더 규칙을 인스턴스 딕셔너리로 노출한다. 프로토콜에는
+    # 없지만 서브클래싱 없이 갈아끼우는 게 라이브러리의 공식 방법이다.
+    md.renderer.rules["colon_fence"] = render_colon_fence  # type: ignore[attr-defined]
     # markdown-it 이 훅을 인스턴스 속성으로 노출한다. 서브클래싱 없이
     # 갈아끼우는 게 라이브러리의 공식 방법이다.
     md.validateLink = validate_link  # type: ignore[method-assign]
@@ -96,5 +119,6 @@ __all__ = [
     "VERSION",
     "as_spec",
     "parser",
+    "render_colon_fence",
     "validate_link",
 ]

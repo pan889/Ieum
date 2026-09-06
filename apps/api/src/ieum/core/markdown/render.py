@@ -33,7 +33,10 @@ def to_plaintext(text: str) -> str:
     for token in tokens:
         if token.type in _SKIP_BLOCKS:
             continue
-        if token.type == "inline":
+        if token.type == "colon_fence":
+            # 강조 상자 안쪽도 산문이다. 빼면 검색에서 안 잡힌다.
+            pieces.append(to_plaintext(token.content) + "\n")
+        elif token.type == "inline":
             pieces.append(_inline_text(token))
         elif token.type in {"paragraph_close", "heading_close", "list_item_close"}:
             pieces.append("\n")

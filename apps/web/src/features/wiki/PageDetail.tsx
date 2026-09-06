@@ -11,7 +11,7 @@ import { useUserNames } from '@/features/issues/hooks'
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
-import { Markdown } from '@/shared/markdown/Markdown'
+import { DocumentPlaceProvider, RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
 
@@ -108,7 +108,10 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
       ) : (
         <Card>
           {page.body.trim() ? (
-            <Markdown source={page.body} />
+            // `::children` 은 지금 문서가 어디에 있는지 알아야 한다.
+            <DocumentPlaceProvider place={{ spaceKey, path: page.path, nodes: allNodes }}>
+              <RichText source={page.body} />
+            </DocumentPlaceProvider>
           ) : (
             <p className="text-sm text-muted">{t('wiki:page.emptyBody')}</p>
           )}

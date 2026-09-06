@@ -15,9 +15,11 @@ from __future__ import annotations
 import mdformat
 
 from ieum.core.exceptions import ValidationError
+from ieum.core.markdown.colon_fence import EXTENSION_ID as COLON_FENCE
+from ieum.core.markdown.directives import validate_source
 
 #: mdformat 확장. 방언(dialect.py)이 켠 기능과 짝이 맞아야 한다.
-_EXTENSIONS = frozenset({"gfm", "frontmatter", "footnote"})
+_EXTENSIONS = frozenset({"gfm", "frontmatter", "footnote", COLON_FENCE})
 
 #: 본문 상한. 정규화기와 파서는 입력 길이에 선형이지만, 무한정 받으면
 #: 한 요청이 워커를 오래 잡는다.
@@ -38,6 +40,9 @@ def normalize(text: str) -> str:
         )
     if not text.strip():
         return ""
+    # 인자가 틀린 디렉티브는 저장 시점에 거절한다. 보는 시점에 처음 알면
+    # 쓴 사람은 이미 떠나고 없다.
+    validate_source(text)
     try:
         return mdformat.text(text, extensions=set(_EXTENSIONS)).rstrip("\n")
     # 파서 내부 오류를 사용자에게 보여줄 수 있는 오류로 바꾼다.

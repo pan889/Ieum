@@ -196,3 +196,37 @@ class TestMentions:
         from ieum.core.markdown import to_html
 
         assert f'href="user:{self.ALICE}"' in to_html(f"[@Alice](user:{self.ALICE})")
+
+
+class TestAdmonitionRendering:
+    """`:::info` 는 메일에서도 상자로 보여야 한다.
+
+    기본 colon_fence 렌더러는 코드 블록으로 그린다 — 안쪽 마크다운이 원문
+    그대로 나온다.
+    """
+
+    def test_renders_as_a_div_with_the_tone(self) -> None:
+        html = to_html(":::info\n본문\n:::")
+        assert 'class="ieum-admonition ieum-admonition-info"' in html
+
+    def test_inner_markdown_is_rendered(self) -> None:
+        html = to_html(":::warning\n**굵게**\n\n- 항목\n:::")
+        assert "<strong>굵게</strong>" in html
+        assert "<li>항목</li>" in html
+
+    def test_an_unknown_name_gets_no_tone_class(self) -> None:
+        assert 'class="ieum-admonition"' in to_html(":::collapse\n본문\n:::")
+
+    def test_the_name_cannot_break_out_of_the_attribute(self) -> None:
+        """info 문자열은 사용자가 쓴 것이다. 속성에 그대로 넣으면 태그를 빠져나간다."""
+        html = to_html(':::"><script>alert(1)</script>\nx\n:::')
+        assert "<script>" not in html
+        assert 'class="ieum-admonition"' in html
+
+    def test_plaintext_keeps_the_prose_inside(self) -> None:
+        # 빼면 상자 안 문장이 검색에서 안 잡힌다.
+        assert to_plaintext("앞\n\n:::info\n상자 안 문장\n:::\n\n뒤") == "앞 상자 안 문장 뒤"
+
+    def test_a_leaf_directive_stays_text_in_html(self) -> None:
+        """메일에는 목차를 만들 문맥이 없다. 텍스트로 남는 게 맞다."""
+        assert "::toc" in to_html("::toc{depth=2}")

@@ -1,0 +1,23 @@
+{
+  "admonition.info": "Info",
+  "admonition.note": "Note",
+  "admonition.tip": "Tip",
+  "admonition.warning": "Warning",
+  "admonition.danger": "Danger",
+  "toc.label": "On this page",
+  "toc.empty": "No headings to list yet.",
+  "children.label": "Child pages",
+  "children.empty": "No child pages yet.",
+  "children.needsPage": "::children only works inside a wiki page.",
+  "issues.needsQuery": "::issues needs a query.",
+  "issues.loading": "Running the query…",
+  "issues.empty": "No issues match this query.",
+  "issues.more": "Showing the first {count, number}.",
+  "issues.column.key": "Key",
+  "issues.column.summary": "Summary",
+  "issues.column.status": "Status",
+  "issues.column.assignee": "Assignee",
+  "issues.column.priority": "Priority",
+  "issues.column.due_date": "Due",
+  "issues.column.updated": "Updated"
+}

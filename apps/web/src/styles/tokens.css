@@ -14,6 +14,7 @@
     --ieum-accent: 43 96 214;
     --ieum-accent-fg: 255 255 255;
     --ieum-danger: 197 48 48;
+    --ieum-warning: 176 118 8;
     --ieum-success: 32 128 80;
   }
 
@@ -27,6 +28,7 @@
     --ieum-accent: 106 152 255;
     --ieum-accent-fg: 12 16 24;
     --ieum-danger: 248 113 113;
+    --ieum-warning: 224 168 62;
     --ieum-success: 74 190 132;
   }
 
@@ -98,4 +100,31 @@
   .ieum-mention {
     @apply rounded bg-accent/15 px-1 py-0.5 font-medium text-accent;
   }
+
+  /* 디렉티브(매크로) 블록. 본문과 구별되게 살짝 들여 놓는다. */
+  .ieum-directive {
+    @apply my-3 rounded-md border border-border bg-surface-raised px-3 py-2;
+  }
+
+  /* 강조 상자. 왼쪽 띠 색으로 톤을 말한다 — 색만으로 뜻을 전하지 않도록
+     제목 줄이 항상 함께 뜬다 (ux-principles 5절).
+
+     톤은 변수 하나로 넘긴다. 뒤 규칙에서 `border-left-color` 를 다시 쓰는
+     방식은 통하지 않았다 — Tailwind 가 `@apply` 를 펼치면서 `border-color`
+     축약형을 뒤에 놓아 사이드 색을 덮는다. 화면에서는 띠가 전부 회색이었다. */
+  .ieum-admonition {
+    --ieum-tone: rgb(var(--ieum-border));
+    @apply my-3 rounded-md border border-border bg-surface-raised px-3 py-2;
+    border-left-width: 4px;
+    border-left-color: var(--ieum-tone);
+  }
+  .ieum-admonition-title {
+    @apply mb-1 text-xs font-semibold uppercase tracking-wide;
+    color: var(--ieum-tone);
+  }
+  .ieum-admonition-info,
+  .ieum-admonition-note { --ieum-tone: rgb(var(--ieum-accent)); }
+  .ieum-admonition-tip { --ieum-tone: rgb(var(--ieum-success)); }
+  .ieum-admonition-warning { --ieum-tone: rgb(var(--ieum-warning)); }
+  .ieum-admonition-danger { --ieum-tone: rgb(var(--ieum-danger)); }
 }

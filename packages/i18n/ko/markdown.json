@@ -1,0 +1,23 @@
+{
+  "admonition.info": "알림",
+  "admonition.note": "참고",
+  "admonition.tip": "팁",
+  "admonition.warning": "주의",
+  "admonition.danger": "위험",
+  "toc.label": "이 문서 목차",
+  "toc.empty": "아직 목차로 만들 제목이 없다.",
+  "children.label": "하위 문서",
+  "children.empty": "하위 문서가 아직 없다.",
+  "children.needsPage": "::children 은 위키 문서 안에서만 쓸 수 있다.",
+  "issues.needsQuery": "::issues 에는 query 가 필요하다.",
+  "issues.loading": "질의를 실행하는 중…",
+  "issues.empty": "이 질의에 맞는 이슈가 없다.",
+  "issues.more": "앞의 {count, number}건만 보여 준다.",
+  "issues.column.key": "키",
+  "issues.column.summary": "요약",
+  "issues.column.status": "상태",
+  "issues.column.assignee": "담당자",
+  "issues.column.priority": "우선순위",
+  "issues.column.due_date": "기한",
+  "issues.column.updated": "수정"
+}

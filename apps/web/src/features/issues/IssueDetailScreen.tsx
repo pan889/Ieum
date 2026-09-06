@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { issuesApi } from '@/shared/api'
 import { describeError, fieldOfError } from '@/shared/api/errors'
-import { Markdown } from '@/shared/markdown/Markdown'
+import { RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
@@ -95,7 +95,7 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
           </Button>
         </div>
         {issue.description ? (
-          <Markdown source={issue.description} className="text-sm" />
+          <RichText source={issue.description} className="text-sm" />
         ) : (
           <p className="text-sm text-muted">{t('issues:detail.descriptionEmpty')}</p>
         )}
@@ -420,7 +420,7 @@ function Comments({ issueId }: { issueId: string }) {
                   <Badge tone="in_progress">{t('issues:comment.internalBadge')}</Badge>
                 ) : null}
               </div>
-              <Markdown source={comment.body} className="text-sm" />
+              <RichText source={comment.body} className="text-sm" />
             </li>
           ))}
         </ul>
