@@ -143,6 +143,30 @@ export interface NewPageComment {
   parent_id?: string | null
 }
 
+
+export interface LinkedPage {
+  id: string
+  space_id: string
+  space_key: string
+  path: string
+  title: string
+}
+
+export interface PageTemplate {
+  id: string
+  /** null 이면 전역 템플릿. */
+  space_id: string | null
+  name: string
+  body: string
+  category: string | null
+}
+
+export interface NewPageTemplate {
+  name: string
+  body?: string
+  category?: string | null
+}
+
 const SPACES = '/api/v1/spaces'
 const PAGES = '/api/v1/pages'
 
@@ -176,6 +200,15 @@ export function createWikiApi(client: ApiClient) {
         return client.postFile<WikiPage[]>(`${SPACES}/${id}/import${suffix}`, file)
       },
       exportZip: (id: string) => client.getBlob(`${SPACES}/${id}/export`),
+
+      templates: {
+        /** 그 스페이스 것 + 전역. */
+        list: (id: string) => client.get<PageTemplate[]>(`${SPACES}/${id}/templates`),
+        create: (id: string, body: NewPageTemplate) =>
+          client.post<PageTemplate>(`${SPACES}/${id}/templates`, body),
+        remove: (templateId: string) =>
+          client.delete<void>(`${SPACES}/templates/${templateId}`),
+      },
     },
 
     pages: {
@@ -199,6 +232,10 @@ export function createWikiApi(client: ApiClient) {
         client.post<WikiPage>(`${PAGES}/${id}/versions/${String(number)}/restore`),
 
       exportMarkdown: (id: string) => client.getBlob(`${PAGES}/${id}/export`),
+
+      /** 이 이슈를 본문에서 참조한 문서들. 위키가 답한다(모듈 경계). */
+      mentioning: (issueId: string) =>
+        client.get<LinkedPage[]>(`${PAGES}/mentioning/${issueId}`),
 
       comments: {
         list: (pageId: string) => client.get<PageComment[]>(`${PAGES}/${pageId}/comments`),

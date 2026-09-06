@@ -1,3 +1,4 @@
+import { useRouter } from '@tanstack/react-router'
 import { useMemo } from 'react'
 
 import { renderMarkdown } from './dialect'
@@ -21,10 +22,22 @@ export function MarkdownHtml({
   html: string
   className?: string | undefined
 }) {
+  const router = useRouter()
+
   return (
     <div
       className={className ? `ieum-markdown ${className}` : 'ieum-markdown'}
       dangerouslySetInnerHTML={{ __html: html }}
+      // `issue:`·`page:` 링크는 렌더 시 앱 주소로 바뀐다. 그냥 두면 전체
+      // 새로고침이 나므로 클릭을 가로채 라우터로 넘긴다. 위임으로 잡는다 —
+      // innerHTML 로 그린 앵커에는 리스너를 하나씩 못 붙인다.
+      onClick={(event) => {
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.button !== 0) return
+        const anchor = (event.target as HTMLElement).closest('a[data-internal]')
+        if (!(anchor instanceof HTMLAnchorElement)) return
+        event.preventDefault()
+        void router.navigate({ to: anchor.getAttribute('href') ?? '/' })
+      }}
     />
   )
 }

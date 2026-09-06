@@ -543,3 +543,150 @@ class TestComments:
         assert gone.status_code == 204
         listed = await app_client.get(f"{BASE}/pages/{page['id']}/comments", headers=headers)
         assert listed.json() == []
+
+
+class TestIssueLinks:
+    """문서가 이슈를 언급하면 이슈 쪽에서도 보인다 (양방향).
+
+    링크 표는 중립 테이블(`entity_link`)이다. 위키가 쓰고 위키가 읽는다 —
+    이슈 모듈이 답하려면 위키를 알아야 하고, 그러면 의존 그래프에 고리가
+    생긴다.
+    """
+
+    async def _issue(self, client: httpx.AsyncClient, headers: dict[str, str]) -> dict[str, Any]:
+        project = await client.post(
+            f"{BASE}/projects",
+            json={"key": "L" + secrets.token_hex(3).upper(), "name": "Links"},
+            headers=headers,
+        )
+        assert project.status_code == 201, project.text
+        issue = await client.post(
+            f"{BASE}/issues",
+            json={"project_id": project.json()["id"], "summary": "Linked"},
+            headers=headers,
+        )
+        assert issue.status_code == 201, issue.text
+        return dict(issue.json())
+
+    async def test_a_page_that_mentions_an_issue_shows_up(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        space = await _space(app_client, headers)
+        await _page(
+            app_client, headers, space["id"], f"자세한 것은 [x](issue:{issue['key']}) 참고."
+        )
+
+        r = await app_client.get(f"{BASE}/pages/mentioning/{issue['id']}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert [row["title"] for row in r.json()] == ["Runbook"]
+
+    async def test_removing_the_link_removes_the_row(self, app_client: httpx.AsyncClient) -> None:
+        """본문에서 링크를 지우면 이슈 쪽에서도 사라져야 한다."""
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], f"[x](issue:{issue['key']})")
+
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}", json={"body": "이제 링크가 없다."}, headers=headers
+        )
+
+        r = await app_client.get(f"{BASE}/pages/mentioning/{issue['id']}", headers=headers)
+        assert r.json() == []
+
+    async def test_a_trashed_page_stops_showing_up(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], f"[x](issue:{issue['key']})")
+
+        await app_client.post(f"{BASE}/pages/{page['id']}/archive", headers=headers)
+
+        r = await app_client.get(f"{BASE}/pages/mentioning/{issue['id']}", headers=headers)
+        assert r.json() == []
+
+    async def test_an_unknown_key_does_not_block_saving(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """오타 하나로 문서 저장이 막히면 안 된다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        r = await app_client.post(
+            f"{BASE}/pages",
+            json={
+                "space_id": space["id"],
+                "title": "Typo",
+                "body": "[x](issue:NOPE-999) 와 [y](issue:이상함)",
+                "publish": True,
+            },
+            headers=headers,
+        )
+        assert r.status_code == 201, r.text
+
+    async def test_a_link_inside_a_code_block_is_an_example(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await _auth(app_client)
+        issue = await self._issue(app_client, headers)
+        space = await _space(app_client, headers)
+        await _page(app_client, headers, space["id"], f"```\n[x](issue:{issue['key']})\n```")
+
+        r = await app_client.get(f"{BASE}/pages/mentioning/{issue['id']}", headers=headers)
+        assert r.json() == []
+
+
+class TestTemplates:
+    async def test_create_list_and_delete(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+
+        created = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/templates",
+            json={"name": "회의록", "body": "## 참석자\n\n## 결정"},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["space_id"] == space["id"]
+
+        listed = await app_client.get(f"{BASE}/spaces/{space['id']}/templates", headers=headers)
+        assert [row["name"] for row in listed.json()] == ["회의록"]
+
+        gone = await app_client.delete(
+            f"{BASE}/spaces/templates/{created.json()['id']}", headers=headers
+        )
+        assert gone.status_code == 204
+        again = await app_client.get(f"{BASE}/spaces/{space['id']}/templates", headers=headers)
+        assert again.json() == []
+
+    async def test_a_nameless_template_is_rejected(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        r = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/templates", json={"name": "   "}, headers=headers
+        )
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "wiki.template_name_required"
+
+    async def test_the_body_is_normalized(self, app_client: httpx.AsyncClient) -> None:
+        """템플릿도 본문이다. 정규화를 건너뛰면 이걸로 만든 문서마다 diff 가 흔들린다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        r = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/templates",
+            json={"name": "Sloppy", "body": "*  항목\n*  항목"},
+            headers=headers,
+        )
+        assert r.json()["body"] == "- 항목\n- 항목"
+
+    async def test_another_space_does_not_see_it(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        first = await _space(app_client, headers)
+        second = await _space(app_client, headers)
+        await app_client.post(
+            f"{BASE}/spaces/{first['id']}/templates", json={"name": "Mine"}, headers=headers
+        )
+
+        listed = await app_client.get(f"{BASE}/spaces/{second['id']}/templates", headers=headers)
+        assert listed.json() == []

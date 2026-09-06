@@ -58,5 +58,14 @@
   "comments.orphaned": "Quote gone",
   "comments.orphanedHint": "The quoted text is no longer in the page. The comment is kept so you can see what it was about.",
   "comments.showResolved": "Show resolved ({count, number})",
-  "comments.hideResolved": "Hide resolved"
+  "comments.hideResolved": "Hide resolved",
+  "template.pick": "Start from",
+  "template.blank": "Blank page",
+  "template.title": "Templates",
+  "template.name": "Template name",
+  "template.body": "Template body",
+  "template.add": "New template",
+  "template.save": "Save template",
+  "template.global": "Everywhere",
+  "template.empty": "No templates yet."
 }

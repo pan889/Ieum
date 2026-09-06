@@ -166,5 +166,6 @@
   "list.group.status": "Status",
   "list.group.assignee": "Assignee",
   "list.group.priority": "Priority",
-  "list.group.project": "Project"
+  "list.group.project": "Project",
+  "linkedDocs.title": "Mentioned in docs"
 }

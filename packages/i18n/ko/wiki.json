@@ -58,5 +58,14 @@
   "comments.orphaned": "인용 사라짐",
   "comments.orphanedHint": "인용한 글이 문서에서 사라졌다. 무엇에 달았던 코멘트인지 알 수 있게 남겨 둔다.",
   "comments.showResolved": "해결된 것 보기 ({count, number})",
-  "comments.hideResolved": "해결된 것 숨기기"
+  "comments.hideResolved": "해결된 것 숨기기",
+  "template.pick": "무엇으로 시작할까",
+  "template.blank": "빈 문서",
+  "template.title": "템플릿",
+  "template.name": "템플릿 이름",
+  "template.body": "템플릿 본문",
+  "template.add": "템플릿 만들기",
+  "template.save": "템플릿 저장",
+  "template.global": "모든 스페이스",
+  "template.empty": "아직 템플릿이 없다."
 }

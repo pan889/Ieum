@@ -1,6 +1,7 @@
 """마크다운 파이프라인. 저장 정본은 마크다운 텍스트다 (ADR-0008)."""
 
 from ieum.core.markdown.dialect import parser, validate_link
+from ieum.core.markdown.links import LinkRef, extract_links
 from ieum.core.markdown.mentions import MAX_MENTIONS, extract_mentions
 from ieum.core.markdown.normalize import MAX_LENGTH, normalize
 from ieum.core.markdown.render import excerpt, to_html, to_plaintext
@@ -8,7 +9,9 @@ from ieum.core.markdown.render import excerpt, to_html, to_plaintext
 __all__ = [
     "MAX_LENGTH",
     "MAX_MENTIONS",
+    "LinkRef",
     "excerpt",
+    "extract_links",
     "extract_mentions",
     "normalize",
     "parser",

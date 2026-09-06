@@ -22,6 +22,7 @@ from ieum.modules.wiki.service import (
     NewPage,
     PageCommentService,
     PageService,
+    PageTemplateService,
     PageView,
     SpaceService,
 )
@@ -720,6 +721,105 @@ async def delete_page_comment(
     comment_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
 ) -> None:
     await PageCommentService(session, permissions).delete(actor, comment_id)
+    await session.commit()
+
+
+# ── 이슈 링크 ───────────────────────────────────────────────────
+
+
+class LinkedPageResponse(BaseModel):
+    """이 이슈를 언급한 문서 하나."""
+
+    id: UUID
+    space_id: UUID
+    space_key: str
+    path: str
+    title: str
+
+
+@pages_router.get("/mentioning/{issue_id}", response_model=list[LinkedPageResponse])
+async def pages_mentioning_issue(
+    issue_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[LinkedPageResponse]:
+    """이 이슈를 본문에서 참조한 문서들.
+
+    위키가 답한다. 이슈 모듈이 답하려면 위키를 알아야 하고, 그러면 의존
+    그래프에 고리가 생긴다 (overview.md 모듈 의존 그래프).
+    """
+    service = PageService(session, permissions)
+    pages = await service.pages_mentioning(actor, issue_id)
+    spaces = SpaceService(session, permissions)
+    out: list[LinkedPageResponse] = []
+    for page in pages:
+        space = await spaces.get(actor, page.space_id)
+        out.append(
+            LinkedPageResponse(
+                id=page.id,
+                space_id=page.space_id,
+                space_key=space.key,
+                path=page.path,
+                title=page.title,
+            )
+        )
+    return out
+
+
+# ── 템플릿 ──────────────────────────────────────────────────────
+
+
+class TemplateCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    body: str = Field(default="", max_length=MAX_BODY_LENGTH)
+    category: str | None = Field(default=None, max_length=100)
+    #: 없으면 전역 템플릿. 전역은 스페이스 생성 권한이 있어야 만든다.
+    space_id: UUID | None = None
+
+
+class TemplateResponse(BaseModel):
+    id: UUID
+    space_id: UUID | None
+    name: str
+    body: str
+    category: str | None
+
+
+@spaces_router.get("/{space_id}/templates", response_model=list[TemplateResponse])
+async def list_templates(
+    space_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[TemplateResponse]:
+    """그 스페이스 것 + 전역."""
+    rows = await PageTemplateService(session, permissions).list_for(actor, space_id)
+    return [TemplateResponse.model_validate(r, from_attributes=True) for r in rows]
+
+
+@spaces_router.post(
+    "/{space_id}/templates", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_template(
+    space_id: UUID,
+    body: TemplateCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> TemplateResponse:
+    template = await PageTemplateService(session, permissions).create(
+        actor,
+        space_id=space_id,
+        name=body.name,
+        body=body.body,
+        category=body.category,
+    )
+    await session.commit()
+    return TemplateResponse.model_validate(template, from_attributes=True)
+
+
+@spaces_router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_template(
+    template_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> None:
+    await PageTemplateService(session, permissions).delete(actor, template_id)
     await session.commit()
 
 

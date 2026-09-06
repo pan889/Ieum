@@ -27,10 +27,14 @@ from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown import normalize as normalize_markdown
 from ieum.core.markdown import to_plaintext
 from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate
+from ieum.core.markdown.links import ISSUE as ISSUE_SCHEME
+from ieum.core.markdown.links import extract_links
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
+from ieum.modules.issues import contracts as issues
+from ieum.modules.org import contracts as org_links
 from ieum.modules.search import contracts as search
 from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import (
@@ -39,6 +43,7 @@ from ieum.modules.wiki.models import (
     Page,
     PageComment,
     PageRestriction,
+    PageTemplate,
     PageVersion,
     Space,
 )
@@ -54,6 +59,7 @@ from ieum.modules.wiki.repository import (
     PageLabelRepository,
     PageRepository,
     PageRestrictionRepository,
+    PageTemplateRepository,
     PageVersionRepository,
     SpaceRepository,
 )
@@ -375,6 +381,7 @@ class PageService:
 
         await self._s.flush()
         await self._reindex(page, space=space)
+        await self._relink(page)
         log.info("wiki.page_created", actor=str(actor.user_id), page=str(page.id))
         return await self.to_view(page, space=space)
 
@@ -441,6 +448,7 @@ class PageService:
             page.version += 1
             await self._s.flush()
             await self._reindex(page)
+            await self._relink(page)
         return await self.to_view(page)
 
     async def restore(self, actor: Actor, page_id: UUID, number: int) -> PageView:
@@ -471,6 +479,7 @@ class PageService:
         page.version += 1
         await self._s.flush()
         await self._reindex(page)
+        await self._relink(page)
         return await self.to_view(page)
 
     async def move(
@@ -729,6 +738,53 @@ class PageService:
                 )
             )
         return write_archive(files)
+
+    # ── 이슈 링크 ───────────────────────────────────────────────
+
+    async def _relink(self, page: Page) -> None:
+        """본문의 `issue:KEY` 를 링크 표에 반영한다.
+
+        문서 → 이슈 한 방향만 우리가 쓴다. 이슈 모듈은 위키를 모르기 때문에
+        (의존 그래프가 `wiki ──▶ issues`), 반대 방향은 이 표를 거꾸로 읽어
+        위키가 답한다 — "이 이슈를 언급한 문서" 는 위키 API 다.
+        """
+        version = await self._current_version(page)
+        body = version.body if version and not page.is_archived else ""
+        targets: list[tuple[str, UUID]] = []
+        for ref in extract_links(body, schemes=(ISSUE_SCHEME,)):
+            found = await issues.get_issue_by_key(self._s, ref.target.upper())
+            # 없는 키는 그냥 지나간다. 오타 하나로 문서 저장이 막히면 안 된다.
+            if found is not None and not found.is_archived:
+                targets.append((org_links.ISSUE, found.id))
+        await org_links.replace_links(
+            self._s,
+            from_type=org_links.PAGE,
+            from_id=page.id,
+            kind=org_links.MENTIONS,
+            targets=targets,
+        )
+
+    async def pages_mentioning(self, actor: Actor, issue_id: UUID) -> list[Page]:
+        """이 이슈를 언급한 문서. 볼 수 있는 것만.
+
+        위키가 답한다. 이슈 모듈이 답하려면 위키를 알아야 하고, 그러면 의존
+        그래프에 고리가 생긴다.
+        """
+        rows = await org_links.links_to(
+            self._s, to_type=org_links.ISSUE, to_id=issue_id, from_type=org_links.PAGE
+        )
+        if not rows:
+            return []
+        pages = [
+            p for p in (await self._pages.by_ids([r.from_id for r in rows])) if not p.is_archived
+        ]
+
+        visible: list[Page] = []
+        for page in pages:
+            scope = Scope.space(page.space_id)
+            if await self._perms.has(self._s, actor, perms.PAGE_VIEW, scope=scope, subject=page):
+                visible.append(page)
+        return sorted(visible, key=lambda p: p.path)
 
     # ── 검색 색인 ───────────────────────────────────────────────
 
@@ -1079,12 +1135,89 @@ class PageCommentService:
         return text
 
 
+class PageTemplateService:
+    """문서 템플릿 (회의록·결정기록·요구사항).
+
+    스페이스 전용이거나 전역이다. 전역은 스페이스 관리자가 아니라 전역
+    관리자만 만든다 — 한 스페이스에서 만든 템플릿이 온 조직에 뜨면 곤란하다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._templates = PageTemplateRepository(session)
+        self._spaces = SpaceRepository(session)
+
+    async def list_for(self, actor: Actor, space_id: UUID) -> list[PageTemplate]:
+        space = await self._require_space(space_id)
+        await self._perms.require(self._s, actor, perms.PAGE_VIEW, scope=Scope.space(space.id))
+        return await self._templates.for_space(space.id)
+
+    async def create(
+        self,
+        actor: Actor,
+        *,
+        space_id: UUID | None,
+        name: str,
+        body: str,
+        category: str | None = None,
+    ) -> PageTemplate:
+        if space_id is None:
+            # 전역 템플릿은 스페이스를 만들 수 있는 사람만. 스페이스 관리자가
+            # 온 조직에 보이는 것을 만들 수 있으면 안 된다.
+            await self._perms.require(self._s, actor, perms.SPACE_CREATE, scope=Scope.global_())
+        else:
+            space = await self._require_space(space_id)
+            await self._perms.require(
+                self._s, actor, perms.SPACE_ADMIN, scope=Scope.space(space.id)
+            )
+
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValidationError("템플릿 이름이 필요하다.", code="wiki.template_name_required")
+        return self._templates.add(
+            PageTemplate(
+                space_id=space_id,
+                name=cleaned[:200],
+                body=normalize_markdown(self._validate_body(body)),
+                category=(category or "").strip()[:100] or None,
+            )
+        )
+
+    async def delete(self, actor: Actor, template_id: UUID) -> None:
+        template = await self._templates.get(template_id)
+        if template is None:
+            raise NotFoundError("템플릿을 찾을 수 없다.")
+        if template.space_id is None:
+            await self._perms.require(self._s, actor, perms.SPACE_CREATE, scope=Scope.global_())
+        else:
+            await self._perms.require(
+                self._s, actor, perms.SPACE_ADMIN, scope=Scope.space(template.space_id)
+            )
+        await self._templates.delete(template)
+
+    async def _require_space(self, space_id: UUID) -> Space:
+        space = await self._spaces.get(space_id)
+        if space is None or space.is_archived:
+            raise NotFoundError("스페이스를 찾을 수 없다.")
+        return space
+
+    @staticmethod
+    def _validate_body(body: str) -> str:
+        if len(body) > MAX_BODY_LENGTH:
+            raise ValidationError(
+                "본문이 너무 길다.", code="wiki.body_too_long", details={"max": MAX_BODY_LENGTH}
+            )
+        return body
+
+
 __all__ = [
     "CommentView",
     "NewPage",
     "PageCommentService",
     "PageRestrictionGuard",
     "PageService",
+    "PageTemplateService",
     "PageView",
     "SpaceService",
 ]

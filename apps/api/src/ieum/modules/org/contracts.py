@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.modules.org.models import Project
+from ieum.modules.org.models import EntityLink, Project
 from ieum.modules.org.repository import ProjectRepository
 
 
@@ -69,3 +70,100 @@ async def next_issue_number(session: AsyncSession, project_id: UUID) -> int:
     if result is None:
         raise LookupError(f"프로젝트를 찾을 수 없다: {project_id}")
     return int(result)
+
+
+# ── 엔티티 링크 ─────────────────────────────────────────────────
+#
+# 위키↔이슈처럼 서로 알아야 하는 관계를 중립 테이블로 뺀다. 어느 쪽도 상대
+# 모듈을 import 하지 않는다 (overview.md 모듈 의존 그래프).
+
+#: 링크 양 끝의 종류.
+ISSUE = "issue"
+PAGE = "page"
+
+#: 링크의 뜻. 본문에서 뽑은 참조는 `mentions` 다.
+MENTIONS = "mentions"
+
+
+@dataclass(frozen=True, slots=True)
+class LinkRow:
+    from_type: str
+    from_id: UUID
+    to_type: str
+    to_id: UUID
+    kind: str
+
+
+def _row(link: EntityLink) -> LinkRow:
+    return LinkRow(
+        from_type=link.from_type,
+        from_id=link.from_id,
+        to_type=link.to_type,
+        to_id=link.to_id,
+        kind=link.kind,
+    )
+
+
+async def replace_links(
+    session: AsyncSession,
+    *,
+    from_type: str,
+    from_id: UUID,
+    kind: str,
+    targets: Sequence[tuple[str, UUID]],
+) -> None:
+    """한 출처의 링크를 통째로 바꾼다.
+
+    지우고 다시 넣는다. 무엇이 사라졌는지 따로 계산하면, 본문에서 링크를
+    지웠을 때 남는 유령 링크를 반드시 한 번은 놓친다.
+    """
+    await session.execute(
+        delete(EntityLink).where(
+            EntityLink.from_type == from_type,
+            EntityLink.from_id == from_id,
+            EntityLink.kind == kind,
+        )
+    )
+    seen: set[tuple[str, UUID]] = set()
+    for to_type, to_id in targets:
+        if (to_type, to_id) in seen:
+            continue
+        seen.add((to_type, to_id))
+        session.add(
+            EntityLink(
+                from_type=from_type, from_id=from_id, to_type=to_type, to_id=to_id, kind=kind
+            )
+        )
+
+
+async def links_to(
+    session: AsyncSession, *, to_type: str, to_id: UUID, from_type: str | None = None
+) -> list[LinkRow]:
+    """이 엔티티를 가리키는 링크. "이 이슈를 언급한 문서" 가 이걸 쓴다."""
+    stmt = select(EntityLink).where(EntityLink.to_type == to_type, EntityLink.to_id == to_id)
+    if from_type is not None:
+        stmt = stmt.where(EntityLink.from_type == from_type)
+    return [_row(r) for r in (await session.execute(stmt)).scalars().all()]
+
+
+async def links_from(
+    session: AsyncSession, *, from_type: str, from_id: UUID, to_type: str | None = None
+) -> list[LinkRow]:
+    stmt = select(EntityLink).where(
+        EntityLink.from_type == from_type, EntityLink.from_id == from_id
+    )
+    if to_type is not None:
+        stmt = stmt.where(EntityLink.to_type == to_type)
+    return [_row(r) for r in (await session.execute(stmt)).scalars().all()]
+
+
+async def drop_links(session: AsyncSession, *, entity_type: str, entity_id: UUID) -> None:
+    """엔티티가 사라질 때 양쪽 방향을 모두 지운다."""
+    await session.execute(
+        delete(EntityLink).where(
+            or_(
+                and_(EntityLink.from_type == entity_type, EntityLink.from_id == entity_id),
+                and_(EntityLink.to_type == entity_type, EntityLink.to_id == entity_id),
+            )
+        )
+    )

@@ -3,7 +3,14 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { LINK_SCHEMES, OPTIONS, asSpec, renderMarkdown, validateLink } from './dialect'
+import {
+  LINK_SCHEMES,
+  OPTIONS,
+  asSpec,
+  renderMarkdown,
+  routeForUri,
+  validateLink,
+} from './dialect'
 
 // vitest 의 cwd 는 apps/web 이다. jsdom 환경에서 import.meta.url 은 http URL
 // 이라 fileURLToPath 가 안 통한다.
@@ -59,10 +66,14 @@ describe('새니타이징', () => {
   })
 
   // user: 는 링크가 아니라 멘션 칩으로 그린다 (아래 '멘션' 블록 참고).
-  it.each(LINK_SCHEMES.filter((s) => s !== 'user'))('%s 스킴은 링크가 된다', (scheme) => {
-    const url = scheme === 'mailto' ? 'mailto:a@b.com' : `${scheme}://x/y`
-    expect(hrefs(renderMarkdown(`[x](${url})`))).toEqual([url])
-  })
+  // issue:·page: 는 링크가 되지만 주소가 앱 경로로 바뀐다 (아래 '내부 링크').
+  it.each(LINK_SCHEMES.filter((s) => !['user', 'issue', 'page'].includes(s)))(
+    '%s 스킴은 링크가 된다',
+    (scheme) => {
+      const url = scheme === 'mailto' ? 'mailto:a@b.com' : `${scheme}://x/y`
+      expect(hrefs(renderMarkdown(`[x](${url})`))).toEqual([url])
+    },
+  )
 
   it('화이트리스트가 정책이다', () => {
     expect(validateLink('javascript:alert(1)')).toBe(false)
@@ -118,5 +129,39 @@ describe('멘션', () => {
     )
     expect(html.match(/ieum-mention/g)).toHaveLength(2)
     expect(html.match(/<\/span>/g)).toHaveLength(2)
+  })
+})
+
+describe('내부 링크', () => {
+  const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/gi)].map((m) => m[1])
+
+  it('`issue:` 는 이슈 주소가 된다', () => {
+    // 스킴 그대로 두면 눌러도 아무 데도 안 간다.
+    expect(hrefs(renderMarkdown('[x](issue:eng-1)'))).toEqual(['/issues/ENG-1'])
+  })
+
+  it('`page:` 는 문서 주소가 된다', () => {
+    expect(hrefs(renderMarkdown('[x](page:ENG/deploy/rollback)'))).toEqual([
+      '/wiki/ENG/deploy/rollback',
+    ])
+  })
+
+  it('가로챌 표시를 남긴다', () => {
+    // 이게 없으면 전체 새로고침이 난다 (Markdown.tsx 가 클릭을 위임으로 잡는다).
+    expect(renderMarkdown('[x](issue:E-1)')).toContain('data-internal="true"')
+    expect(renderMarkdown('[x](https://example.com)')).not.toContain('data-internal')
+  })
+
+  it('경로 조각마다 인코딩한다', () => {
+    // 통째로 인코딩하면 `/` 까지 먹어 한 조각짜리 주소가 된다.
+    expect(routeForUri('page:ENG/배포-절차/자세히')).toBe(
+      `/wiki/ENG/${encodeURIComponent('배포-절차')}/${encodeURIComponent('자세히')}`,
+    )
+  })
+
+  it('routeForUri 는 우리 스킴만 바꾼다', () => {
+    expect(routeForUri('https://example.com')).toBeNull()
+    expect(routeForUri('issue:')).toBeNull()
+    expect(routeForUri('page:')).toBeNull()
   })
 })

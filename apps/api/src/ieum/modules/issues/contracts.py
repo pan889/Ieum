@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import IssueRepository, WorkflowRepository
+from ieum.modules.org import contracts as org
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,3 +60,19 @@ async def is_resolved(session: AsyncSession, issue_id: UUID) -> bool:
 def issue_model() -> type[Issue]:
     """core 의 권한 가드 등록에 쓸 타입. 인스턴스를 노출하지 않는다."""
     return Issue
+
+
+async def get_issue_by_key(session: AsyncSession, key: str) -> IssueRef | None:
+    """`ENG-12` 로 찾는다. 본문의 `issue:ENG-12` 링크를 푸는 데 쓴다.
+
+    키는 사람이 손으로 쓴 글자다. 모양이 틀리면 조용히 None 이다 — 문서
+    저장을 막을 일이 아니다.
+    """
+    project_key, _, number = key.rpartition("-")
+    if not project_key or not number.isdigit():
+        return None
+    project = await org.get_project_by_key(session, project_key.upper())
+    if project is None:
+        return None
+    issue = await IssueRepository(session).get_by_key_seq(project.id, int(number))
+    return await get_issue(session, issue.id) if issue else None

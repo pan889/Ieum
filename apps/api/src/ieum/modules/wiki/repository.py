@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page as PageResult
@@ -16,6 +16,7 @@ from ieum.modules.wiki.models import (
     PageComment,
     PageLabel,
     PageRestriction,
+    PageTemplate,
     PageVersion,
     Space,
 )
@@ -121,6 +122,12 @@ class PageRepository:
             .scalars()
             .all()
         )
+
+    async def by_ids(self, page_ids: Sequence[UUID]) -> list[Page]:
+        if not page_ids:
+            return []
+        stmt = select(Page).where(Page.id.in_(list(page_ids)))
+        return list((await self._s.execute(stmt)).scalars().all())
 
     async def by_paths(self, space_id: UUID, paths: Sequence[str]) -> list[Page]:
         """경로로 여러 문서를 한 번에. 조상 사슬을 가져올 때 쓴다."""
@@ -278,3 +285,29 @@ class PageCommentRepository:
             .where(PageComment.anchor.isnot(None))
         )
         return list((await self._s.execute(stmt)).scalars().all())
+
+
+class PageTemplateRepository:
+    """문서 템플릿. 스페이스 전용이거나 전역이다."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get(self, template_id: UUID) -> PageTemplate | None:
+        return await self._s.get(PageTemplate, template_id)
+
+    def add(self, template: PageTemplate) -> PageTemplate:
+        self._s.add(template)
+        return template
+
+    async def for_space(self, space_id: UUID) -> list[PageTemplate]:
+        """그 스페이스 것 + 전역. 전역이 뒤에 온다 — 가까운 것이 먼저 보여야 한다."""
+        stmt = (
+            select(PageTemplate)
+            .where(or_(PageTemplate.space_id == space_id, PageTemplate.space_id.is_(None)))
+            .order_by(PageTemplate.space_id.is_(None), PageTemplate.name)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def delete(self, template: PageTemplate) -> None:
+        await self._s.delete(template)

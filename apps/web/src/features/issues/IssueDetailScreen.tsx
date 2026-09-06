@@ -10,6 +10,7 @@ import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 import { Attachments } from './Attachments'
+import { LinkedDocs } from './LinkedDocs'
 import { CustomField } from './CustomField'
 import { changedFields, type FieldValue } from './customFields'
 import { Relations } from './Relations'
@@ -57,6 +58,7 @@ export function IssueDetailScreen() {
           <Relations issueId={data.id} issueKey={data.key} />
           <TimeTracking issueId={data.id} version={data.version} />
           <Attachments ownerType="issue" ownerId={data.id} />
+          <LinkedDocs issueId={data.id} />
           <Comments issueId={data.id} />
           <History issueId={data.id} />
         </div>

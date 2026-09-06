@@ -127,5 +127,6 @@
   "wiki.comment_empty": "내용을 적고 남긴다.",
   "wiki.comment_anchor_empty": "코멘트를 달 글을 선택한다.",
   "wiki.comment_parent_not_found": "그 코멘트가 사라졌다. 새로고침하고 다시 시도한다.",
-  "wiki.comment_nesting_too_deep": "답글에는 답글을 달 수 없다. 원래 코멘트에 답글을 단다."
+  "wiki.comment_nesting_too_deep": "답글에는 답글을 달 수 없다. 원래 코멘트에 답글을 단다.",
+  "wiki.template_name_required": "템플릿 이름이 필요하다."
 }

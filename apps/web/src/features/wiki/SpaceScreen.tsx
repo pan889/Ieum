@@ -5,7 +5,7 @@
  * 같은 문서가 열려야 하고, 새로고침·뒤로가기가 같은 경로를 타야 한다.
  */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import clsx from 'clsx'
 import { useMemo, useRef, useState } from 'react'
@@ -14,9 +14,10 @@ import { useTranslation } from 'react-i18next'
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
-import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 import { PageDetail } from './PageDetail'
+import { Templates } from './Templates'
 import { usePageByPath, useSpaceByKey, useSpaceTree } from './hooks'
 import { buildTree, flatten } from './tree'
 import type { TreeNode } from './tree'
@@ -38,6 +39,7 @@ export function SpaceScreen() {
 
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [creatingUnder, setCreatingUnder] = useState<string | null | undefined>(undefined)
+  const [showTemplates, setShowTemplates] = useState(false)
 
   const nodes = useMemo(() => buildTree(tree.data ?? []), [tree.data])
   const rows = useMemo(() => flatten(nodes, collapsed), [nodes, collapsed])
@@ -76,6 +78,14 @@ export function SpaceScreen() {
         </Button>
 
         <Transfer spaceId={space.data.id} spaceKey={spaceKey} onImported={refresh} />
+
+        <Button
+          variant="ghost"
+          className="mb-2 w-full justify-start text-xs"
+          onClick={() => { setShowTemplates((v) => !v) }}
+        >
+          {t('wiki:template.title')}
+        </Button>
 
         {creatingUnder !== undefined ? (
           <NewPageForm
@@ -123,6 +133,7 @@ export function SpaceScreen() {
       </nav>
 
       <div className="min-w-0 flex-1">
+        {showTemplates ? <Templates spaceId={space.data.id} /> : null}
         {!path ? (
           <Card className="text-center">
             <p className="font-medium">{t('wiki:page.pickOne')}</p>
@@ -223,6 +234,13 @@ function NewPageForm({
 }) {
   const { t } = useTranslation(['wiki', 'common'])
   const [title, setTitle] = useState('')
+  const [templateId, setTemplateId] = useState('')
+
+  const templates = useQuery({
+    queryKey: ['wiki', 'templates', spaceId],
+    queryFn: () => wikiApi.spaces.templates.list(spaceId),
+    staleTime: 60_000,
+  })
 
   const create = useMutation({
     mutationFn: () =>
@@ -230,6 +248,9 @@ function NewPageForm({
         space_id: spaceId,
         title,
         parent_id: parentId,
+        // 고른 템플릿이 첫 본문이 된다. 뼈대를 매번 손으로 옮겨 적게 하면
+        // 결국 아무도 규격을 안 지킨다.
+        body: templates.data?.find((row) => row.id === templateId)?.body ?? '',
         // 바로 게시한다. 방금 만든 문서가 트리에서 초안으로만 보이면
         // "안 만들어졌나" 하고 다시 만든다.
         publish: true,
@@ -250,6 +271,21 @@ function NewPageForm({
         value={title}
         onChange={(e) => { setTitle(e.target.value) }}
       />
+      {(templates.data ?? []).length > 0 ? (
+        <Select
+          label={t('wiki:template.pick')}
+          className="text-sm"
+          value={templateId}
+          onChange={(e) => { setTemplateId(e.target.value) }}
+        >
+          <option value="">{t('wiki:template.blank')}</option>
+          {(templates.data ?? []).map((row) => (
+            <option key={row.id} value={row.id}>
+              {row.name}
+            </option>
+          ))}
+        </Select>
+      ) : null}
       <div className="flex gap-1">
         <Button type="submit" className="text-xs" loading={create.isPending} disabled={!title.trim()}>
           {t('common:action.create')}

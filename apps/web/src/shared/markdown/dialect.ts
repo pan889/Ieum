@@ -214,6 +214,44 @@ function nextSlug(text: string, counts: Map<string, number> | undefined): string
   return seen === 0 ? base : `${base}-${String(seen + 1)}`
 }
 
+/**
+ * `issue:ENG-1`·`page:ENG/deploy` 를 앱 주소로 바꾼다.
+ *
+ * 스킴 그대로 두면 눌러도 아무 데도 안 간다. 여기서 `href` 를 고치고
+ * `data-internal` 을 붙여 두면, 렌더된 HTML 위에서 클릭을 가로채 라우터로
+ * 넘길 수 있다 (Markdown.tsx).
+ */
+function internalLinkPlugin(md: MarkdownIt): void {
+  const original = md.renderer.rules['link_open']
+  md.renderer.rules['link_open'] = (tokens, idx, options, env, self) => {
+    const token = tokens[idx]
+    const href = token?.attrGet('href') ?? ''
+    const route = routeForUri(href)
+    if (token && route) {
+      token.attrSet('href', route)
+      token.attrSet('data-internal', 'true')
+    }
+    return original
+      ? original(tokens, idx, options, env, self)
+      : self.renderToken(tokens, idx, options)
+  }
+}
+
+/** 내부 URI → 앱 경로. 우리 스킴이 아니면 null. */
+export function routeForUri(href: string): string | null {
+  if (href.startsWith('issue:')) {
+    const key = href.slice('issue:'.length).trim()
+    return key ? `/issues/${encodeURIComponent(key.toUpperCase())}` : null
+  }
+  if (href.startsWith('page:')) {
+    const path = href.slice('page:'.length).trim().replace(/^\/+/, '')
+    if (!path) return null
+    // `SPACE/경로/조각` — 조각마다 인코딩한다. 통째로 하면 `/` 까지 먹는다.
+    return `/wiki/${path.split('/').map(encodeURIComponent).join('/')}`
+  }
+  return null
+}
+
 let cached: MarkdownIt | null = null
 
 /** 방언대로 설정한 파서. 상태가 없으므로 하나를 공유한다. */
@@ -226,6 +264,7 @@ export function parser(): MarkdownIt {
   md.use(footnote)
   md.use(colonFencePlugin)
   md.use(mentionPlugin)
+  md.use(internalLinkPlugin)
   md.use(headingAnchorPlugin)
   md.validateLink = validateLink
   cached = md
