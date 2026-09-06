@@ -8,11 +8,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import clsx from 'clsx'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { saveBlob } from '@/shared/download'
 import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 
 import { PageDetail } from './PageDetail'
@@ -65,11 +66,13 @@ export function SpaceScreen() {
 
         <Button
           variant="ghost"
-          className="mb-2 w-full justify-start text-xs"
+          className="w-full justify-start text-xs"
           onClick={() => { setCreatingUnder(null) }}
         >
           {t('wiki:page.newTop')}
         </Button>
+
+        <Transfer spaceId={space.data.id} spaceKey={spaceKey} onImported={refresh} />
 
         {creatingUnder !== undefined ? (
           <NewPageForm
@@ -253,5 +256,73 @@ function NewPageForm({
         </Button>
       </div>
     </form>
+  )
+}
+
+/**
+ * `.md` 가져오기·내보내기.
+ *
+ * 가져오기는 스토리지를 거치지 않는다 — 첨부와 달리 서버가 내용을 **읽어야**
+ * 하고, 크기가 제한돼 있어 요청 하나로 끝난다.
+ */
+function Transfer({
+  spaceId,
+  spaceKey,
+  onImported,
+}: {
+  spaceId: string
+  spaceKey: string
+  onImported: () => void
+}) {
+  const { t } = useTranslation(['wiki'])
+  const input = useRef<HTMLInputElement>(null)
+
+  const importFile = useMutation({
+    mutationFn: (file: File) => wikiApi.spaces.importFile(spaceId, file),
+    onSuccess: onImported,
+  })
+
+  const exportZip = useMutation({
+    mutationFn: async () => {
+      saveBlob(await wikiApi.spaces.exportZip(spaceId), `${spaceKey}.zip`)
+    },
+  })
+
+  return (
+    <div className="mb-2 flex flex-col gap-1">
+      <div className="flex gap-1">
+        <Button
+          variant="ghost"
+          className="text-xs"
+          loading={importFile.isPending}
+          onClick={() => { input.current?.click() }}
+        >
+          {t('wiki:transfer.import')}
+        </Button>
+        <Button
+          variant="ghost"
+          className="text-xs"
+          loading={exportZip.isPending}
+          onClick={() => { exportZip.mutate() }}
+        >
+          {t('wiki:transfer.export')}
+        </Button>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        className="hidden"
+        accept=".md,.markdown,.zip"
+        aria-label={t('wiki:transfer.import')}
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) importFile.mutate(file)
+          // 같은 파일을 다시 고를 수 있게 비운다. 안 비우면 change 가 안 난다.
+          event.target.value = ''
+        }}
+      />
+      {importFile.isError ? <Alert>{describeError(importFile.error)}</Alert> : null}
+      {exportZip.isError ? <Alert>{describeError(exportZip.error)}</Alert> : null}
+    </div>
   )
 }

@@ -114,5 +114,9 @@
   "wiki.max_depth_exceeded": "Pages can't nest more than {max} levels deep.",
   "wiki.move_into_self": "A page can't be moved under itself.",
   "wiki.move_into_descendant": "A page can't be moved under its own child.",
-  "wiki.invalid_restriction": "That restriction isn't valid."
+  "wiki.invalid_restriction": "That restriction isn't valid.",
+  "wiki.import_too_large": "That upload is too large.",
+  "wiki.invalid_front_matter": "The front matter in that file couldn't be read.",
+  "wiki.invalid_archive": "That file isn't a readable ZIP.",
+  "wiki.invalid_encoding": "Only UTF-8 files can be imported."
 }

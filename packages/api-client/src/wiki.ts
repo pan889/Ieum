@@ -120,6 +120,14 @@ export function createWikiApi(client: ApiClient) {
         client.patch<Space>(`${SPACES}/${id}`, body),
       archive: (id: string) => client.post<Space>(`${SPACES}/${id}/archive`),
       tree: (id: string) => client.get<PageNode[]>(`${SPACES}/${id}/tree`),
+
+      /** `.md` 하나 또는 `.md` 를 담은 ZIP. 서버가 내용을 읽어야 해서
+       *  스토리지를 거치지 않는다(첨부와 다르다). */
+      importFile: (id: string, file: File, parentId?: string) => {
+        const suffix = parentId ? `?parent_id=${parentId}` : ''
+        return client.postFile<WikiPage[]>(`${SPACES}/${id}/import${suffix}`, file)
+      },
+      exportZip: (id: string) => client.getBlob(`${SPACES}/${id}/export`),
     },
 
     pages: {
@@ -141,6 +149,8 @@ export function createWikiApi(client: ApiClient) {
         client.get<PageVersionDetail>(`${PAGES}/${id}/versions/${String(number)}`),
       restore: (id: string, number: number) =>
         client.post<WikiPage>(`${PAGES}/${id}/versions/${String(number)}/restore`),
+
+      exportMarkdown: (id: string) => client.getBlob(`${PAGES}/${id}/export`),
 
       restrictions: (id: string) => client.get<PageRestriction[]>(`${PAGES}/${id}/restrictions`),
       setRestrictions: (

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import os
 import secrets
+import zipfile
 from typing import Any
 
 import httpx
@@ -215,3 +217,128 @@ class TestPageRoutes:
             headers={**headers, "If-Match": str(page["version"])},
         )
         assert stale.status_code == 409, stale.text
+
+
+class TestImportExport:
+    async def test_single_markdown_becomes_a_page(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+
+        r = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/import",
+            files={"file": ("runbook.md", b"# Deploy\n\nsteps here", "text/markdown")},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        pages = r.json()
+        assert len(pages) == 1
+        # 첫 H1 이 제목이 되고 본문에서는 빠진다.
+        assert pages[0]["title"] == "Deploy"
+        assert pages[0]["body"] == "steps here"
+        # 올린 문서는 바로 읽힌다. 초안이면 올려 놓고 "왜 안 보이지" 가 된다.
+        assert pages[0]["status"] == "published"
+
+    async def test_archive_becomes_a_tree(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("deploy.md", "# Deploy\n\ntop level")
+            archive.writestr("deploy/rollback.md", "# Rollback\n\nunder deploy")
+
+        r = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/import",
+            files={"file": ("docs.zip", buffer.getvalue(), "application/zip")},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+
+        tree = await app_client.get(f"{BASE}/spaces/{space['id']}/tree", headers=headers)
+        # 폴더 구조가 그대로 트리가 된다.
+        assert {n["path"] for n in tree.json()} == {"deploy", "deploy/rollback"}
+
+    async def test_export_round_trips_through_the_api(self, app_client: httpx.AsyncClient) -> None:
+        """올린 것을 내보내고 다시 올리면 같은 본문이 나와야 한다."""
+        headers = await _auth(app_client)
+        first = await _space(app_client, headers)
+        source = "---\ntitle: Runbook\nlabels: [ops]\n---\n\n## Steps\n\n- build\n- ship"
+
+        created = await app_client.post(
+            f"{BASE}/spaces/{first['id']}/import",
+            files={"file": ("r.md", source.encode(), "text/markdown")},
+            headers=headers,
+        )
+        page_id = created.json()[0]["id"]
+
+        exported = await app_client.get(f"{BASE}/pages/{page_id}/export", headers=headers)
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith("text/markdown")
+
+        second = await _space(app_client, headers)
+        again = await app_client.post(
+            f"{BASE}/spaces/{second['id']}/import",
+            files={"file": ("r.md", exported.content, "text/markdown")},
+            headers=headers,
+        )
+        assert again.status_code == 200, again.text
+        assert again.json()[0]["title"] == created.json()[0]["title"]
+        assert again.json()[0]["body"] == created.json()[0]["body"]
+        assert again.json()[0]["labels"] == ["ops"]
+
+    async def test_space_export_is_a_zip(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        await app_client.post(
+            f"{BASE}/pages",
+            json={"space_id": space["id"], "title": "One", "body": "x", "publish": True},
+            headers=headers,
+        )
+
+        r = await app_client.get(f"{BASE}/spaces/{space['id']}/export", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"] == "application/zip"
+        # 내보내기는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
+        assert r.headers["cache-control"] == "no-store"
+
+        with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+            assert archive.namelist() == ["one.md"]
+            assert b"title: One" in archive.read("one.md")
+
+    async def test_non_utf8_upload_is_rejected(self, app_client: httpx.AsyncClient) -> None:
+        """추측해서 열면 깨진 글자가 문서로 들어앉고 되돌릴 방법이 없다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        r = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/import",
+            files={"file": ("x.md", "한글".encode("euc-kr"), "text/markdown")},
+            headers=headers,
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "wiki.invalid_encoding"
+
+    async def test_a_korean_title_can_be_exported(self, app_client: httpx.AsyncClient) -> None:
+        """한글 제목 문서는 slug 도 한글이다 (로마자로 옮기지 않는다).
+
+        파일명을 헤더에 그대로 넣으면 latin-1 로 인코딩하다 터진다 — 실제로
+        한국어 사용자가 첫 문서에서 바로 500 을 봤다.
+        """
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        created = await app_client.post(
+            f"{BASE}/pages",
+            json={"space_id": space["id"], "title": "배포 절차", "body": "본문", "publish": True},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+
+        r = await app_client.get(f"{BASE}/pages/{created.json()['id']}/export", headers=headers)
+        assert r.status_code == 200, r.text
+        assert "filename*=UTF-8''" in r.headers["content-disposition"]
+        assert "본문" in r.text
+
+        # 스페이스 통째로도 마찬가지다.
+        zipped = await app_client.get(f"{BASE}/spaces/{space['id']}/export", headers=headers)
+        assert zipped.status_code == 200, zipped.text
+        with zipfile.ZipFile(io.BytesIO(zipped.content)) as archive:
+            assert archive.namelist() == ["배포-절차.md"]

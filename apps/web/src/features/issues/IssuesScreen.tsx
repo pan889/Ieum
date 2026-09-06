@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 
 import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { saveBlob } from '@/shared/download'
 import { Alert, Badge, Button, Card, Chip } from '@/shared/ui/primitives'
 
 import { BulkBar } from './BulkBar'
@@ -83,20 +84,11 @@ export function IssuesScreen() {
 
   const names = useUserNames((results.data?.items ?? []).map((i) => i.assignee_id))
 
-  /**
-   * CSV 는 스트리밍 응답이라 fetch 로 받아 blob 으로 저장한다.
-   * `<a href>` 로 걸 수 없다 — 액세스 토큰이 메모리에만 있어 앵커 클릭에는
-   * Authorization 헤더가 안 붙는다 (첨부 다운로드와 같은 이유).
-   */
+  /** CSV 는 스트리밍 응답이라 fetch 로 받아 blob 으로 저장한다. */
   const exporting = useMutation({
     mutationFn: () => searchApi.exportCsv(activeIql),
     onSuccess: (blob) => {
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `ieum-issues-${new Date().toISOString().slice(0, 10)}.csv`
-      anchor.click()
-      URL.revokeObjectURL(url)
+      saveBlob(blob, `ieum-issues-${new Date().toISOString().slice(0, 10)}.csv`)
     },
   })
 

@@ -35,6 +35,10 @@ dependencies = [
     "mdformat-gfm>=0.4,<0.5",
     "mdformat-frontmatter>=2.0,<3",
     "mdformat-footnote>=0.1.1,<0.2",
+    # front matter 읽기·쓰기. mdformat-frontmatter 를 통해 들어오기도 하지만
+    # 우리가 직접 import 하므로 직접 선언한다 — 남의 전이 의존에 기대면
+    # 그쪽이 바꿀 때 조용히 깨진다.
+    "pyyaml>=6.0",
     # 캐시·큐
     "redis[hiredis]>=5.2,<6",   # arq 0.28 이 redis<6 을 요구한다
     "arq>=0.26",
@@ -65,6 +69,7 @@ dev = [
     "testcontainers[postgres]>=4.13",
     "bandit>=1.9",
     "types-qrcode>=8.2",
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]

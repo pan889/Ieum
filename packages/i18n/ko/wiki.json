@@ -38,5 +38,8 @@
   "page.pickOne": "문서를 고르세요",
   "page.pickOneHint": "왼쪽 트리에서 고르거나 새로 만드세요.",
   "page.breadcrumb": "문서 위치",
-  "page.versionLine": "v{number} · {when} 수정"
+  "page.versionLine": "v{number} · {when} 수정",
+  "transfer.import": ".md 가져오기",
+  "transfer.export": "ZIP 내보내기",
+  "transfer.exportPage": ".md 내보내기"
 }

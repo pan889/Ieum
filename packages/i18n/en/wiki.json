@@ -38,5 +38,8 @@
   "page.pickOne": "Pick a page",
   "page.pickOneHint": "Choose one from the tree, or create a new one.",
   "page.breadcrumb": "Page location",
-  "page.versionLine": "v{number} · updated {when}"
+  "page.versionLine": "v{number} · updated {when}",
+  "transfer.import": "Import .md",
+  "transfer.export": "Export ZIP",
+  "transfer.exportPage": "Export .md"
 }

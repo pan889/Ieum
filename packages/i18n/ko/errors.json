@@ -114,5 +114,9 @@
   "wiki.max_depth_exceeded": "문서는 {max}단계까지만 중첩할 수 있습니다.",
   "wiki.move_into_self": "문서를 자기 자신 아래로 옮길 수 없습니다.",
   "wiki.move_into_descendant": "문서를 자기 하위 문서 아래로 옮길 수 없습니다.",
-  "wiki.invalid_restriction": "올바르지 않은 제한입니다."
+  "wiki.invalid_restriction": "올바르지 않은 제한입니다.",
+  "wiki.import_too_large": "업로드가 너무 큽니다.",
+  "wiki.invalid_front_matter": "파일의 front matter 를 읽을 수 없습니다.",
+  "wiki.invalid_archive": "읽을 수 있는 ZIP 이 아닙니다.",
+  "wiki.invalid_encoding": "UTF-8 로 저장된 파일만 가져올 수 있습니다."
 }

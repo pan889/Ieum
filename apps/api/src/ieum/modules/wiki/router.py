@@ -6,12 +6,16 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, status
+from fastapi import APIRouter, File, Header, Query, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
+from ieum.core.exceptions import ValidationError
+from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.modules.wiki.models import SPACE_KINDS
+from ieum.modules.wiki.portable import MAX_ARCHIVE_BYTES, content_disposition
 from ieum.modules.wiki.service import NewPage, PageService, PageView, SpaceService
 
 spaces_router = APIRouter(prefix="/spaces", tags=["wiki"])
@@ -72,7 +76,7 @@ class PageCreateRequest(BaseModel):
     space_id: UUID
     title: str = Field(min_length=1, max_length=500)
     parent_id: UUID | None = None
-    body: str = Field(default="", max_length=1_000_000)
+    body: str = Field(default="", max_length=MAX_BODY_LENGTH)
     front_matter: dict[str, Any] = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list, max_length=30)
     publish: bool = False
@@ -84,7 +88,7 @@ class PageUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=500)
-    body: str | None = Field(default=None, max_length=1_000_000)
+    body: str | None = Field(default=None, max_length=MAX_BODY_LENGTH)
     front_matter: dict[str, Any] | None = None
     labels: list[str] | None = Field(default=None, max_length=30)
     #: 변경 요약. 커밋 메시지에 해당한다.
@@ -457,6 +461,88 @@ async def set_page_restrictions(
         )
         for r in rows
     ]
+
+
+# ── 임포트·내보내기 ─────────────────────────────────────────────
+
+
+@spaces_router.post("/{space_id}/import", response_model=list[PageResponse])
+async def import_into_space(
+    space_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    file: Annotated[UploadFile, File()],
+    parent_id: UUID | None = None,
+) -> list[PageResponse]:
+    """`.md` 하나 또는 `.md` 를 담은 ZIP 을 올린다.
+
+    스토리지를 거치지 않는다 — 첨부와 달리 내용을 **서버가 읽어야** 하고,
+    묶음 크기가 제한돼 있어 요청 하나로 끝난다.
+    """
+    raw = await file.read()
+    if len(raw) > MAX_ARCHIVE_BYTES:
+        raise ValidationError(
+            "묶음이 너무 크다.",
+            code="wiki.import_too_large",
+            details={"max": MAX_ARCHIVE_BYTES},
+        )
+    service = PageService(session, permissions)
+    name = file.filename or "upload.md"
+
+    if raw[:2] == b"PK":
+        views = await service.import_archive(
+            actor, space_id=space_id, data=raw, parent_id=parent_id
+        )
+    else:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # 추측해서 열면 깨진 글자가 문서로 들어앉고 되돌릴 방법이 없다.
+            raise ValidationError(
+                "UTF-8 로 저장된 파일만 읽을 수 있다.", code="wiki.invalid_encoding"
+            ) from exc
+        views = [
+            await service.import_markdown(
+                actor, space_id=space_id, filename=name, content=text, parent_id=parent_id
+            )
+        ]
+
+    await session.commit()
+    return [_page(v) for v in views]
+
+
+@spaces_router.get("/{space_id}/export")
+async def export_space(
+    space_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> Response:
+    """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다."""
+    data = await PageService(session, permissions).export_space(actor, space_id)
+    space = await SpaceService(session, permissions).get(actor, space_id)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": content_disposition(f"{space.key}.zip"),
+            # 내보내기는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@pages_router.get("/{page_id}/export")
+async def export_page(
+    page_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> Response:
+    filename, content = await PageService(session, permissions).export_markdown(actor, page_id)
+    return Response(
+        content=content,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": content_disposition(filename),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 __all__ = ["pages_router", "spaces_router"]

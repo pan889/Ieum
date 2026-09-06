@@ -74,6 +74,33 @@ export class ApiClient {
   }
 
   /**
+   * 파일 하나를 multipart 로 올린다.
+   *
+   * `FormData` 에는 Content-Type 을 **직접 넣지 않는다** — 브라우저가
+   * boundary 를 붙여 만들어야 하고, 우리가 덮으면 서버가 못 읽는다.
+   */
+  async postFile<T>(path: string, file: File, field = 'file'): Promise<T> {
+    const form = new FormData()
+    form.append(field, file)
+    return this.request<T>(path, { method: 'POST', body: form })
+  }
+
+  /** JSON 이 아니라 파일을 받는 GET. ZIP·마크다운 내보내기에 쓴다. */
+  async getBlob(path: string): Promise<Blob> {
+    let response = await this.send(path, { method: 'GET' })
+    if (response.status === 401) {
+      const refreshed = await this.refreshOnce()
+      if (refreshed) response = await this.send(path, { method: 'GET' })
+      else {
+        tokenStore.clear()
+        this.onSessionLost?.()
+      }
+    }
+    if (!response.ok) throw await ApiError.fromResponse(response)
+    return response.blob()
+  }
+
+  /**
    * JSON 이 아니라 파일을 받는 POST. CSV 내보내기처럼 스트리밍 응답에 쓴다.
    *
    * 401 리프레시는 request() 와 같은 경로를 타야 하므로 send() 를 재사용한다.
@@ -97,8 +124,12 @@ export class ApiClient {
   }
 
   private async send(path: string, options: RequestOptions): Promise<Response> {
+    // FormData 는 브라우저가 boundary 를 붙여 직렬화한다. 우리가
+    // Content-Type 을 넣거나 JSON 으로 바꾸면 서버가 못 읽는다.
+    const isForm = options.body instanceof FormData
+
     const headers: Record<string, string> = { Accept: 'application/json' }
-    if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+    if (options.body !== undefined && !isForm) headers['Content-Type'] = 'application/json'
 
     const token = tokenStore.access
     if (token && !options.anonymous) headers['Authorization'] = `Bearer ${token}`
@@ -109,7 +140,9 @@ export class ApiClient {
       headers,
       credentials: 'include',
     }
-    if (options.body !== undefined) init.body = JSON.stringify(options.body)
+    if (options.body !== undefined) {
+      init.body = isForm ? (options.body as FormData) : JSON.stringify(options.body)
+    }
     if (options.signal) init.signal = options.signal
 
     return fetch(`${this.baseUrl}${path}`, init)

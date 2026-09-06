@@ -10,6 +10,7 @@ import { formatDateTime } from '@/features/issues/format'
 import { useUserNames } from '@/features/issues/hooks'
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { saveBlob } from '@/shared/download'
 import { Markdown } from '@/shared/markdown/Markdown'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
@@ -35,6 +36,12 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
   const archive = useMutation({
     mutationFn: () => wikiApi.pages.archive(page.id),
     onSuccess: onChanged,
+  })
+
+  const exportMd = useMutation({
+    mutationFn: async () => {
+      saveBlob(await wikiApi.pages.exportMarkdown(page.id), `${page.slug}.md`)
+    },
   })
 
   return (
@@ -64,6 +71,14 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
           {page.status === 'draft' ? <Badge>{t('wiki:page.draft')}</Badge> : null}
           {page.archived_at ? <Badge tone="done">{t('wiki:page.archived')}</Badge> : null}
           <span className="ml-auto flex shrink-0 gap-2">
+            <Button
+              variant="ghost"
+              className="text-xs"
+              loading={exportMd.isPending}
+              onClick={() => { exportMd.mutate() }}
+            >
+              {t('wiki:transfer.exportPage')}
+            </Button>
             <Button variant="ghost" className="text-xs" onClick={() => { setShowHistory((v) => !v) }}>
               {t('wiki:page.history')}
             </Button>
@@ -82,6 +97,7 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
       </header>
 
       {archive.isError ? <Alert>{describeError(archive.error)}</Alert> : null}
+      {exportMd.isError ? <Alert>{describeError(exportMd.error)}</Alert> : null}
 
       {editing ? (
         <PageEditor

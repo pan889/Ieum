@@ -22,6 +22,7 @@ from ieum.core.exceptions import (
     ValidationError,
 )
 from ieum.core.logging import get_logger
+from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown import normalize as normalize_markdown
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
@@ -36,6 +37,13 @@ from ieum.modules.wiki.models import (
     PageVersion,
     Space,
 )
+from ieum.modules.wiki.portable import (
+    ArchiveEntry,
+    parse_document,
+    read_archive,
+    render_document,
+    write_archive,
+)
 from ieum.modules.wiki.repository import (
     PageLabelRepository,
     PageRepository,
@@ -48,7 +56,6 @@ from ieum.modules.wiki.slug import join_path, slugify, unique_slug
 log = get_logger(__name__)
 
 _SPACE_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,15}$")
-MAX_BODY_LENGTH = 1_000_000
 MAX_LABELS = 30
 
 
@@ -569,6 +576,142 @@ class PageService:
             self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
         )
         return await self._restrictions.for_page(page.id)
+
+    # ── 임포트·내보내기 ─────────────────────────────────────────
+
+    async def import_markdown(
+        self,
+        actor: Actor,
+        *,
+        space_id: UUID,
+        filename: str,
+        content: str,
+        parent_id: UUID | None = None,
+    ) -> PageView:
+        """`.md` 한 편을 문서로. 제목은 front matter → 첫 H1 → 파일명 순."""
+        stem = filename.rsplit("/", 1)[-1].rsplit(".", 1)[0] or "Untitled"
+        parsed = parse_document(content, fallback_title=stem)
+        return await self.create(
+            actor,
+            NewPage(
+                space_id=space_id,
+                title=parsed.title,
+                parent_id=parent_id,
+                body=parsed.body,
+                front_matter=parsed.front_matter,
+                labels=parsed.labels,
+                # 올린 문서는 바로 읽히는 게 기대다. 초안으로 두면 올려 놓고
+                # "왜 안 보이지" 가 된다.
+                publish=True,
+            ),
+        )
+
+    async def import_archive(
+        self, actor: Actor, *, space_id: UUID, data: bytes, parent_id: UUID | None = None
+    ) -> list[PageView]:
+        """ZIP 묶음을 트리째. 폴더 구조가 곧 문서 트리다.
+
+        얕은 것부터 만든다 — 부모가 먼저 있어야 자식이 그 아래로 들어간다.
+        폴더에 대응하는 `.md` 가 없으면 그 자리에 빈 문서를 만들지 않고,
+        자식을 한 단계 위로 붙인다. 빈 껍데기 문서가 트리에 늘어서면
+        훑어보기 더 어렵다.
+        """
+        space = await self._require_space(space_id)
+        await self._perms.require(self._s, actor, perms.PAGE_CREATE, scope=Scope.space(space.id))
+        entries = read_archive(data)
+
+        #: ZIP 안의 폴더 경로 → 만들어진 문서. 자식이 부모를 찾을 때 쓴다.
+        created_by_dir: dict[str, UUID] = {}
+        views: list[PageView] = []
+        for entry in entries:
+            directory, _, _ = entry.path.rpartition("/")
+            views.append(
+                await self._import_entry(
+                    actor, space_id, entry, directory, created_by_dir, parent_id
+                )
+            )
+        log.info(
+            "wiki.archive_imported",
+            actor=str(actor.user_id),
+            space=str(space_id),
+            pages=len(views),
+        )
+        return views
+
+    async def _import_entry(
+        self,
+        actor: Actor,
+        space_id: UUID,
+        entry: ArchiveEntry,
+        directory: str,
+        created_by_dir: dict[str, UUID],
+        root_parent: UUID | None,
+    ) -> PageView:
+        parent = self._nearest_parent(directory, created_by_dir) or root_parent
+        view = await self.create(
+            actor,
+            NewPage(
+                space_id=space_id,
+                title=entry.document.title,
+                parent_id=parent,
+                body=entry.document.body,
+                front_matter=entry.document.front_matter,
+                labels=entry.document.labels,
+                publish=True,
+            ),
+        )
+        stem = entry.path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        # `docs/deploy/index.md` 는 `docs/deploy` 폴더의 대표 문서로 본다.
+        # 그래야 그 폴더의 다른 파일들이 이 문서 아래로 들어간다.
+        if stem.lower() in {"index", "readme"}:
+            created_by_dir[directory] = view.page.id
+        else:
+            child_dir = f"{directory}/{stem}" if directory else stem
+            created_by_dir[child_dir] = view.page.id
+        return view
+
+    @staticmethod
+    def _nearest_parent(directory: str, created: dict[str, UUID]) -> UUID | None:
+        """가장 가까운 조상 폴더의 문서. 없으면 None(최상위)."""
+        current = directory
+        while current:
+            if current in created:
+                return created[current]
+            current, _, _ = current.rpartition("/")
+        return None
+
+    async def export_markdown(self, actor: Actor, page_id: UUID) -> tuple[str, str]:
+        """문서 하나를 `(파일명, 내용)` 으로."""
+        view = await self.get(actor, page_id)
+        content = render_document(
+            title=view.page.title,
+            body=view.body,
+            labels=view.labels,
+            front_matter=view.current.front_matter if view.current else {},
+        )
+        return f"{view.page.slug}.md", content
+
+    async def export_space(self, actor: Actor, space_id: UUID) -> bytes:
+        """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다."""
+        space = await self._require_space(space_id)
+        await self._perms.require(self._s, actor, perms.PAGE_VIEW, scope=Scope.space(space.id))
+        rows = await self._visible(actor, await self._pages.tree_of(space.id))
+
+        files: list[tuple[str, str]] = []
+        for page in rows:
+            view = await self.to_view(page, space=space)
+            files.append(
+                (
+                    f"{page.path}.md",
+                    render_document(
+                        title=page.title,
+                        body=view.body,
+                        labels=view.labels,
+                        front_matter=view.current.front_matter if view.current else {},
+                    ),
+                )
+            )
+        return write_archive(files)
 
     # ── 내부 ────────────────────────────────────────────────────
 
