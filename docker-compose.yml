@@ -1,0 +1,132 @@
+# Docker Compose 단일 노드가 이 프로젝트의 1급 배포 경로다 (D-11 확정).
+# 개발용. 운영 오버라이드는 deploy/compose/ 참조.
+name: ieum
+
+x-api-env: &api-env
+  IEUM_ENV: ${IEUM_ENV:-development}
+  IEUM_DEBUG: ${IEUM_DEBUG:-true}
+  IEUM_SECRET_KEY: ${IEUM_SECRET_KEY:?IEUM_SECRET_KEY 가 필요하다. make secret 참조}
+  IEUM_BASE_URL: ${IEUM_BASE_URL:-http://localhost:5173}
+  IEUM_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ieum
+  IEUM_REDIS_URL: redis://redis:6379/0
+  IEUM_S3_ENDPOINT_URL: http://minio:9000
+  IEUM_S3_BUCKET: ${IEUM_S3_BUCKET:-ieum-attachments}
+  IEUM_S3_ACCESS_KEY: ${IEUM_S3_ACCESS_KEY:-minioadmin}
+  IEUM_S3_SECRET_KEY: ${IEUM_S3_SECRET_KEY:-minioadmin}
+  IEUM_SMTP_HOST: mailpit
+  IEUM_SMTP_PORT: "1025"
+  IEUM_SMTP_TLS: "false"
+
+services:
+  postgres:
+    # PGroonga 포함 이미지. 한글 전문검색은 M2 에서 쓰지만 확장은 처음부터 깔아둔다.
+    image: groonga/pgroonga:4.0.1-alpine-16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ieum
+      # 정렬 콜레이션은 ko_KR 기준 (docs/architecture/i18n.md 6절)
+      LANG: ko_KR.UTF-8
+    ports: ["5432:5432"]
+    volumes:
+      - ieum_pgdata:/var/lib/postgresql/data
+      - ./deploy/compose/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ieum"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: [ieum_redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${IEUM_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${IEUM_S3_SECRET_KEY:-minioadmin}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [ieum_miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # 버킷 자동 생성 후 종료
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${IEUM_S3_ACCESS_KEY:-minioadmin} ${IEUM_S3_SECRET_KEY:-minioadmin} &&
+      mc mb --ignore-existing local/${IEUM_S3_BUCKET:-ieum-attachments} &&
+      echo '버킷 준비 완료'"
+    restart: "no"
+
+  mailpit:
+    image: axllent/mailpit:v1.24
+    ports: ["1025:1025", "8025:8025"]
+    environment:
+      MP_MAX_MESSAGES: "5000"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: dev
+    environment: *api-env
+    command: ["uvicorn", "ieum.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src"]
+    ports: ["8000:8000"]
+    volumes:
+      - ./apps/api/src:/app/src
+      - ./packages/i18n:/app/packages/i18n:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: dev
+    environment: *api-env
+    command: ["arq", "ieum.worker.settings.WorkerSettings"]
+    volumes:
+      - ./apps/api/src:/app/src
+      - ./packages/i18n:/app/packages/i18n:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile=false && pnpm --filter @ieum/web dev --host 0.0.0.0"]
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports: ["5173:5173"]
+    volumes:
+      - .:/app
+      - ieum_node_modules:/app/node_modules
+
+volumes:
+  ieum_pgdata:
+  ieum_redisdata:
+  ieum_miniodata:
+  ieum_node_modules:

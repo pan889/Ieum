@@ -1,0 +1,3 @@
+# uv 워크스페이스 루트. 실제 패키지는 apps/api 에 있다.
+[tool.uv.workspace]
+members = ["apps/api"]

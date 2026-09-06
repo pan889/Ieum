@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+
+# Node
+node_modules/
+apps/web/dist/
+*.tsbuildinfo
+
+# 환경
+.env
+.env.local
+
+# 생성물
+packages/api-client/src/generated/
+apps/api/openapi.json
+
+# 로컬 인프라
+pgdata/

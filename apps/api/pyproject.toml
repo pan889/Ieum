@@ -1,0 +1,135 @@
+[project]
+name = "ieum-api"
+version = "0.1.0"
+description = "Ieum — 셀프호스팅 팀 협업 플랫폼 API"
+requires-python = ">=3.12,<3.13"
+license = { text = "AGPL-3.0-only" }
+
+dependencies = [
+    # 웹
+    "fastapi>=0.118,<0.121",
+    "uvicorn[standard]>=0.38,<0.40",
+    "python-multipart>=0.0.20",
+    # 설정·검증
+    "pydantic>=2.12,<3",
+    "pydantic-settings>=2.11,<3",
+    "email-validator>=2.2",
+    # DB
+    "sqlalchemy[asyncio]>=2.0.44,<2.1",
+    "asyncpg>=0.30",
+    "alembic>=1.16",
+    "uuid6>=2024.7.10",          # UUIDv7 (D-10)
+    # 인증
+    "argon2-cffi>=25.1",         # argon2id
+    "pyotp>=2.9",                # TOTP
+    "qrcode[pil]>=8.0",          # 2FA 등록 QR
+    "cryptography>=46.0",        # AES-GCM 애플리케이션 레벨 암호화
+    # 캐시·큐
+    "redis[hiredis]>=5.2,<6",   # arq 0.28 이 redis<6 을 요구한다
+    "arq>=0.26",
+    # 관측성
+    "structlog>=25.4",
+    "prometheus-client>=0.24",
+    # i18n (서버측 알림·메일 렌더)
+    "babel>=2.17",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.14",
+    "mypy>=1.18",
+    "pytest>=8.4",
+    "pytest-asyncio>=1.2",
+    "pytest-cov>=7.0",
+    "httpx>=0.28",
+    "testcontainers[postgres]>=4.13",
+    "bandit>=1.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ieum"]
+
+[tool.uv]
+default-groups = []
+
+# ── ruff ────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "TID",       # tidy-imports (모듈 경계 강제에 사용)
+    "RUF",
+    "ASYNC",
+    "S",         # bandit
+]
+ignore = [
+    "S101",   # assert — 테스트에서 사용
+    "B008",   # FastAPI Depends 기본값 패턴
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]   # 테스트 안의 더미 비밀번호
+
+# CLAUDE.md 절대규칙 1: 모듈 경계를 넘는 import 금지.
+# 다른 모듈은 오직 contracts 를 통해서만 접근한다. ruff 가 1차로 막는다.
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"ieum.modules.identity.models".msg = "모듈 경계 위반. ieum.modules.identity.contracts 를 사용한다."
+"ieum.modules.identity.service".msg = "모듈 경계 위반. contracts 를 사용한다."
+"ieum.modules.identity.repository".msg = "모듈 경계 위반. contracts 를 사용한다."
+"ieum.modules.org.models".msg = "모듈 경계 위반. ieum.modules.org.contracts 를 사용한다."
+"ieum.modules.org.service".msg = "모듈 경계 위반. contracts 를 사용한다."
+"ieum.modules.org.repository".msg = "모듈 경계 위반. contracts 를 사용한다."
+
+[tool.ruff.lint.isort]
+known-first-party = ["ieum"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ── mypy ────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["ieum"]
+
+[[tool.mypy.overrides]]
+module = ["qrcode.*", "arq.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+# ── pytest ──────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: 실제 DB 를 쓰는 API 통합 테스트",
+]
+
+[tool.coverage.run]
+source = ["ieum"]
+omit = ["*/db/migrations/*", "*/__main__.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
