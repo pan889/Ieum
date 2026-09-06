@@ -7,6 +7,10 @@ x-api-env: &api-env
   IEUM_DEBUG: ${IEUM_DEBUG:-true}
   IEUM_SECRET_KEY: ${IEUM_SECRET_KEY:?IEUM_SECRET_KEY 가 필요하다. make secret 참조}
   IEUM_BASE_URL: ${IEUM_BASE_URL:-http://localhost:5173}
+  # 브라우저 오리진은 MinIO 와 **같은 변수**에서 온다. 둘로 나누면 한쪽만
+  # 고쳐 두고 CORS 프리플라이트에서 막힌다 (실제로 그랬다: API 는 기본값
+  # localhost 만 허용해서 127.0.0.1 로 연 브라우저가 로그인부터 실패했다).
+  IEUM_CORS_ORIGINS: ${IEUM_WEB_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
   IEUM_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ieum
   IEUM_REDIS_URL: redis://redis:6379/0
   IEUM_S3_ENDPOINT_URL: http://minio:9000

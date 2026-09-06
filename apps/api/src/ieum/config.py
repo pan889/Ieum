@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BeforeValidator, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["development", "test", "production"]
 
@@ -33,6 +34,27 @@ def _repo_root() -> Path:
 
 #: `.env`·i18n 카탈로그의 기준. 환경변수로 덮어쓸 수 있다.
 REPO_ROOT = _repo_root()
+
+
+def _split_commas(v: object) -> object:
+    """`a,b` 를 목록으로 읽는다.
+
+    `NoDecode` 가 없으면 pydantic-settings 가 튜플 필드의 환경변수를 JSON 으로
+    먼저 파싱하고, 실패하면 `SettingsError` 로 **부팅을 막는다** — 검증기가 돌기
+    전이라 검증기로는 못 잡는다. 운영자가 자연스럽게 쓰는 형태(그리고 MinIO 가
+    같은 값을 받는 형태)는 쉼표 목록이므로, 디코딩을 꺼 두고 여기서 받는다.
+    JSON 배열도 그대로 통한다.
+    """
+    if isinstance(v, str):
+        text = v.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        return tuple(part.strip() for part in text.split(",") if part.strip())
+    return v
+
+
+#: 쉼표로 나열하는 문자열 목록. 환경변수에 JSON 을 쓰게 하지 않는다.
+CommaList = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_split_commas)]
 
 
 class Settings(BaseSettings):
@@ -92,9 +114,13 @@ class Settings(BaseSettings):
     # i18n 카탈로그 위치. 프론트·백엔드가 같은 파일을 본다.
     i18n_catalog_dir: Path = Field(default=REPO_ROOT / "packages" / "i18n")
     default_locale: str = "en"
-    supported_locales: tuple[str, ...] = ("en", "ko")
+    supported_locales: CommaList = ("en", "ko")
 
-    cors_origins: tuple[str, ...] = ("http://localhost:5173",)
+    #: 브라우저 앱이 열리는 오리진. 여기 없는 오리진에서 온 요청은 프리플라이트에서
+    #: 막힌다. 개발 기본값은 Vite 가 뜨는 두 주소다 — `localhost` 와 `127.0.0.1` 은
+    #: 브라우저에게 서로 다른 오리진이라, 한쪽만 넣어 두면 다른 쪽으로 연 사람이
+    #: 로그인부터 실패한다.
+    cors_origins: CommaList = ("http://localhost:5173", "http://127.0.0.1:5173")
 
     @field_validator("secret_key")
     @classmethod

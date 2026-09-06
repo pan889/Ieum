@@ -5,8 +5,10 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from ieum.config import REPO_ROOT, Settings, _repo_root
 
@@ -95,3 +97,68 @@ class TestSeedEntryPointsStandAlone:
             check=False,
         )
         assert result.returncode == 0, result.stderr
+
+
+class TestCommaLists:
+    """환경변수에 JSON 을 쓰게 하지 않는다.
+
+    pydantic-settings 는 튜플 필드를 JSON 으로 먼저 파싱하고 실패하면
+    `SettingsError` 로 **부팅을 막는다**. 검증기보다 먼저 도는 단계라
+    `mode="before"` 로는 못 잡는다 — `NoDecode` 로 꺼야 한다.
+    """
+
+    def test_comma_separated_origins_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("IEUM_CORS_ORIGINS", "https://a.example, https://b.example")
+        assert Settings(secret_key="x" * 32).cors_origins == (  # type: ignore[arg-type]
+            "https://a.example",
+            "https://b.example",
+        )
+
+    def test_a_single_origin_loads(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("IEUM_CORS_ORIGINS", "https://only.example")
+        assert Settings(secret_key="x" * 32).cors_origins == ("https://only.example",)  # type: ignore[arg-type]
+
+    def test_json_still_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 이미 JSON 으로 적어 둔 배포를 깨지 않는다.
+        monkeypatch.setenv("IEUM_CORS_ORIGINS", '["https://a.example"]')
+        assert Settings(secret_key="x" * 32).cors_origins == ("https://a.example",)  # type: ignore[arg-type]
+
+    def test_locales_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("IEUM_SUPPORTED_LOCALES", "en,ko,ja")
+        assert Settings(secret_key="x" * 32).supported_locales == ("en", "ko", "ja")  # type: ignore[arg-type]
+
+    def test_both_dev_hosts_are_allowed_by_default(self) -> None:
+        """`localhost` 와 `127.0.0.1` 은 브라우저에게 서로 다른 오리진이다.
+
+        한쪽만 넣어 두면 다른 쪽으로 연 사람이 로그인부터 실패한다 (E2E 가
+        127.0.0.1 로 열어서 실제로 그랬다).
+        """
+        origins = Settings(secret_key="x" * 32).cors_origins  # type: ignore[arg-type]
+        assert "http://localhost:5173" in origins
+        assert "http://127.0.0.1:5173" in origins
+
+
+class TestComposeFeedsTheSameOrigins:
+    """API 와 MinIO 의 오리진 허용 목록은 **같은 변수**에서 와야 한다.
+
+    둘로 나뉘어 있으면 한쪽만 고쳐 두고 나머지가 프리플라이트에서 막힌다.
+    컨테이너를 띄워야만 보이는 종류라 여기서 정적으로 고정한다.
+    """
+
+    def _compose(self, name: str) -> Any:
+        path = REPO_ROOT / name
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    def test_dev_api_and_minio_share_the_variable(self) -> None:
+        compose = self._compose("docker-compose.yml")
+        api = compose["x-api-env"]["IEUM_CORS_ORIGINS"]
+        minio = compose["services"]["minio"]["environment"]["MINIO_API_CORS_ALLOW_ORIGIN"]
+        assert "IEUM_WEB_ORIGINS" in api
+        assert "IEUM_WEB_ORIGINS" in minio
+
+    def test_production_requires_the_origins(self) -> None:
+        """운영 기본값이 localhost 로 남으면 앱이 통째로 안 뜬다."""
+        compose = self._compose("deploy/compose/prod.yml")
+        value = compose["services"]["api"]["environment"]["IEUM_CORS_ORIGINS"]
+        # `:?` 는 값이 없으면 compose 가 기동을 거부하게 한다.
+        assert value.startswith("${IEUM_WEB_ORIGINS:?")
