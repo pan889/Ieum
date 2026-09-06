@@ -24,8 +24,8 @@ packages/api-client/src/generated/
 apps/api/openapi.json
 
 # E2E 산출물
-apps/web/test-results/
-apps/web/playwright-report/
+test-results/
+playwright-report/
 
 # 로컬 인프라
 pgdata/
