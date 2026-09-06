@@ -124,6 +124,10 @@ migration-check: ## 모델과 마이그레이션 불일치 검사 (CI 게이트)
 seed: ## 관리자 계정 + 기본 역할·워크스페이스 생성
 	$(UV) python -m ieum.cli seed
 
+.PHONY: seed-fields
+seed-fields: ## 데모용 커스텀 필드 정의 (관리 화면이 생기기 전까지)
+	$(UV) python -m ieum.cli seed-fields
+
 .PHONY: reset-db
 reset-db: ## 볼륨 삭제 후 재생성 (주의: 데이터 전부 삭제)
 	$(COMPOSE) down -v postgres

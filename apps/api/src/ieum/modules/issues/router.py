@@ -33,6 +33,7 @@ from ieum.modules.issues.schemas import (
     TimeSummaryResponse,
     TransitionRequest,
     TransitionResponse,
+    VersionResponse,
     WorkflowStateResponse,
     WorklogCreateRequest,
     WorklogPanelResponse,
@@ -191,6 +192,18 @@ async def list_field_definitions(
         actor, project_id, type_id
     )
     return [FieldDefinitionResponse.model_validate(r) for r in rows]
+
+
+@issues_router.get("/versions", response_model=list[VersionResponse])
+async def list_versions(
+    project_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> list[VersionResponse]:
+    """version 종류 커스텀 필드가 고를 수 있는 버전 목록."""
+    rows = await IssueService(session, permissions).list_versions(actor, project_id)
+    return [VersionResponse.model_validate(r) for r in rows]
 
 
 @issues_router.get("/states", response_model=list[WorkflowStateResponse])

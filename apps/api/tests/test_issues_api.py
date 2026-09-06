@@ -80,6 +80,16 @@ class TestMetadataRoutes:
         )
         assert r.status_code == 200, r.text
 
+    async def test_versions_not_shadowed_by_issue_id(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        project = await _project(app_client, headers)
+        r = await app_client.get(
+            f"{BASE}/issues/versions", params={"project_id": project["id"]}, headers=headers
+        )
+        assert r.status_code == 200, r.text
+        # 새 프로젝트에는 버전이 없다. 빈 목록이어야 하고 422 여선 안 된다.
+        assert r.json() == []
+
 
 class TestBoardRoutes:
     async def test_board_lifecycle(self, app_client: httpx.AsyncClient) -> None:

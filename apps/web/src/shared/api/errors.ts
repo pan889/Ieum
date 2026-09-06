@@ -25,3 +25,15 @@ export function describeError(error: unknown): string {
 export function hasCode(error: unknown, code: string): boolean {
   return isApiError(error) && error.code === code
 }
+
+/**
+ * 어느 커스텀 필드에서 난 오류인지. 서버가 `details.field` 로 알려준다.
+ *
+ * 필드가 아홉 개인 화면에서 "값이 올바르지 않습니다" 만 뜨면 어디를 고쳐야
+ * 할지 알 수 없다.
+ */
+export function fieldOfError(error: unknown): string | null {
+  if (!isApiError(error)) return null
+  const field = error.details['field']
+  return typeof field === 'string' ? field : null
+}

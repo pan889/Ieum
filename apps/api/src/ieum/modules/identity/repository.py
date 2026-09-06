@@ -36,6 +36,12 @@ class UserRepository:
     async def get(self, user_id: UUID) -> User | None:
         return await self._s.get(User, user_id)
 
+    async def get_many(self, user_ids: Sequence[UUID]) -> list[User]:
+        if not user_ids:
+            return []
+        stmt = select(User).where(User.id.in_(list(user_ids)))
+        return list((await self._s.execute(stmt)).scalars().all())
+
     async def get_by_email(self, email: str) -> User | None:
         stmt = select(User).where(User.email == normalize_email(email))
         return (await self._s.execute(stmt)).scalar_one_or_none()

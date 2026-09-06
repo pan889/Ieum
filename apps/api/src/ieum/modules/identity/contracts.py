@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -43,6 +44,15 @@ def _to_ref(user: User) -> UserRef:
 async def get_user(session: AsyncSession, user_id: UUID) -> UserRef | None:
     user = await UserRepository(session).get(user_id)
     return _to_ref(user) if user else None
+
+
+async def get_users(session: AsyncSession, user_ids: Iterable[UUID]) -> dict[UUID, UserRef]:
+    """여러 사용자를 한 번에. 참조 검증과 목록 렌더가 행마다 조회하지 않게 한다."""
+    unique = list(dict.fromkeys(user_ids))
+    if not unique:
+        return {}
+    rows = await UserRepository(session).get_many(unique)
+    return {row.id: _to_ref(row) for row in rows}
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> UserRef | None:

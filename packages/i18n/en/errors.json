@@ -73,6 +73,7 @@
   "issues.unknown_field_kind": "Unknown field type.",
   "issues.invalid_field_value": "That value isn't valid for this field.",
   "issues.required_custom_field_missing": "Fill in the required fields first.",
+  "issues.invalid_field_reference": "That field points at something that no longer exists.",
   "iql.invalid": "That query isn't valid.",
   "iql.syntax_error": "There's a syntax error in your query.",
   "iql.unknown_field": "Unknown field {field}.",

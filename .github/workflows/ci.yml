@@ -186,6 +186,8 @@ jobs:
             -f deploy/compose/postgres-init/01-extensions.sql
           uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head
           uv run --project apps/api python -m ieum.cli seed
+          # 커스텀 필드 정의를 넣는 관리 화면이 아직 없다. E2E 가 이걸로 쓴다.
+          uv run --project apps/api python -m ieum.cli seed-fields
 
       - name: 스토리지 기동
         # 서비스 컨테이너가 아니라 직접 띄운다. 서비스 컨테이너는 command 를

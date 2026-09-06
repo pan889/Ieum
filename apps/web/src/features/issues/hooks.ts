@@ -66,3 +66,13 @@ export function useUserSearch(query: string) {
     staleTime: 30_000,
   })
 }
+
+/** version 종류 커스텀 필드의 선택지. 프로젝트별로 캐시한다. */
+export function useVersions(projectId: string | null) {
+  return useQuery({
+    queryKey: ['issues', 'versions', projectId],
+    queryFn: () => issuesApi.versions(projectId as string),
+    enabled: projectId !== null,
+    staleTime: 60_000,
+  })
+}

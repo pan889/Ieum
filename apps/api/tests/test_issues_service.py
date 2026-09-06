@@ -31,6 +31,7 @@ from ieum.modules.issues.models import (
     Issue,
     IssueType,
     SecurityLevel,
+    Version,
     Workflow,
     WorkflowState,
     WorkflowTransition,
@@ -801,6 +802,153 @@ class TestCustomFields:
             ),
         )
         assert view.custom_fields["tags"] == ["b", "a"]
+
+    async def test_unknown_user_reference_rejected(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """UUID 모양만 맞으면 통과하던 구멍. 화면이 이름을 못 찾게 된다."""
+        session.add(FieldDefinition(key="owner", name="Owner", kind="user"))
+        await session.flush()
+        actor = await full_access(session, user, project)
+        with pytest.raises(ValidationError) as exc:
+            await IssueService(session, permissions).create(
+                actor,
+                NewIssue(
+                    project_id=project.id,
+                    type_id=issue_type.id,
+                    summary="x",
+                    custom_fields={"owner": str(new_id())},
+                ),
+            )
+        assert exc.value.code == "issues.invalid_field_reference"
+        assert exc.value.details["fields"] == ["owner"]
+
+    async def test_existing_user_reference_accepted(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        session.add(FieldDefinition(key="owner", name="Owner", kind="user"))
+        await session.flush()
+        actor = await full_access(session, user, project)
+        view = await IssueService(session, permissions).create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="x",
+                custom_fields={"owner": str(user.id)},
+            ),
+        )
+        assert view.custom_fields["owner"] == str(user.id)
+
+    async def test_version_from_another_project_rejected(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """버전은 프로젝트에 매인다. 남의 프로젝트 버전을 밀어 넣지 못한다."""
+        other = Project(key=f"OTH{secrets.token_hex(2).upper()}", name="Other")
+        session.add(other)
+        await session.flush()
+        elsewhere = Version(project_id=other.id, name="1.0")
+        session.add_all([elsewhere, FieldDefinition(key="fix", name="Fix", kind="version")])
+        await session.flush()
+
+        actor = await full_access(session, user, project)
+        with pytest.raises(ValidationError) as exc:
+            await IssueService(session, permissions).create(
+                actor,
+                NewIssue(
+                    project_id=project.id,
+                    type_id=issue_type.id,
+                    summary="x",
+                    custom_fields={"fix": str(elsewhere.id)},
+                ),
+            )
+        assert exc.value.code == "issues.invalid_field_reference"
+
+    async def test_version_in_project_accepted_and_listed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        mine = Version(project_id=project.id, name="1.0")
+        session.add_all([mine, FieldDefinition(key="fix", name="Fix", kind="version")])
+        await session.flush()
+
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        view = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="x",
+                custom_fields={"fix": str(mine.id)},
+            ),
+        )
+        assert view.custom_fields["fix"] == str(mine.id)
+        assert [v.id for v in await service.list_versions(actor, project.id)] == [mine.id]
+
+    async def test_released_versions_still_listed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+    ) -> None:
+        """이미 그 버전을 가리키는 이슈가 있다. 빼면 편집 화면이 UUID 를 띄운다."""
+        session.add_all(
+            [
+                Version(project_id=project.id, name="1.0", status="released"),
+                Version(project_id=project.id, name="2.0", status="open"),
+            ]
+        )
+        await session.flush()
+        actor = await full_access(session, user, project)
+        rows = await IssueService(session, permissions).list_versions(actor, project.id)
+        # 미출시가 먼저 온다.
+        assert [v.name for v in rows] == ["2.0", "1.0"]
+
+    async def test_clearing_a_value_on_update(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """null 은 '비움'이다. 상세 화면의 필드 지우기가 이 경로를 쓴다."""
+        session.add(FieldDefinition(key="note", name="Note", kind="text"))
+        await session.flush()
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        view = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="x",
+                custom_fields={"note": "keep"},
+            ),
+        )
+        after = await service.update(actor, view.issue.id, {}, custom_fields={"note": None})
+        assert "note" not in after.custom_fields
 
 
 class TestSecurityLevel:

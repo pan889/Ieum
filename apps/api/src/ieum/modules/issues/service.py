@@ -38,6 +38,7 @@ from ieum.modules.issues.models import (
     IssueComment,
     IssueLink,
     IssueType,
+    Version,
     WorkflowState,
 )
 from ieum.modules.issues.repository import (
@@ -50,6 +51,7 @@ from ieum.modules.issues.repository import (
     IssueRepository,
     IssueTypeRepository,
     SecurityLevelRepository,
+    VersionRepository,
     WorkflowRepository,
 )
 from ieum.modules.issues.rollup import has_children, recompute_ancestors
@@ -287,6 +289,7 @@ class IssueService:
         self._definitions = FieldDefinitionRepository(session)
         self._history = HistoryRepository(session)
         self._links = IssueLinkRepository(session)
+        self._versions = VersionRepository(session)
 
     # ── 조회 ────────────────────────────────────────────────────
 
@@ -351,6 +354,11 @@ class IssueService:
         return await self._definitions.applicable_to(
             project_id=project_id, issue_type_id=issue_type_id
         )
+
+    async def list_versions(self, actor: Actor, project_id: UUID) -> list[Version]:
+        """version 종류 커스텀 필드의 선택지."""
+        await self._perms.require(self._s, actor, perms.ISSUE_VIEW, scope=Scope.project(project_id))
+        return await self._versions.list_for(project_id)
 
     async def list_workflow_states(self, actor: Actor, project_id: UUID) -> list[WorkflowState]:
         """이 프로젝트에서 등장할 수 있는 상태. 보드 컬럼·필터 칩이 쓴다."""
@@ -992,6 +1000,8 @@ class IssueService:
                 exc.details["field"] = key
                 raise
 
+        await self._check_field_references(by_key, validated, project_id=project_id)
+
         if require_all:
             missing = sorted(
                 d.key for d in definitions if d.is_required and validated.get(d.key) is None
@@ -1003,6 +1013,48 @@ class IssueService:
                     details={"fields": missing},
                 )
         return validated
+
+    async def _check_field_references(
+        self,
+        by_key: dict[str, FieldDefinition],
+        validated: dict[str, Any],
+        *,
+        project_id: UUID,
+    ) -> None:
+        """user·version 값이 실존하는지 본다.
+
+        밸리데이터는 UUID 모양만 본다 (DB 를 모른다). 여기서 확인하지 않으면
+        아무 UUID 나 저장되고, 나중에 화면이 이름을 못 찾아 날 UUID 를 띄운다.
+        종류별로 **한 번씩만** 조회한다 — 필드 개수만큼 왕복하지 않는다.
+        """
+        wanted: dict[str, list[tuple[str, UUID]]] = {"user": [], "version": []}
+        for key, value in validated.items():
+            kind = by_key[key].kind
+            if value is None or kind not in wanted:
+                continue
+            wanted[kind].append((key, UUID(str(value))))
+
+        if wanted["user"]:
+            found = await identity.get_users(self._s, [uid for _, uid in wanted["user"]])
+            self._fail_missing_refs(wanted["user"], set(found), "사용자를 찾을 수 없다.")
+
+        if wanted["version"]:
+            versions = await self._versions.list_for(project_id)
+            # 다른 프로젝트의 버전은 없는 것과 같다. 목록에 안 뜨는 값을
+            # API 로 밀어 넣어 프로젝트 경계를 넘지 못하게 한다.
+            self._fail_missing_refs(
+                wanted["version"], {v.id for v in versions}, "버전을 찾을 수 없다."
+            )
+
+    @staticmethod
+    def _fail_missing_refs(pairs: list[tuple[str, UUID]], known: set[UUID], message: str) -> None:
+        missing = sorted({key for key, ref in pairs if ref not in known})
+        if missing:
+            raise ValidationError(
+                message,
+                code="issues.invalid_field_reference",
+                details={"fields": missing},
+            )
 
     async def _transition_context(
         self,

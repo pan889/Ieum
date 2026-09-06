@@ -158,6 +158,17 @@ class FieldDefinitionResponse(BaseModel):
     position: int
 
 
+class VersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    description: str | None
+    start_date: date | None
+    release_date: date | None
+    status: str
+
+
 class IssueTypeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

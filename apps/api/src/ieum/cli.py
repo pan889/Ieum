@@ -23,11 +23,19 @@ def _cmd_seed() -> int:
     return asyncio.run(run_seed())
 
 
+def _cmd_seed_fields() -> int:
+    """데모용 커스텀 필드 정의를 넣는다 (운영 시드와 분리). 멱등하다."""
+    from ieum.demo_fields import run_seed_fields
+
+    return asyncio.run(run_seed_fields())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ieum")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("openapi", help="OpenAPI 스키마 덤프")
     sub.add_parser("seed", help="초기 데이터 생성 (멱등)")
+    sub.add_parser("seed-fields", help="데모용 커스텀 필드 정의 생성 (멱등)")
 
     args = parser.parse_args(argv)
     match args.command:
@@ -35,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_openapi()
         case "seed":
             return _cmd_seed()
+        case "seed-fields":
+            return _cmd_seed_fields()
         case _:  # pragma: no cover
             parser.error(f"알 수 없는 명령: {args.command}")
 

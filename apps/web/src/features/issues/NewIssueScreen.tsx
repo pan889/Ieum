@@ -8,6 +8,8 @@ import { describeError } from '@/shared/api/errors'
 import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 
+import { CustomField } from './CustomField'
+import type { FieldValue } from './customFields'
 import { priorityLabel } from './format'
 import { useFieldDefinitions, useIssueTypes, useProjects } from './hooks'
 
@@ -28,12 +30,19 @@ export function NewIssueScreen() {
   const [dueDate, setDueDate] = useState('')
   const [labels, setLabels] = useState('')
   const [parentKey, setParentKey] = useState(search.parent ?? '')
-  const [custom, setCustom] = useState<Record<string, string>>({})
+  // 서버가 받는 모양 그대로 담는다. 숫자 필드에 문자열을 보내면 거절당한다.
+  const [custom, setCustom] = useState<Record<string, FieldValue>>({})
 
   const types = useIssueTypes(projectId)
   // 기본값은 effect 로 넣지 않는다 — 렌더 중에 계산하면 한 번 덜 그린다.
   const typeId = pickedTypeId ?? types.data?.[0]?.id ?? null
   const fields = useFieldDefinitions(projectId, typeId)
+
+  // 비운 필드는 아예 안 보낸다. null 을 보내면 필수 필드 검사에서
+  // '채우지 않음'과 똑같이 걸리지만, 요청만 커진다.
+  const filled = Object.fromEntries(
+    Object.entries(custom).filter(([, value]) => value !== null),
+  )
 
   const create = useMutation({
     mutationFn: async () => {
@@ -52,7 +61,7 @@ export function NewIssueScreen() {
         ...(labels.trim()
           ? { labels: labels.split(',').map((l) => l.trim()).filter(Boolean) }
           : {}),
-        ...(Object.keys(custom).length > 0 ? { custom_fields: custom } : {}),
+        ...(Object.keys(filled).length > 0 ? { custom_fields: filled } : {}),
         ...(parent ? { parent_id: parent.id } : {}),
       })
     },
@@ -150,14 +159,12 @@ export function NewIssueScreen() {
           />
 
           {(fields.data ?? []).map((definition) => (
-            <Field
+            <CustomField
               key={definition.id}
-              label={definition.name}
-              required={definition.is_required}
-              {...(definition.description ? { hint: definition.description } : {})}
-              value={custom[definition.key] ?? ''}
-              onChange={(e) => {
-                const value = e.target.value
+              definition={definition}
+              projectId={projectId}
+              value={custom[definition.key] ?? null}
+              onChange={(value) => {
                 setCustom((prev) => ({ ...prev, [definition.key]: value }))
               }}
             />

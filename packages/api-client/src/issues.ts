@@ -77,6 +77,15 @@ export interface FieldDefinition {
   position: number
 }
 
+export interface Version {
+  id: string
+  name: string
+  description: string | null
+  start_date: string | null
+  release_date: string | null
+  status: string
+}
+
 export interface AvailableTransition {
   id: string
   name: string
@@ -290,6 +299,9 @@ export function createIssuesApi(client: ApiClient) {
 
     fields: (projectId: string, typeId: string) =>
       client.get<FieldDefinition[]>(`${BASE}/fields?project_id=${projectId}&type_id=${typeId}`),
+
+    versions: (projectId: string) =>
+      client.get<Version[]>(`${BASE}/versions?project_id=${projectId}`),
   }
 }
 

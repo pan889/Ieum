@@ -4,16 +4,18 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { issuesApi } from '@/shared/api'
-import { describeError } from '@/shared/api/errors'
+import { describeError, fieldOfError } from '@/shared/api/errors'
 import { Markdown } from '@/shared/markdown/Markdown'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 import { Attachments } from './Attachments'
+import { CustomField } from './CustomField'
+import { changedFields, type FieldValue } from './customFields'
 import { Relations } from './Relations'
 import { TimeTracking } from './TimeTracking'
 import { categoryTone, formatDate, formatDateTime, priorityLabel } from './format'
-import { useUserNames, useUserSearch } from './hooks'
+import { useFieldDefinitions, useUserNames, useUserSearch } from './hooks'
 
 export function IssueDetailScreen() {
   const { issueKey } = useParams({ from: '/issues/$issueKey' })
@@ -279,14 +281,7 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
       <Row label={t('issues:detail.created')}>{formatDateTime(issue.created_at)}</Row>
       <Row label={t('issues:detail.updated')}>{formatDateTime(issue.updated_at)}</Row>
 
-      {Object.keys(issue.custom_fields).length > 0 ? (
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <h3 className="text-xs font-medium text-muted">{t('issues:detail.customFields')}</h3>
-          {Object.entries(issue.custom_fields).map(([key, value]) => (
-            <Row key={key} label={key}>{JSON.stringify(value)}</Row>
-          ))}
-        </div>
-      ) : null}
+      <CustomFields issue={issue} onSaved={onSaved} />
 
       {assign.isError ? <Alert>{describeError(assign.error)}</Alert> : null}
       {setPriority.isError ? <Alert>{describeError(setPriority.error)}</Alert> : null}
@@ -302,6 +297,75 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
         </Button>
       ) : null}
     </Card>
+  )
+}
+
+/**
+ * 커스텀 필드 편집 패널.
+ *
+ * 저장은 한 번에 모아서 한다. 필드마다 즉시 PATCH 하면 값 하나 고칠 때마다
+ * 이슈 버전이 올라가고, 옆 사람이 편집 중이면 버전 충돌로 튕긴다.
+ */
+function CustomFields({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
+  const { t } = useTranslation(['issues'])
+  const definitions = useFieldDefinitions(issue.project_id, issue.type_id)
+  //: 사용자가 건드린 필드만. 나머지는 저장된 값을 그대로 보여준다.
+  const [draft, setDraft] = useState<Record<string, FieldValue>>({})
+
+  const save = useMutation({
+    mutationFn: () =>
+      issuesApi.update(
+        issue.id,
+        { custom_fields: changedFields(issue.custom_fields, draft) },
+        issue.version,
+      ),
+    onSuccess: () => { setDraft({}); onSaved() },
+  })
+
+  const rows = definitions.data ?? []
+  if (rows.length === 0) return null
+
+  const patch = changedFields(issue.custom_fields, draft)
+  const dirty = Object.keys(patch).length > 0
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-3">
+      <h3 className="text-xs font-medium text-muted">{t('issues:detail.customFields')}</h3>
+      {rows.map((definition) => (
+        <CustomField
+          key={definition.id}
+          definition={definition}
+          projectId={issue.project_id}
+          compact
+          value={
+            definition.key in draft
+              ? (draft[definition.key] ?? null)
+              : ((issue.custom_fields[definition.key] ?? null) as FieldValue)
+          }
+          onChange={(value) => {
+            setDraft((prev) => ({ ...prev, [definition.key]: value }))
+          }}
+        />
+      ))}
+      {/* 필드가 여러 개면 값 오류 문구만으로는 어디를 고쳐야 할지 모른다.
+          서버가 알려준 필드 이름을 앞에 붙인다. */}
+      {save.isError ? (
+        <Alert>
+          {[rows.find((d) => d.key === fieldOfError(save.error))?.name, describeError(save.error)]
+            .filter(Boolean)
+            .join(': ')}
+        </Alert>
+      ) : null}
+      {dirty ? (
+        <Button
+          className="self-start"
+          loading={save.isPending}
+          onClick={() => { save.mutate() }}
+        >
+          {t('issues:detail.saveFields')}
+        </Button>
+      ) : null}
+    </div>
   )
 }
 

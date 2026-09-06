@@ -21,6 +21,7 @@ from ieum.modules.issues.models import (
     IssueLink,
     IssueType,
     SecurityLevel,
+    Version,
     Workflow,
     WorkflowState,
     WorkflowTransition,
@@ -111,6 +112,29 @@ class IssueTypeRepository:
     async def default_for(self, project_id: UUID) -> IssueType | None:
         types = await self.available_for(project_id)
         return next((t for t in types if not t.is_subtask), None)
+
+
+class VersionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def list_for(self, project_id: UUID) -> list[Version]:
+        """프로젝트의 버전 전부.
+
+        릴리스된 버전도 빼지 않는다 — 이미 그 버전을 가리키는 이슈가 있고,
+        목록에서 사라지면 편집 화면이 값을 이름 없는 UUID 로 보여주게 된다.
+        정렬은 미출시 먼저, 그다음 릴리스 예정일 순.
+        """
+        stmt = (
+            select(Version)
+            .where(Version.project_id == project_id)
+            .order_by(
+                Version.status == "released",
+                Version.release_date.nulls_last(),
+                Version.name,
+            )
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
 
 
 class FieldDefinitionRepository:
