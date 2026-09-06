@@ -16,6 +16,7 @@ import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
 
 import { Comments } from './Comments'
+import { VersionDiff } from './VersionDiff'
 import { ancestorsOf } from './tree'
 import { usePageHistory } from './hooks'
 
@@ -234,6 +235,8 @@ function History({ page, onRestored }: { page: WikiPage; onRestored: () => void 
   const queryClient = useQueryClient()
   const history = usePageHistory(page.id)
   const names = useUserNames((history.data ?? []).map((v) => v.author_id))
+  // 비교할 판. 하나만 고르면 지금 판과 견준다.
+  const [comparing, setComparing] = useState<number | null>(null)
 
   const restore = useMutation({
     mutationFn: (number: number) => wikiApi.pages.restore(page.id, number),
@@ -264,14 +267,27 @@ function History({ page, onRestored }: { page: WikiPage; onRestored: () => void 
                 <span className="min-w-0 truncate text-xs text-muted">{version.message}</span>
               ) : null}
               {version.number !== page.version_number ? (
-                <Button
-                  variant="ghost"
-                  className="ml-auto shrink-0 text-xs"
-                  loading={restore.isPending}
-                  onClick={() => { restore.mutate(version.number) }}
-                >
-                  {t('wiki:page.restore')}
-                </Button>
+                <>
+                  <Button
+                    variant="ghost"
+                    className="ml-auto shrink-0 text-xs"
+                    onClick={() => {
+                      setComparing((v) => (v === version.number ? null : version.number))
+                    }}
+                  >
+                    {comparing === version.number
+                      ? t('wiki:diff.hide')
+                      : t('wiki:diff.compare')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="shrink-0 text-xs"
+                    loading={restore.isPending}
+                    onClick={() => { restore.mutate(version.number) }}
+                  >
+                    {t('wiki:page.restore')}
+                  </Button>
+                </>
               ) : (
                 <span className="ml-auto shrink-0 text-xs text-muted">
                   {t('wiki:page.current')}
@@ -281,6 +297,10 @@ function History({ page, onRestored }: { page: WikiPage; onRestored: () => void 
           ))}
         </ul>
       )}
+      {comparing !== null && page.version_number !== null ? (
+        <VersionDiff pageId={page.id} before={comparing} after={page.version_number} />
+      ) : null}
+
       {/* 되감지 않고 새 판을 만든다. 그래서 이력이 사라지지 않는다. */}
       <p className="text-xs text-muted">{t('wiki:page.restoreHint')}</p>
     </Card>

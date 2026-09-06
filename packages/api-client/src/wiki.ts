@@ -167,6 +167,29 @@ export interface NewPageTemplate {
   category?: string | null
 }
 
+
+export interface DiffLine {
+  op: 'equal' | 'insert' | 'delete'
+  /** 이전 판의 줄 번호. 추가된 줄이면 null. */
+  old_number: number | null
+  /** 이후 판의 줄 번호. 지워진 줄이면 null. */
+  new_number: number | null
+  text: string
+}
+
+export interface VersionDiff {
+  page_id: string
+  before: number
+  after: number
+  before_created_at: string
+  after_created_at: string
+  lines: DiffLine[]
+  added: number
+  removed: number
+  /** 상한에 걸려 잘렸으면 true. */
+  truncated: boolean
+}
+
 const SPACES = '/api/v1/spaces'
 const PAGES = '/api/v1/pages'
 
@@ -230,6 +253,10 @@ export function createWikiApi(client: ApiClient) {
         client.get<PageVersionDetail>(`${PAGES}/${id}/versions/${String(number)}`),
       restore: (id: string, number: number) =>
         client.post<WikiPage>(`${PAGES}/${id}/versions/${String(number)}/restore`),
+      diff: (id: string, before: number, after: number) =>
+        client.get<VersionDiff>(
+          `${PAGES}/${id}/diff?before=${String(before)}&after=${String(after)}`,
+        ),
 
       exportMarkdown: (id: string) => client.getBlob(`${PAGES}/${id}/export`),
 

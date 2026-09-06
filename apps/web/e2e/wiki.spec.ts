@@ -149,3 +149,31 @@ test('휴지통으로 보내면 트리에서 빠진다', async ({ page, consoleE
 
   expect(consoleErrors).toEqual([])
 })
+
+test('판 사이 차이를 줄 단위로 본다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await page.goto(`/wiki/${key}`)
+  await createPage(page, 'Diffed')
+
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('| 항목 | 값 |\n| --- | --- |\n| a | 1 |')
+  await page.getByRole('button', { name: /^save$/i }).click()
+  await expect(page.getByRole('cell', { name: '1', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('| 항목 | 값 |\n| --- | --- |\n| a | 2 |')
+  await page.getByRole('button', { name: /^save$/i }).click()
+  await expect(page.getByRole('cell', { name: '2', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: /^history$/i }).click()
+  await page.getByRole('button', { name: /^compare$/i }).first().click()
+
+  // 표 한 칸만 고쳤으면 한 줄만 바뀐 것으로 보여야 한다 — 마크다운을
+  // 정본으로 고른 부수 이득이다.
+  await expect(page.getByText('+1', { exact: true })).toBeVisible()
+  await expect(page.getByText('−1', { exact: true })).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})

@@ -690,3 +690,39 @@ class TestTemplates:
 
         listed = await app_client.get(f"{BASE}/spaces/{second['id']}/templates", headers=headers)
         assert listed.json() == []
+
+
+class TestVersionDiff:
+    async def test_compares_two_versions(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음 본문")
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}", json={"body": "고친 본문"}, headers=headers
+        )
+
+        r = await app_client.get(
+            f"{BASE}/pages/{page['id']}/diff?before=1&after=2", headers=headers
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert (body["added"], body["removed"]) == (1, 1)
+        assert {line["op"] for line in body["lines"]} == {"insert", "delete"}
+
+    async def test_an_unknown_version_is_not_found(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "본문")
+        r = await app_client.get(
+            f"{BASE}/pages/{page['id']}/diff?before=1&after=99", headers=headers
+        )
+        assert r.status_code == 404
+
+    async def test_version_zero_is_rejected(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "본문")
+        r = await app_client.get(
+            f"{BASE}/pages/{page['id']}/diff?before=0&after=1", headers=headers
+        )
+        assert r.status_code == 422

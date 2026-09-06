@@ -823,4 +823,61 @@ async def delete_template(
     await session.commit()
 
 
+# ── 판 비교 ─────────────────────────────────────────────────────
+
+
+class DiffLineResponse(BaseModel):
+    op: str
+    old_number: int | None
+    new_number: int | None
+    text: str
+
+
+class DiffResponse(BaseModel):
+    page_id: UUID
+    before: int
+    after: int
+    before_created_at: datetime
+    after_created_at: datetime
+    lines: list[DiffLineResponse]
+    added: int
+    removed: int
+    #: 상한에 걸려 잘렸으면 True. 화면이 "여기까지"라고 말해야 한다.
+    truncated: bool
+
+
+@pages_router.get("/{page_id}/diff", response_model=DiffResponse)
+async def compare_versions(
+    page_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    before: Annotated[int, Query(ge=1)],
+    after: Annotated[int, Query(ge=1)],
+) -> DiffResponse:
+    """판 사이 라인 diff (wiki-markdown.md 9절)."""
+    old, new, result = await PageService(session, permissions).compare(
+        actor, page_id, before=before, after=after
+    )
+    return DiffResponse(
+        page_id=page_id,
+        before=old.number,
+        after=new.number,
+        before_created_at=old.created_at,
+        after_created_at=new.created_at,
+        lines=[
+            DiffLineResponse(
+                op=line.op,
+                old_number=line.old_number,
+                new_number=line.new_number,
+                text=line.text,
+            )
+            for line in result.lines
+        ],
+        added=result.added,
+        removed=result.removed,
+        truncated=result.truncated,
+    )
+
+
 __all__ = ["pages_router", "spaces_router"]

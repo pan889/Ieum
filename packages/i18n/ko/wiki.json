@@ -67,5 +67,10 @@
   "template.add": "템플릿 만들기",
   "template.save": "템플릿 저장",
   "template.global": "모든 스페이스",
-  "template.empty": "아직 템플릿이 없다."
+  "template.empty": "아직 템플릿이 없다.",
+  "diff.compare": "비교",
+  "diff.hide": "비교 닫기",
+  "diff.between": "v{before, number} → v{after, number}",
+  "diff.same": "본문이 같다.",
+  "diff.truncated": "문서가 길어 앞부분만 보여 준다."
 }

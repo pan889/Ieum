@@ -67,5 +67,10 @@
   "template.add": "New template",
   "template.save": "Save template",
   "template.global": "Everywhere",
-  "template.empty": "No templates yet."
+  "template.empty": "No templates yet.",
+  "diff.compare": "Compare",
+  "diff.hide": "Hide diff",
+  "diff.between": "v{before, number} → v{after, number}",
+  "diff.same": "No text changes.",
+  "diff.truncated": "Long document — showing the first part only."
 }

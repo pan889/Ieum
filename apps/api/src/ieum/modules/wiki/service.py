@@ -27,6 +27,7 @@ from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown import normalize as normalize_markdown
 from ieum.core.markdown import to_plaintext
 from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate
+from ieum.core.markdown.diff import DiffResult, diff_lines
 from ieum.core.markdown.links import ISSUE as ISSUE_SCHEME
 from ieum.core.markdown.links import extract_links
 from ieum.core.pagination import Page as PageResult
@@ -738,6 +739,24 @@ class PageService:
                 )
             )
         return write_archive(files)
+
+    async def compare(
+        self, actor: Actor, page_id: UUID, *, before: int, after: int
+    ) -> tuple[PageVersion, PageVersion, DiffResult]:
+        """두 판의 본문 차이.
+
+        본문은 이미 정규화돼 있으므로 서식 흔들림이 diff 에 섞이지 않는다 —
+        정규화가 없었으면 한 글자만 고쳐도 문서 절반이 바뀐 것으로 보였다.
+        """
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
+        )
+        old = await self._versions.by_number(page.id, before)
+        new = await self._versions.by_number(page.id, after)
+        if old is None or new is None:
+            raise NotFoundError("그 판을 찾을 수 없다.")
+        return old, new, diff_lines(old.body, new.body)
 
     # ── 이슈 링크 ───────────────────────────────────────────────
 
