@@ -219,11 +219,16 @@ function checkHardcoded() {
     // 카탈로그 자체와 i18n 설정은 문자열을 직접 다룬다.
     if (rel.includes('/i18n/') || rel.endsWith('i18n.ts')) continue
 
-    stripComments(readFileSync(file, 'utf8')).split('\n').forEach((line, i) => {
+    // 예외 표시는 주석에 단다. 주석은 아래에서 지워지므로 원문 줄에서 본다 —
+    // 지워진 줄에서 찾으면 표시가 영영 안 걸려 예외를 못 만든다.
+    const source = readFileSync(file, 'utf8')
+    const raw = source.split('\n')
+
+    stripComments(source).split('\n').forEach((line, i) => {
       const trimmed = line.trim()
       if (!trimmed) return
       if (TRANSLATED.test(line) || ALLOWED_ATTRS.test(line)) return
-      if (/\bi18n-exempt\b/.test(line)) return
+      if (/\bi18n-exempt\b/.test(raw[i] ?? '')) return
 
       for (const match of line.matchAll(/(['"`])((?:(?!\1)[^\\]|\\.)*)\1/g)) {
         const literal = match[2]
