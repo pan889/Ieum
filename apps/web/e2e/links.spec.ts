@@ -9,7 +9,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { createIssue, createProject, createSpace, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, createSpace, expect, projectKey, signIn, test, writeBody } from './fixtures'
 
 function spaceKey(): string {
   return 'L' + Math.random().toString(36).slice(2, 6).toUpperCase()
@@ -22,7 +22,7 @@ async function writeDoc(page: Page, key: string, title: string, body: string): P
   await page.getByRole('button', { name: /^create$/i }).click()
   await expect(page.getByRole('heading', { name: title })).toBeVisible()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill(body)
+  await writeBody(page, body)
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
 }
@@ -77,7 +77,7 @@ test('본문에서 링크를 지우면 이슈 쪽에서도 사라진다', async 
 
   await page.goto(`/wiki/${space}/fickle`)
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill('이제 링크가 없다.')
+  await writeBody(page, '이제 링크가 없다.')
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
 

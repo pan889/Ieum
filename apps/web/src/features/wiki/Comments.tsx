@@ -73,9 +73,11 @@ export function Comments({ pageId, versionNumber, bodyRef, bodyKey }: CommentsPr
   }, [bodyRef, rows, bodyKey])
 
   const startDraft = () => {
+    // 본문이 아직 안 그려졌을 수 있다 — 빈 문서이거나, 방금 저장해서 질의가
+    // 갱신되기 전이거나. 그때 조용히 돌아가면 버튼을 눌러도 아무 일이
+    // 안 일어난다. 고를 자리가 없을 뿐이지 문서 전체 코멘트는 늘 달 수 있다.
     const container = bodyRef.current
-    if (!container) return
-    const next = anchorFromSelection(container, window.getSelection())
+    const next = container ? anchorFromSelection(container, window.getSelection()) : null
     // 아무것도 안 골랐으면 문서 전체 코멘트를 연다.
     setDraft(next ?? { exact: '', prefix: '', suffix: '', occurrence: 1 })
   }
@@ -218,7 +220,13 @@ function NewComment({
       ) : (
         <p className="text-xs text-muted">{t('wiki:comments.wholePage')}</p>
       )}
-      <MarkdownEditor label={t('wiki:comments.body')} value={body} onChange={setBody} rows={4} />
+      <MarkdownEditor
+        label={t('wiki:comments.body')}
+        value={body}
+        onChange={setBody}
+        rows={4}
+        attachTo={{ ownerType: 'page', ownerId: pageId }}
+      />
       <div className="flex gap-2">
         <Button
           className="text-xs"
@@ -344,6 +352,7 @@ function CommentCard({
             value={replyBody}
             onChange={setReplyBody}
             rows={3}
+            attachTo={{ ownerType: 'page', ownerId: comment.page_id }}
           />
           <Button
             className="self-start text-xs"

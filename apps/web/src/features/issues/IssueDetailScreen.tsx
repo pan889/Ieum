@@ -122,6 +122,7 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
           label={t('issues:detail.description')}
           value={description}
           onChange={setDescription}
+          attachTo={{ ownerType: 'issue', ownerId: issue.id }}
         />
         <div className="flex gap-2">
           <Button type="submit" loading={save.isPending}>{t('issues:detail.save')}</Button>
@@ -439,6 +440,9 @@ function Comments({ issueId }: { issueId: string }) {
           rows={4}
           value={body}
           onChange={setBody}
+          // 코멘트에 붙인 이미지도 이슈의 첨부다. 코멘트마다 따로 두면
+          // 코멘트를 지울 때 본문에서 참조하던 그림이 같이 사라진다.
+          attachTo={{ ownerType: 'issue', ownerId: issueId }}
         />
         <div className="flex items-center gap-3">
           <Button type="submit" loading={add.isPending} disabled={body.trim() === ''}>

@@ -6,7 +6,7 @@
  * 실제로 돌려야 결과가 나온다.
  */
 
-import { createIssue, createProject, createSpace, expect, projectKey, signIn, test } from './fixtures'
+import { bodyField, createIssue, createProject, createSpace, expect, projectKey, signIn, test, writeBody } from './fixtures'
 import type { Page } from '@playwright/test'
 
 function spaceKey(): string {
@@ -19,7 +19,7 @@ async function writePage(page: Page, title: string, body: string): Promise<void>
   await page.getByRole('button', { name: /^create$/i }).click()
   await expect(page.getByRole('heading', { name: title })).toBeVisible()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill(body)
+  await writeBody(page, body)
   await page.getByRole('button', { name: /^save$/i }).click()
 }
 
@@ -42,7 +42,7 @@ test(':::info 는 강조 상자로 그려진다', async ({ page, consoleErrors }
   await page.reload()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await expect(page.getByLabel(/^body$/i)).toHaveValue(
+  await expect(await bodyField(page)).toHaveValue(
     ':::warning\n**조심**하세요.\n\n- 하나\n- 둘\n:::',
   )
 
@@ -97,7 +97,7 @@ test('::children 은 이슈 설명에서는 쓸 수 없다고 말한다', async 
   await createIssue(page, key, 'Directive out of place')
 
   await page.getByRole('button', { name: /^edit$/i }).first().click()
-  await page.getByLabel(/^description$/i).fill('::children')
+  await writeBody(page, '::children')
   await page.getByRole('button', { name: /^save$/i }).click()
 
   // 조용히 비워 두면 왜 안 나오는지 알 수 없다.
@@ -138,7 +138,7 @@ test('읽을 수 없는 매크로는 저장을 막는다', async ({ page, consol
   await page.getByLabel(/^title$/i).fill('Broken')
   await page.getByRole('button', { name: /^create$/i }).click()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill('::toc{depth=99}')
+  await writeBody(page, '::toc{depth=99}')
   await page.getByRole('button', { name: /^save$/i }).click()
 
   // 보는 시점에 처음 알면 쓴 사람은 이미 떠나고 없다.
@@ -196,7 +196,7 @@ test('page 없는 ::excerpt 는 저장을 막는다', async ({ page, consoleErro
   await page.getByLabel(/^title$/i).fill('Needs page')
   await page.getByRole('button', { name: /^create$/i }).click()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill('::excerpt')
+  await writeBody(page, '::excerpt')
   await page.getByRole('button', { name: /^save$/i }).click()
 
   // 보는 시점에 처음 알면 쓴 사람은 이미 떠나고 없다.

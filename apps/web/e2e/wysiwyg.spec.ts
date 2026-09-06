@@ -6,7 +6,7 @@
  * 보지만(`doc.test.ts`), 실제 편집기 위에서 도는지는 브라우저 없이 알 수 없다.
  */
 
-import { createSpace, expect, signIn, test } from './fixtures'
+import { bodyField, createSpace, expect, signIn, test, writeBody } from './fixtures'
 
 function spaceKey(): string {
   return 'Y' + Math.random().toString(36).slice(2, 6).toUpperCase()
@@ -43,7 +43,7 @@ test('소스로 쓴 문서를 서식으로 열었다 돌아와도 그대로다',
     '지켜야 할 것',
     ':::',
   ].join('\n')
-  await page.getByLabel(/^body$/i).fill(source)
+  await writeBody(page, source)
 
   await page.getByRole('tab', { name: /rich text/i }).click()
   // 서식 모드에서 실제로 서식으로 보인다 — 원문이 그대로 보이면 안 된다.
@@ -52,7 +52,7 @@ test('소스로 쓴 문서를 서식으로 열었다 돌아와도 그대로다',
 
   await page.getByRole('tab', { name: /^write$/i }).click()
   // 목록 마커나 표 여백은 달라질 수 있어도 뜻은 그대로여야 한다.
-  const back = await page.getByLabel(/^body$/i).inputValue()
+  const back = await (await bodyField(page)).inputValue()
   expect(back).toContain('# 제목')
   expect(back).toContain('- 하나')
   expect(back).toContain('| 1 | 2 |')
@@ -82,7 +82,7 @@ test('마크다운 단축이 그대로 서식이 된다', async ({ page, console
   await expect(page.locator(`${RICH} li`)).toHaveCount(2)
 
   await page.getByRole('tab', { name: /^write$/i }).click()
-  const source = await page.getByLabel(/^body$/i).inputValue()
+  const source = await (await bodyField(page)).inputValue()
   expect(source).toContain('## 새 절')
   expect(source).toContain('**굵게**')
   expect(source).toContain('- 하나\n- 둘')
@@ -106,6 +106,49 @@ test('서식으로 쓴 글이 문서로 저장된다', async ({ page, consoleErr
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('heading', { name: '배포 절차' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ hasText: '빌드' })).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('서식 모드에서도 @ 로 사람을 넣는다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'Mentioned')
+
+  const rich = page.locator(RICH)
+  await rich.click()
+  await page.keyboard.type('담당은 @Admin')
+
+  const list = page.getByRole('listbox', { name: /people to mention/i })
+  await expect(list).toBeVisible()
+  // 키보드만으로 끝나야 한다 (ux-principles 3절).
+  await page.keyboard.press('Enter')
+  await expect(rich).toContainText('@Administrator')
+
+  // 저장되는 것은 이름이 아니라 id 다. 이름이 바뀌어도 안 깨진다.
+  const source = await (await bodyField(page)).inputValue()
+  expect(source).toMatch(/담당은 \[@Administrator\]\(user:[0-9a-f-]+\)/)
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('서식 모드에 이슈 주소를 붙이면 이슈 링크가 된다', async ({ page, context, consoleErrors }) => {
+  const key = spaceKey()
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signIn(page)
+  await createSpace(page, key)
+  await openEditor(page, key, 'Pasted link')
+
+  const rich = page.locator(RICH)
+  await rich.click()
+  await page.keyboard.type('참고: ')
+  await page.evaluate(() => navigator.clipboard.writeText('http://localhost:5173/issues/DEV-1'))
+  await page.keyboard.press('Control+v')
+
+  // 호스트를 그대로 저장하면 주소가 바뀌는 순간 전부 죽는다.
+  const source = await (await bodyField(page)).inputValue()
+  expect(source).toBe('참고: [DEV-1](issue:DEV-1)')
 
   expect(consoleErrors).toEqual([])
 })

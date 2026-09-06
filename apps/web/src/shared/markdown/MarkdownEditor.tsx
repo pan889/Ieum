@@ -5,11 +5,11 @@ import clsx from 'clsx'
 import { useUserSearch } from '@/features/issues/hooks'
 
 import { Markdown } from './Markdown'
-import { Wysiwyg } from './Wysiwyg'
+import { Wysiwyg, type AttachTo } from './Wysiwyg'
 import { applyMention, findMentionQuery, type MentionQuery } from './mention'
 
-/** 서식(WYSIWYG) · 마크다운 · 미리보기. */
-const MODES = ['write', 'rich', 'preview'] as const
+/** 서식(WYSIWYG) · 마크다운 · 미리보기. 순서가 곧 탭 순서다. */
+const MODES = ['rich', 'write', 'preview'] as const
 type Mode = (typeof MODES)[number]
 
 /**
@@ -19,9 +19,8 @@ type Mode = (typeof MODES)[number]
  * 보여줄 뿐이고, 그 왕복이 문서를 바꾸지 않는다는 것은 코퍼스로 잠가 두었다
  * (doc.test.ts). 소스 모드는 상시 제공한다 (ux-principles 6절).
  *
- * 기본값이 아직 소스인 이유: `@` 멘션과 이미지 붙여넣기가 소스 모드에만
- * 있다. 기본을 서식으로 돌리면 이미 쓰던 기능이 사라진 것처럼 보인다 —
- * 그 둘이 서식 모드에도 붙으면 기본을 바꾼다.
+ * 기본은 서식이다. `@` 멘션과 붙여넣기(이미지 → 첨부, 주소 → 링크)가 서식
+ * 모드에도 붙어서, 이제 소스 모드에서만 되는 일이 없다.
  */
 export function MarkdownEditor({
   label,
@@ -29,15 +28,18 @@ export function MarkdownEditor({
   onChange,
   placeholder,
   rows = 8,
+  attachTo,
 }: {
   label: string
   value: string
   onChange: (next: string) => void
   placeholder?: string
   rows?: number
+  /** 붙여넣은 이미지를 매달 곳. 아직 저장 전인 화면에는 없다. */
+  attachTo?: AttachTo | undefined
 }) {
   const { t } = useTranslation(['common'])
-  const [tab, setTab] = useState<Mode>('write')
+  const [tab, setTab] = useState<Mode>('rich')
   const id = useId()
   const textarea = useRef<HTMLTextAreaElement>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
@@ -102,7 +104,7 @@ export function MarkdownEditor({
 
       <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-tab-${tab}`}>
         {tab === 'rich' ? (
-          <Wysiwyg value={value} onChange={onChange} label={label} />
+          <Wysiwyg value={value} onChange={onChange} label={label} attachTo={attachTo} />
         ) : tab === 'write' ? (
           <div className="relative">
             <textarea

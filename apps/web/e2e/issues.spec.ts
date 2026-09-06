@@ -1,4 +1,4 @@
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, expect, projectKey, signIn, test, writeBody } from './fixtures'
 
 test('이슈를 만들고 전이·코멘트·담당자를 다룬다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -36,7 +36,7 @@ test('제목과 설명을 편집하면 실제로 저장된다', async ({ page, c
 
   await page.getByRole('button', { name: /^edit$/i }).click()
   await page.getByLabel(/^summary$/i).fill('after edit')
-  await page.getByLabel(/^description$/i).fill('body text')
+  await writeBody(page, 'body text')
   await page.getByRole('button', { name: /^save$/i }).click()
 
   await expect(page.getByRole('heading', { name: 'after edit' })).toBeVisible()

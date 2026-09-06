@@ -1,4 +1,4 @@
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { bodyField, createIssue, createProject, expect, projectKey, signIn, test, writeBody } from './fixtures'
 
 test('설명과 코멘트를 마크다운으로 그린다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -7,7 +7,7 @@ test('설명과 코멘트를 마크다운으로 그린다', async ({ page, conso
   await createIssue(page, key, 'markdown issue')
 
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^description$/i).fill(
+  await writeBody(page, 
     ['## Heading', '', '- [x] done', '- [ ] todo', '', '| a | b |', '| - | - |', '| 1 | 2 |'].join(
       '\n',
     ),
@@ -64,13 +64,13 @@ test('저장할 때 마크다운이 정규화된다', async ({ page, consoleErro
 
   await page.getByRole('button', { name: /^edit$/i }).click()
   // setext 제목과 * 목록은 정규화되면 # 과 - 로 바뀐다.
-  await page.getByLabel(/^description$/i).fill('Title\n=====\n\n*  a\n*  b\n')
+  await writeBody(page, 'Title\n=====\n\n*  a\n*  b\n')
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.locator('.ieum-markdown h1')).toHaveText('Title')
 
   // 다시 편집 폼을 열면 정규화된 원문이 들어 있어야 한다.
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await expect(page.getByLabel(/^description$/i)).toHaveValue('# Title\n\n- a\n- b')
+  await expect(await bodyField(page)).toHaveValue('# Title\n\n- a\n- b')
 
   expect(consoleErrors).toEqual([])
 })
@@ -82,7 +82,7 @@ test('미리보기 탭이 입력한 마크다운을 그린다', async ({ page, c
   await createIssue(page, key, 'preview issue')
 
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^description$/i).fill('## Preview me\n\n- one\n- two\n')
+  await writeBody(page, '## Preview me\n\n- one\n- two\n')
 
   await page.getByRole('tab', { name: /^preview$/i }).first().click()
   const preview = page.getByRole('tabpanel').first()
@@ -91,7 +91,7 @@ test('미리보기 탭이 입력한 마크다운을 그린다', async ({ page, c
 
   // 작성 탭으로 돌아가도 입력이 남아 있어야 한다.
   await page.getByRole('tab', { name: /^write$/i }).first().click()
-  await expect(page.getByLabel(/^description$/i)).toHaveValue('## Preview me\n\n- one\n- two\n')
+  await expect(await bodyField(page)).toHaveValue('## Preview me\n\n- one\n- two\n')
 
   expect(consoleErrors).toEqual([])
 })

@@ -1,5 +1,5 @@
 import { expect, test as base } from '@playwright/test'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 export const ADMIN_EMAIL = process.env['SEED_ADMIN_EMAIL'] ?? 'admin@example.com'
 export const ADMIN_PASSWORD = process.env['SEED_ADMIN_PASSWORD'] ?? 'seed-admin-password-1234'
@@ -61,6 +61,26 @@ export async function createIssue(
   await page.getByRole('button', { name: /create issue/i }).click()
   await page.waitForURL(new RegExp(`/issues/${key}-`))
   return page.url().split('/').pop() as string
+}
+
+/**
+ * 마크다운 소스 입력칸.
+ *
+ * 편집기는 서식 모드가 기본이다. 마크다운을 글자 그대로 넣으려면 소스 탭을
+ * 먼저 골라야 한다 — 서식 모드에 `fill` 하면 입력 규칙을 타지 않아서
+ * `# 제목` 이 제목이 아니라 글자로 들어앉는다.
+ */
+export async function bodyField(page: Page): Promise<Locator> {
+  const source = page.getByRole('tab', { name: /^write$/i }).first()
+  if ((await source.getAttribute('aria-selected')) !== 'true') await source.click()
+  // 라벨은 화면마다 다르다(Body·Description). 탭 패널 안의 textarea 로 잡으면
+  // 어느 화면에서든 같은 헬퍼가 쓰인다.
+  return page.locator('[role="tabpanel"] textarea').first()
+}
+
+/** 소스 모드로 본문을 채운다. */
+export async function writeBody(page: Page, text: string): Promise<void> {
+  await (await bodyField(page)).fill(text)
 }
 
 /**

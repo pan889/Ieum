@@ -7,7 +7,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { createIssue, createProject, createSpace, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, createSpace, expect, projectKey, signIn, test, writeBody } from './fixtures'
 
 function unique(prefix: string): string {
   return prefix + Math.random().toString(36).slice(2, 8)
@@ -35,7 +35,7 @@ async function writeDoc(page: Page, key: string, title: string, body: string): P
   await page.getByRole('button', { name: /^create$/i }).click()
   await expect(page.getByRole('heading', { name: title })).toBeVisible()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill(body)
+  await writeBody(page, body)
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
 }
@@ -125,7 +125,7 @@ test('고친 내용으로 다시 찾힌다', async ({ page, consoleErrors }) => 
   await page.goto(`/wiki/${space}`)
   await page.getByRole('link', { name: `Edited ${space}` }).click()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill(`이제는 ${after} 라고 쓴다.`)
+  await writeBody(page, `이제는 ${after} 라고 쓴다.`)
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
 

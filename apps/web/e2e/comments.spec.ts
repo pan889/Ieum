@@ -9,7 +9,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { createSpace, expect, signIn, test } from './fixtures'
+import { createSpace, expect, signIn, test, writeBody } from './fixtures'
 
 function spaceKey(): string {
   return 'C' + Math.random().toString(36).slice(2, 6).toUpperCase()
@@ -25,9 +25,13 @@ async function writePage(page: Page, title: string, body: string): Promise<void>
 
 async function edit(page: Page, body: string): Promise<void> {
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await page.getByLabel(/^body$/i).fill(body)
+  await writeBody(page, body)
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
+  // 편집 폼이 닫혀도 본문은 아직 이전 판이다. 인용을 고르는 것도, 인용 자리에
+  // 표시를 얹는 것도 **그려진 본문** 위에서 일어나므로 여기서 기다린다.
+  // 코멘트 본문도 같은 클래스로 그려지므로 첫 번째(문서 본문)만 본다.
+  await expect(page.locator('.ieum-markdown').first()).toBeVisible()
 }
 
 /** 본문에서 `from` 이 시작되는 곳부터 `to` 앞까지 드래그한 것으로 친다. */
@@ -163,6 +167,27 @@ test('문서 전체에 다는 코멘트와 답글', async ({ page, consoleErrors
   await page.getByLabel(/^comment$/i).fill('동의한다.')
   await page.getByRole('button', { name: /^post$/i }).click()
   await expect(page.getByText('동의한다.')).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('본문이 비어 있어도 코멘트를 달 수 있다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await page.goto(`/wiki/${key}`)
+  await page.getByRole('button', { name: /^\+ new page$/i }).click()
+  await page.getByLabel(/^title$/i).fill('Empty')
+  await page.getByRole('button', { name: /^create$/i }).click()
+  await expect(page.getByRole('heading', { name: 'Empty' })).toBeVisible()
+
+  // 고를 본문이 없다고 버튼이 죽어 있으면 안 된다 — 문서 전체 코멘트는
+  // 늘 달 수 있다. (본문이 비면 렌더된 본문 자체가 없어 참조가 비어 있다.)
+  await page.getByRole('button', { name: /comment on selection/i }).click()
+  await expect(page.getByText(/on the whole page/i)).toBeVisible()
+  await page.getByLabel(/^comment$/i).fill('본문부터 채우자.')
+  await page.getByRole('button', { name: /^post$/i }).click()
+  await expect(page.getByText('본문부터 채우자.')).toBeVisible()
 
   expect(consoleErrors).toEqual([])
 })

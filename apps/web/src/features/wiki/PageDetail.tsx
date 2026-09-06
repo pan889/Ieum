@@ -312,7 +312,13 @@ function PageEditorForm({
           value={title}
           onChange={(e) => { setTitle(e.target.value) }}
         />
-        <MarkdownEditor label={t('wiki:page.body')} value={body} onChange={setBody} rows={18} />
+        <MarkdownEditor
+          label={t('wiki:page.body')}
+          value={body}
+          onChange={setBody}
+          rows={18}
+          attachTo={{ ownerType: 'page', ownerId: page.id }}
+        />
         <Field
           label={t('wiki:page.labels')}
           hint={t('wiki:page.labelsHint')}
