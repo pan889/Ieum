@@ -5,14 +5,23 @@ import clsx from 'clsx'
 import { useUserSearch } from '@/features/issues/hooks'
 
 import { Markdown } from './Markdown'
+import { Wysiwyg } from './Wysiwyg'
 import { applyMention, findMentionQuery, type MentionQuery } from './mention'
 
+/** 서식(WYSIWYG) · 마크다운 · 미리보기. */
+const MODES = ['write', 'rich', 'preview'] as const
+type Mode = (typeof MODES)[number]
+
 /**
- * 마크다운 입력 + 미리보기 탭.
+ * 마크다운 편집기. 서식 모드·소스 모드·미리보기.
  *
- * WYSIWYG 은 M2 다. 그전까지도 사용자는 자기가 쓴 표가 어떻게 보일지 알아야
- * 하므로, 소스 입력 옆에 미리보기를 붙인다 (ux-principles.md — 소스 모드
- * 토글은 상시 제공).
+ * **정본은 언제나 마크다운이다**(ADR-0008). 서식 모드는 같은 문자열을 다르게
+ * 보여줄 뿐이고, 그 왕복이 문서를 바꾸지 않는다는 것은 코퍼스로 잠가 두었다
+ * (doc.test.ts). 소스 모드는 상시 제공한다 (ux-principles 6절).
+ *
+ * 기본값이 아직 소스인 이유: `@` 멘션과 이미지 붙여넣기가 소스 모드에만
+ * 있다. 기본을 서식으로 돌리면 이미 쓰던 기능이 사라진 것처럼 보인다 —
+ * 그 둘이 서식 모드에도 붙으면 기본을 바꾼다.
  */
 export function MarkdownEditor({
   label,
@@ -28,7 +37,7 @@ export function MarkdownEditor({
   rows?: number
 }) {
   const { t } = useTranslation(['common'])
-  const [tab, setTab] = useState<'write' | 'preview'>('write')
+  const [tab, setTab] = useState<Mode>('write')
   const id = useId()
   const textarea = useRef<HTMLTextAreaElement>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
@@ -71,7 +80,7 @@ export function MarkdownEditor({
           aria-label={t('common:editor.mode')}
           className="ml-auto flex gap-1 text-xs"
         >
-          {(['write', 'preview'] as const).map((name) => (
+          {MODES.map((name) => (
             <button
               key={name}
               id={`${id}-tab-${name}`}
@@ -92,7 +101,9 @@ export function MarkdownEditor({
       </div>
 
       <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-tab-${tab}`}>
-        {tab === 'write' ? (
+        {tab === 'rich' ? (
+          <Wysiwyg value={value} onChange={onChange} label={label} />
+        ) : tab === 'write' ? (
           <div className="relative">
             <textarea
               ref={textarea}
@@ -165,7 +176,9 @@ export function MarkdownEditor({
         )}
       </div>
 
-      <p className="text-xs text-muted">{t('common:editor.markdownHint')}</p>
+      <p className="text-xs text-muted">
+        {t(tab === 'rich' ? 'common:editor.richHint' : 'common:editor.markdownHint')}
+      </p>
     </div>
   )
 }

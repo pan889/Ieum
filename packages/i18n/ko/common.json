@@ -9,6 +9,8 @@
   "action.copied": "복사됨",
   "action.search": "검색",
   "editor.write": "작성",
+  "editor.rich": "서식",
+  "editor.richHint": "마크다운 단축(## , - , ```)이 그대로 서식이 된다. 멘션과 이미지 붙여넣기는 아직 마크다운 모드에서만 된다.",
   "editor.mode": "편집 모드",
   "editor.mentionList": "멘션할 사람",
   "editor.preview": "미리보기",

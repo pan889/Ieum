@@ -133,4 +133,19 @@
   .ieum-admonition-tip { --ieum-tone: rgb(var(--ieum-success)); }
   .ieum-admonition-warning { --ieum-tone: rgb(var(--ieum-warning)); }
   .ieum-admonition-danger { --ieum-tone: rgb(var(--ieum-danger)); }
+
+  /* 서식 모드가 다루지 않는 블록(front matter·디렉티브·각주 정의). 원문을
+     그대로 보여 준다 — 편집기가 못 만지는 것을 만질 수 있는 척하면, 눌러 본
+     사람이 문서를 잃는다. 고치려면 마크다운 모드로 간다. */
+  /* `.ieum-markdown pre` 보다 구체적이어야 한다. 아니면 줄바꿈이 접혀
+     `:::warning 조심할 것 :::` 한 줄로 보인다. */
+  .ieum-markdown pre.ieum-verbatim,
+  .ieum-verbatim {
+    @apply my-3 overflow-x-auto whitespace-pre rounded-md border border-dashed border-border bg-surface-raised px-3 py-2 font-mono text-xs text-muted;
+  }
+  /* 서식 모드의 체크박스는 편집기가 그린다(markdown-it 이 아니라). */
+  .ieum-markdown ul[data-type='taskList'] { @apply list-none pl-0; }
+  .ieum-markdown ul[data-type='taskList'] li { @apply flex items-baseline gap-2; }
+  /* 편집기는 빈 문단을 접지 않아야 커서가 갈 자리가 남는다. */
+  .ProseMirror p:empty::after { content: '\00a0'; }
 }

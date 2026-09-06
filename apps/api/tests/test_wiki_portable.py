@@ -11,7 +11,9 @@ M2 완료 조건이 여기 걸려 있다 (wiki-markdown.md 8절). 이 테스트�
 from __future__ import annotations
 
 import io
+import json
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -26,30 +28,17 @@ from ieum.modules.wiki.portable import (
     write_archive,
 )
 
-#: 라운드트립 코퍼스. 실제 문서에서 자주 나오는 구조를 모았다.
-CORPUS: list[tuple[str, str]] = [
-    ("빈 문서", ""),
-    ("문단 하나", "그냥 한 문단이다."),
-    ("제목 계층", "# 위\n\n## 가운데\n\n### 아래\n\n본문."),
-    ("순서 없는 목록", "- 하나\n- 둘\n  - 둘의 하나\n- 셋"),
-    ("순서 있는 목록", "1. 하나\n1. 둘\n1. 셋"),
-    ("체크박스", "- [ ] 안 함\n- [x] 함"),
-    (
-        "표",
-        "| 이름 | 값 |\n| --- | --- |\n| a | 1 |\n| 아주 긴 셀 이름 | 2 |",
-    ),
-    ("코드 블록", "```python\ndef f() -> int:\n    return 1\n```"),
-    ("인라인 코드와 강조", "`code` 와 **굵게** 와 *기울임* 과 ~~취소~~."),
-    ("링크", "[문서](page:ENG/deploy) 와 [이슈](issue:ENG-1)."),
-    ("이미지", "![그림](attachment:abc/a.png)"),
-    ("인용", "> 인용문\n>\n> 두 번째 문단"),
-    ("각주", "본문[^1]\n\n[^1]: 각주 내용"),
-    ("수평선", "위\n\n______\n\n아래"),
-    ("HTML 처럼 보이는 것", "<div>이건 그냥 텍스트다</div>"),
-    ("한글 섞인 표", "| 항목 | 설명 |\n| --- | --- |\n| 배포 | 운영 반영 |"),
-    ("긴 문단", "가나다라마바사 " * 40),
-    ("중첩 목록과 코드", "- 항목\n\n  ```sh\n  echo hi\n  ```\n\n- 다음"),
-]
+
+#: 라운드트립 코퍼스. 정본은 `packages/markdown/corpus.json` 이다 — 클라이언트의
+#: WYSIWYG ↔ 마크다운 검사도 같은 문서 묶음을 쓴다. 한쪽에만 두면 다른 쪽이 못
+#: 다루는 구조가 조용히 늘어난다.
+def _corpus() -> list[tuple[str, str]]:
+    path = Path(__file__).resolve().parents[3] / "packages" / "markdown" / "corpus.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [(entry["name"], entry["source"]) for entry in data["documents"]]
+
+
+CORPUS: list[tuple[str, str]] = _corpus()
 
 
 class TestNormalizeIdempotency:
