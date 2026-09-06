@@ -101,5 +101,18 @@
   "issues.bulk_empty": "Select at least one issue.",
   "issues.bulk_too_many": "You can change up to {max} issues at once.",
   "issues.bulk_no_changes": "Nothing to change.",
-  "issues.export_needs_filter": "Narrow the query before exporting — at least pick a project."
+  "issues.export_needs_filter": "Narrow the query before exporting — at least pick a project.",
+  "wiki.invalid_space_key": "Space keys are 2–16 characters, starting with a letter.",
+  "wiki.invalid_space_kind": "That space type isn't supported.",
+  "wiki.space_key_taken": "That space key is already in use.",
+  "wiki.home_page_not_in_space": "That page belongs to a different space.",
+  "wiki.empty_title": "Give the page a title.",
+  "wiki.title_too_long": "That title is too long.",
+  "wiki.body_too_long": "That page is too large to save.",
+  "wiki.too_many_labels": "Too many labels ({max} at most).",
+  "wiki.parent_not_found": "That parent page doesn't exist.",
+  "wiki.max_depth_exceeded": "Pages can't nest more than {max} levels deep.",
+  "wiki.move_into_self": "A page can't be moved under itself.",
+  "wiki.move_into_descendant": "A page can't be moved under its own child.",
+  "wiki.invalid_restriction": "That restriction isn't valid."
 }

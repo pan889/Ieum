@@ -38,6 +38,9 @@ from ieum.modules.notify.router import (
 )
 from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.router import projects_router, roles_router
+from ieum.modules.wiki.contracts import page_model as wiki_page_model
+from ieum.modules.wiki.router import pages_router, spaces_router
+from ieum.modules.wiki.service import PageRestrictionGuard
 
 log = get_logger(__name__)
 
@@ -118,6 +121,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     # 객체 수준 제한: 이슈 보안 레벨. 스코프 권한을 통과한 뒤 한 번 더 거른다.
     permissions.register_guard(issue_model(), SecurityLevelGuard())
+    # 문서 열람·편집 제한. 스코프 권한을 통과한 뒤 한 번 더 거른다.
+    permissions.register_guard(wiki_page_model(), PageRestrictionGuard())
     set_permission_service(permissions)
     # 첨부 소유자별 권한 리졸버. core 는 어떤 모듈이 첨부를 쓰는지 모른다.
     issue_attachments.install()
@@ -133,6 +138,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         attachments_router,
         search_router,
         filters_router,
+        spaces_router,
+        pages_router,
         notifications_router,
         watches_router,
         webhooks_router,

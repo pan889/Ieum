@@ -55,6 +55,15 @@ from ieum.modules.org.models import (
     RoleAssignment,
     Workspace,
 )
+from ieum.modules.wiki.models import (
+    Page,
+    PageComment,
+    PageLabel,
+    PageRestriction,
+    PageTemplate,
+    PageVersion,
+    Space,
+)
 
 __all__ = [
     "ApiToken",
@@ -78,12 +87,19 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "OutboxEvent",
+    "Page",
+    "PageComment",
+    "PageLabel",
+    "PageRestriction",
+    "PageTemplate",
+    "PageVersion",
     "PermissionGrant",
     "Project",
     "Role",
     "RoleAssignment",
     "SavedFilter",
     "SecurityLevel",
+    "Space",
     "User",
     "UserGroup",
     "UserSession",

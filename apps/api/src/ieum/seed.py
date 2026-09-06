@@ -25,6 +25,7 @@ from ieum.modules.org import permissions as org_perms
 from ieum.modules.org.models import Role
 from ieum.modules.org.repository import RoleRepository
 from ieum.modules.org.service import WorkspaceService
+from ieum.modules.wiki import permissions as wiki_perms
 
 log = get_logger(__name__)
 
@@ -32,7 +33,7 @@ log = get_logger(__name__)
 BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "Administrator": (
         "global",
-        (*identity_perms.ALL, *org_perms.ALL, *issue_perms.ALL),
+        (*identity_perms.ALL, *org_perms.ALL, *issue_perms.ALL, *wiki_perms.ALL),
     ),
     "Member": (
         "global",
@@ -71,6 +72,34 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "Project Viewer": (
         "project",
         (org_perms.PROJECT_VIEW, issue_perms.ISSUE_VIEW),
+    ),
+    "Space Admin": (
+        "space",
+        (
+            wiki_perms.PAGE_VIEW,
+            wiki_perms.PAGE_CREATE,
+            wiki_perms.PAGE_EDIT,
+            wiki_perms.PAGE_DELETE,
+            wiki_perms.PAGE_MOVE,
+            wiki_perms.PAGE_RESTRICT,
+            wiki_perms.COMMENT_ADD,
+            wiki_perms.COMMENT_EDIT_ANY,
+            wiki_perms.SPACE_ADMIN,
+        ),
+    ),
+    "Space Editor": (
+        "space",
+        (
+            wiki_perms.PAGE_VIEW,
+            wiki_perms.PAGE_CREATE,
+            wiki_perms.PAGE_EDIT,
+            wiki_perms.COMMENT_ADD,
+            wiki_perms.COMMENT_EDIT_OWN,
+        ),
+    ),
+    "Space Viewer": (
+        "space",
+        (wiki_perms.PAGE_VIEW, wiki_perms.COMMENT_ADD, wiki_perms.COMMENT_EDIT_OWN),
     ),
 }
 
