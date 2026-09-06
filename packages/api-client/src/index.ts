@@ -58,3 +58,9 @@ export {
   type BoardsApi,
   type NewBoard,
 } from './boards'
+export {
+  createAttachmentsApi,
+  type Attachment,
+  type AttachmentsApi,
+  type UploadTicket,
+} from './attachments'

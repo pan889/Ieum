@@ -8,6 +8,7 @@ Base.metadata 를 쓰는 쪽(alembic autogenerate, 테스트의 create_all)은 �
 
 from __future__ import annotations
 
+from ieum.core.attachments import Attachment
 from ieum.core.outbox import OutboxEvent
 from ieum.db.base import Base
 from ieum.modules.identity.models import (
@@ -57,6 +58,7 @@ from ieum.modules.org.models import (
 
 __all__ = [
     "ApiToken",
+    "Attachment",
     "AuditLog",
     "Base",
     "Board",

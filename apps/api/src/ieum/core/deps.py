@@ -11,11 +11,21 @@ from ieum.config import Settings, get_settings
 from ieum.core.context import Actor
 from ieum.core.exceptions import AuthenticationError
 from ieum.core.permissions import PermissionService, get_permission_service
+from ieum.core.storage import ObjectStore
 from ieum.db.session import get_db_session
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 PermissionDep = Annotated[PermissionService, Depends(get_permission_service)]
+
+
+def get_object_store(settings: AppSettings) -> ObjectStore:
+    """요청마다 새로 만든다. boto3 클라이언트 생성은 순수 계산이라 싸고,
+    설정이 바뀌면 다음 요청부터 반영된다."""
+    return ObjectStore(settings)
+
+
+StorageDep = Annotated[ObjectStore, Depends(get_object_store)]
 
 
 def client_ip(request: Request) -> str | None:

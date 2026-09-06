@@ -18,12 +18,14 @@ from starlette.responses import Response
 # 이벤트 카탈로그를 로드해 레지스트리를 채운다 (웹훅 검증이 이걸 본다).
 import ieum.event_catalog  # noqa: F401
 from ieum.config import Settings, get_settings
+from ieum.core.attachment_router import attachments_router
 from ieum.core.errors import install_exception_handlers
 from ieum.core.logging import configure_logging, get_logger
 from ieum.core.middleware import TraceMiddleware
 from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
 from ieum.modules.identity.router import auth_router, users_router
+from ieum.modules.issues import attachments as issue_attachments
 from ieum.modules.issues.board_router import boards_router
 from ieum.modules.issues.contracts import issue_model
 from ieum.modules.issues.router import issues_router
@@ -117,6 +119,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 객체 수준 제한: 이슈 보안 레벨. 스코프 권한을 통과한 뒤 한 번 더 거른다.
     permissions.register_guard(issue_model(), SecurityLevelGuard())
     set_permission_service(permissions)
+    # 첨부 소유자별 권한 리졸버. core 는 어떤 모듈이 첨부를 쓰는지 모른다.
+    issue_attachments.install()
 
     for router in (
         auth_router,
@@ -125,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         roles_router,
         issues_router,
         boards_router,
+        attachments_router,
         search_router,
         filters_router,
         notifications_router,

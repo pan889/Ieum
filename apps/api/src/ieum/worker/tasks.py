@@ -19,9 +19,11 @@ import httpx
 from sqlalchemy import select
 
 from ieum.config import get_settings
+from ieum.core.attachments import AttachmentService
 from ieum.core.crypto import SecretBox
 from ieum.core.logging import get_logger
 from ieum.core.outbox import dispatch, fetch_unpublished
+from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import session_scope
 from ieum.modules.notify import delivery as webhook_delivery
@@ -173,20 +175,35 @@ async def deliver_webhooks() -> int:
     return len(deliveries)
 
 
+async def sweep_attachments() -> int:
+    """확정되지 않은 첨부를 치운다.
+
+    업로드 중 창을 닫으면 pending 행과 (드물게) 반쯤 올라간 객체가 남는다.
+    안 치우면 테이블에도 스토리지에도 계속 쌓인다.
+    """
+    settings = get_settings()
+    store = ObjectStore(settings)
+    async with session_scope() as session:
+        removed = await AttachmentService(session, store).sweep_pending()
+    return removed
+
+
 async def sweep() -> dict[str, int]:
-    """주기 실행 진입점. 두 파이프라인을 한 번씩 돌린다."""
+    """주기 실행 진입점. 파이프라인을 한 번씩 돌린다."""
     started = utcnow()
     processed = await drain_outbox()
     delivered = await deliver_webhooks()
+    attachments = await sweep_attachments()
     elapsed = (utcnow() - started).total_seconds()
-    if processed or delivered:
+    if processed or delivered or attachments:
         log.info(
             "worker.sweep",
             outbox=processed,
             webhooks=delivered,
+            attachments=attachments,
             duration_s=round(elapsed, 2),
         )
-    return {"outbox": processed, "webhooks": delivered}
+    return {"outbox": processed, "webhooks": delivered, "attachments": attachments}
 
 
 # ── arq 진입점 ──────────────────────────────────────────────────
@@ -204,3 +221,7 @@ async def task_deliver_webhooks(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> i
 
 async def task_sweep(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> dict[str, int]:
     return await sweep()
+
+
+async def task_sweep_attachments(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:
+    return await sweep_attachments()

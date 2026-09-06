@@ -278,7 +278,7 @@ class TestWebhookDelivery:
 class TestSweep:
     async def test_runs_both_pipelines(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
         await seed_event(worker_env, with_webhook=True)
-        assert await sweep() == {"outbox": 1, "webhooks": 1}
+        assert await sweep() == {"outbox": 1, "webhooks": 1, "attachments": 0}
 
     async def test_idle_sweep_is_cheap(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
-        assert await sweep() == {"outbox": 0, "webhooks": 0}
+        assert await sweep() == {"outbox": 0, "webhooks": 0, "attachments": 0}

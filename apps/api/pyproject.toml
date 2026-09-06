@@ -38,6 +38,10 @@ dependencies = [
     # 캐시·큐
     "redis[hiredis]>=5.2,<6",   # arq 0.28 이 redis<6 을 요구한다
     "arq>=0.26",
+    # 오브젝트 스토리지 (S3/MinIO). presigned URL 서명은 로컬 계산이라
+    # 동기 boto3 로 충분하다. 실제 I/O(HEAD/DELETE)만 스레드로 넘긴다 —
+    # aiobotocore 는 botocore 를 좁게 핀해서 의존성 충돌을 자주 만든다.
+    "boto3>=1.36",
     # 메일 발송
     "aiosmtplib>=4.0",
     # 관측성
@@ -55,6 +59,7 @@ dev = [
     "pytest-asyncio>=1.2",
     "pytest-cov>=7.0",
     "httpx>=0.28",
+    "moto[s3,server]>=5.0",  # 실제 S3 없이 presigned 업로드 전체 경로를 돈다
     "testcontainers[postgres]>=4.13",
     "bandit>=1.9",
     "types-qrcode>=8.2",
@@ -123,7 +128,9 @@ mypy_path = "src"
 packages = ["ieum"]
 
 [[tool.mypy.overrides]]
-module = ["arq.*", "testcontainers.*"]
+# boto3/botocore 는 타입 스텁을 따로 배포한다(boto3-stubs). 전체를 깔면
+# 설치가 무거워지므로, 우리가 쓰는 좁은 표면은 storage.py 안에서 좁혔다.
+module = ["arq.*", "testcontainers.*", "boto3.*", "botocore.*", "moto.*"]
 ignore_missing_imports = true
 
 # ── pytest ──────────────────────────────────────────────────────

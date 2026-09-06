@@ -1,5 +1,6 @@
 import {
   ApiClient,
+  createAttachmentsApi,
   createAuthApi,
   createBoardsApi,
   createIssuesApi,
@@ -24,3 +25,4 @@ export const issuesApi = createIssuesApi(apiClient)
 export const searchApi = createSearchApi(apiClient)
 export const boardsApi = createBoardsApi(apiClient)
 export const usersApi = createUsersApi(apiClient)
+export const attachmentsApi = createAttachmentsApi(apiClient)
