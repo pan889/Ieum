@@ -284,6 +284,7 @@ class IssueService:
                 summary=summary,
                 actor_id=actor.user_id,
                 assignee_id=issue.assignee_id,
+                reporter_id=issue.reporter_id,
             ),
         )
         log.info("issue.created", issue_key=issue_key, actor=str(actor.user_id))
@@ -364,7 +365,10 @@ class IssueService:
                     aggregate_id=issue.id,
                     project_id=issue.project_id,
                     issue_key=await self._key_of(issue),
+                    summary=issue.summary,
                     actor_id=actor.user_id,
+                    assignee_id=issue.assignee_id,
+                    reporter_id=issue.reporter_id,
                     changed_fields=[c["field"] for c in diff],
                 ),
             )
@@ -399,7 +403,10 @@ class IssueService:
                 aggregate_id=issue.id,
                 project_id=issue.project_id,
                 issue_key=await self._key_of(issue),
+                summary=issue.summary,
                 actor_id=actor.user_id,
+                assignee_id=issue.assignee_id,
+                reporter_id=issue.reporter_id,
             ),
         )
         return issue
@@ -529,10 +536,13 @@ class IssueService:
                 aggregate_id=issue.id,
                 project_id=issue.project_id,
                 issue_key=await self._key_of(issue),
+                summary=issue.summary,
                 actor_id=actor.user_id,
                 from_state=current.name if current else None,
                 to_state=target.name,
                 to_state_category=target.category,
+                assignee_id=issue.assignee_id,
+                reporter_id=issue.reporter_id,
             ),
         )
         return await self._to_view(issue)
@@ -798,9 +808,12 @@ class CommentService:
                 aggregate_id=issue.id,
                 project_id=issue.project_id,
                 issue_key=f"{project.key}-{issue.key_seq}" if project else "",
+                summary=issue.summary,
                 comment_id=comment.id,
                 actor_id=actor.user_id,
                 is_internal=is_internal,
+                assignee_id=issue.assignee_id,
+                reporter_id=issue.reporter_id,
             ),
         )
         return comment

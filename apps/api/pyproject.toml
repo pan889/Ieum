@@ -29,6 +29,8 @@ dependencies = [
     # 캐시·큐
     "redis[hiredis]>=5.2,<6",   # arq 0.28 이 redis<6 을 요구한다
     "arq>=0.26",
+    # 메일 발송
+    "aiosmtplib>=4.0",
     # 관측성
     "structlog>=25.4",
     "prometheus-client>=0.24",

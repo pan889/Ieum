@@ -1,6 +1,11 @@
 """issues 도메인 이벤트.
 
 페이로드에 ORM 객체를 넣지 않는다. 알림·검색 색인·웹훅이 이걸 구독한다.
+
+**수신자 후보(assignee/reporter)를 페이로드에 싣는다.** notify 가 이슈를
+되짚어 읽으면 notify → issues 방향 의존이 생기는데, 그건 의존 그래프에
+없는 화살표다. 이벤트로 뒤집는 게 문서가 정한 해법이다
+(overview.md 모듈 의존 그래프).
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ class IssueCreated(DomainEvent):
     summary: str
     actor_id: UUID
     assignee_id: UUID | None = None
+    reporter_id: UUID | None = None
 
 
 @events.register_event
@@ -33,7 +39,10 @@ class IssueUpdated(DomainEvent):
 
     project_id: UUID
     issue_key: str
+    summary: str
     actor_id: UUID
+    assignee_id: UUID | None = None
+    reporter_id: UUID | None = None
     #: 바뀐 필드 이름만. 값은 issue_history 에 있다.
     changed_fields: list[str] = field(default_factory=list)
 
@@ -48,10 +57,13 @@ class IssueTransitioned(DomainEvent):
 
     project_id: UUID
     issue_key: str
+    summary: str
     actor_id: UUID
     from_state: str | None
     to_state: str
     to_state_category: str
+    assignee_id: UUID | None = None
+    reporter_id: UUID | None = None
 
 
 @events.register_event
@@ -62,9 +74,12 @@ class IssueCommented(DomainEvent):
 
     project_id: UUID
     issue_key: str
+    summary: str
     comment_id: UUID
     actor_id: UUID
     is_internal: bool = False
+    assignee_id: UUID | None = None
+    reporter_id: UUID | None = None
 
 
 @events.register_event
@@ -75,4 +90,7 @@ class IssueArchived(DomainEvent):
 
     project_id: UUID
     issue_key: str
+    summary: str
     actor_id: UUID
+    assignee_id: UUID | None = None
+    reporter_id: UUID | None = None

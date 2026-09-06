@@ -48,8 +48,31 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class EventEnvelope:
+    """구독자에게 전달되는 형태.
+
+    이벤트 **클래스가 아니라 타입 문자열과 페이로드**로 전달한다. 그래야
+    구독자가 발행 모듈을 import 하지 않는다 — notify 가 issues.events 를
+    import 하면 의존 그래프에 없는 화살표가 생긴다(overview.md).
+    """
+
+    id: UUID
+    event_type: str
+    aggregate_type: str
+    aggregate_id: UUID
+    payload: dict[str, Any]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.payload.get(key, default)
+
+    def uuid(self, key: str) -> UUID | None:
+        raw = self.payload.get(key)
+        return UUID(raw) if isinstance(raw, str) else None
+
+
 E = TypeVar("E", bound=DomainEvent)
-Handler = Callable[[DomainEvent], Awaitable[None]]
+Handler = Callable[[EventEnvelope], Awaitable[None]]
 
 
 class EventRegistry:
@@ -71,10 +94,17 @@ class EventRegistry:
         return event_cls
 
     def subscribe(self, event_cls: type[DomainEvent]) -> Callable[[Handler], Handler]:
-        """핸들러 등록 데코레이터. 구독은 자기 모듈 안에서만 한다."""
+        """발행 모듈 안에서 자기 이벤트를 구독할 때."""
+        return self.subscribe_type(event_cls.event_type)
+
+    def subscribe_type(self, event_type: str) -> Callable[[Handler], Handler]:
+        """타입 문자열로 구독한다. 다른 모듈의 이벤트는 이걸 쓴다.
+
+        클래스를 import 하지 않으므로 모듈 경계를 넘지 않는다.
+        """
 
         def decorator(handler: Handler) -> Handler:
-            self._handlers.setdefault(event_cls.event_type, []).append(handler)
+            self._handlers.setdefault(event_type, []).append(handler)
             return handler
 
         return decorator

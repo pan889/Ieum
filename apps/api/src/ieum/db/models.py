@@ -38,6 +38,13 @@ from ieum.modules.issues.models import (
     WorkflowTransition,
     Worklog,
 )
+from ieum.modules.notify.models import (
+    Notification,
+    NotificationPreference,
+    Watch,
+    Webhook,
+    WebhookDelivery,
+)
 from ieum.modules.org.models import (
     EntityLink,
     PermissionGrant,
@@ -64,6 +71,8 @@ __all__ = [
     "IssueType",
     "LoginAttempt",
     "MFACredential",
+    "Notification",
+    "NotificationPreference",
     "OutboxEvent",
     "PermissionGrant",
     "Project",
@@ -75,6 +84,9 @@ __all__ = [
     "UserGroup",
     "UserSession",
     "Version",
+    "Watch",
+    "Webhook",
+    "WebhookDelivery",
     "Workflow",
     "WorkflowState",
     "WorkflowTransition",

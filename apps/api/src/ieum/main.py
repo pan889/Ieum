@@ -15,6 +15,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 from starlette.responses import Response
 
+# 이벤트 카탈로그를 로드해 레지스트리를 채운다 (웹훅 검증이 이걸 본다).
+import ieum.event_catalog  # noqa: F401
 from ieum.config import Settings, get_settings
 from ieum.core.errors import install_exception_handlers
 from ieum.core.logging import configure_logging, get_logger
@@ -26,6 +28,11 @@ from ieum.modules.issues.contracts import issue_model
 from ieum.modules.issues.router import issues_router
 from ieum.modules.issues.search_router import filters_router, search_router
 from ieum.modules.issues.service import SecurityLevelGuard
+from ieum.modules.notify.router import (
+    notifications_router,
+    watches_router,
+    webhooks_router,
+)
 from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.router import projects_router, roles_router
 
@@ -118,6 +125,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         issues_router,
         search_router,
         filters_router,
+        notifications_router,
+        watches_router,
+        webhooks_router,
     ):
         app.include_router(router, prefix=API_PREFIX)
 

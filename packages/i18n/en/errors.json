@@ -61,5 +61,10 @@
   "iql.operator_not_allowed": "The {operator} operator can't be used with {field}.",
   "iql.invalid_value": "That value isn't valid for {field}.",
   "iql.unsupported": "{feature} isn't supported yet — it's planned for {milestone}.",
-  "issues.filter_name_taken": "You already have a filter with that name."
+  "issues.filter_name_taken": "You already have a filter with that name.",
+  "notify.invalid_watch_target": "You can't watch that.",
+  "notify.invalid_webhook_url": "Webhook URLs must be http or https.",
+  "notify.webhook_secret_too_short": "Use a secret of at least 16 characters.",
+  "notify.unknown_event_type": "Unknown event type.",
+  "notify.no_events_selected": "Choose at least one event to subscribe to."
 }

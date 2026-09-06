@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ieum.core.events import DomainEvent, events
+from ieum.core.events import DomainEvent, EventEnvelope, events
 from ieum.core.logging import get_logger
 from ieum.core.time import utcnow
 from ieum.db.base import Entity
@@ -86,20 +86,23 @@ async def fetch_unpublished(session: AsyncSession, *, limit: int = 100) -> list[
 
 
 async def dispatch(session: AsyncSession, row: OutboxEvent) -> None:
-    """한 건을 구독자에게 전달하고 결과를 기록한다."""
-    handlers = events.handlers_for(row.event_type)
-    event_cls = events.event_class(row.event_type)
+    """한 건을 구독자에게 전달하고 결과를 기록한다.
 
-    if event_cls is None:
-        # 코드에서 사라진 이벤트 타입. 재시도해도 소용없으므로 발행 처리하고 남긴다.
-        log.warning("outbox.unknown_event_type", event_type=row.event_type, id=str(row.id))
-        row.published_at = utcnow()
-        return
+    구독자가 없는 이벤트도 발행 처리한다. 아무도 안 듣는다고 아웃박스에
+    쌓아두면 폴링이 매번 같은 행을 다시 집는다.
+    """
+    envelope = EventEnvelope(
+        id=row.id,
+        event_type=row.event_type,
+        aggregate_type=row.aggregate_type,
+        aggregate_id=row.aggregate_id,
+        payload=dict(row.payload),
+    )
+    handlers = events.handlers_for(row.event_type)
 
     try:
-        event = event_cls(**_rehydrate(event_cls, row.payload))
         for handler in handlers:
-            await handler(event)
+            await handler(envelope)
     # 한 건이 실패해도 루프 전체를 멈추지 않는다. 실패는 행에 기록하고 재시도한다.
     except Exception as exc:
         row.attempts += 1
@@ -115,20 +118,3 @@ async def dispatch(session: AsyncSession, row: OutboxEvent) -> None:
 
     row.published_at = utcnow()
     log.info("outbox.dispatched", event_type=row.event_type, handlers=len(handlers))
-
-
-def _rehydrate(event_cls: type[DomainEvent], payload: dict[str, Any]) -> dict[str, Any]:
-    """JSON 페이로드를 이벤트 생성자 인자로 되돌린다 (UUID 필드 복원)."""
-    import dataclasses
-
-    restored: dict[str, Any] = {}
-    for f in dataclasses.fields(event_cls):
-        if f.name not in payload:
-            continue
-        value = payload[f.name]
-        annotation = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", "")
-        if "UUID" in annotation and isinstance(value, str):
-            restored[f.name] = UUID(value)
-        else:
-            restored[f.name] = value
-    return restored
