@@ -15,6 +15,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# 모델 레지스트리를 통째로 로드한다 (D-64). `FieldDefinition` 만 import 하면
+# 그 FK 가 가리키는 `project` 가 매퍼에 없어서, **빈 DB 에 실제로 넣는 순간**
+# NoReferencedTableError 로 죽는다. 이미 값이 있으면 flush 가 없어 안 터지므로
+# 두 번째 실행부터는 멀쩡해 보인다.
+import ieum.db.models  # noqa: F401
 from ieum.config import get_settings
 from ieum.core.logging import configure_logging, get_logger
 from ieum.db.session import init_engine, session_scope

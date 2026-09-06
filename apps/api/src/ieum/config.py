@@ -11,8 +11,28 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "production"]
 
-# 저장소 루트. src/ieum/config.py → apps/api/src/ieum → 4단계 위.
-REPO_ROOT = Path(__file__).resolve().parents[4]
+
+def _repo_root() -> Path:
+    """`.env` 와 i18n 카탈로그를 찾을 기준 경로.
+
+    **단계 수를 세지 않는다.** 소스 체크아웃은 `apps/api/src/ieum/config.py`
+    라 4단계 위가 루트지만, 컨테이너 이미지는 `/app/src/ieum/config.py` 로
+    평평해서 4단계 위가 아예 없다 — 세어 올라가면 IndexError 로 import 가
+    터지고 API 와 워커가 부팅조차 못 한다(실제로 그랬다).
+
+    대신 찾는 것이 실제로 있는 곳을 기준으로 삼는다. `packages/i18n` 은 양쪽
+    레이아웃 모두에서 루트 바로 아래에 있다(Dockerfile 이 그렇게 복사한다).
+    """
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "packages" / "i18n").is_dir():
+            return parent
+    # 못 찾으면 소스 레이아웃으로 가정한다. 두 경로 모두 환경변수로 덮을 수 있다.
+    return here.parents[4] if len(here.parents) > 4 else here.parents[-1]
+
+
+#: `.env`·i18n 카탈로그의 기준. 환경변수로 덮어쓸 수 있다.
+REPO_ROOT = _repo_root()
 
 
 class Settings(BaseSettings):
@@ -42,6 +62,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     s3_endpoint_url: str | None = None
+    #: presigned URL 에 쓸 **브라우저가 볼 수 있는** 주소. 비우면 위와 같다.
+    #: 컨테이너 안팎에서 스토리지 주소가 다를 때만 필요하다 — compose 로
+    #: 띄우면 서버는 `http://minio:9000`, 브라우저는 `http://localhost:9000`.
+    s3_public_endpoint_url: str | None = None
     s3_region: str = "us-east-1"
     s3_bucket: str = "ieum-attachments"
     s3_access_key: SecretStr = SecretStr("")

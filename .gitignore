@@ -12,6 +12,10 @@ dist/
 
 # Node
 node_modules/
+# compose 의 web 컨테이너가 저장소를 통째로 마운트한다. pnpm 스토어가
+# 작업 트리에 그대로 쌓인다(수백 MB). 아래 볼륨으로 빼 두지만, 예전
+# 체크아웃이나 호스트 pnpm 이 여기에 만들 수도 있어 무시한다.
+.pnpm-store/
 apps/web/dist/
 *.tsbuildinfo
 

@@ -8,6 +8,9 @@ services:
     environment:
       IEUM_ENV: production
       IEUM_DEBUG: "false"
+      # presigned URL 은 브라우저가 연다. 개발 기본값(`localhost:9000`)이 그대로
+      # 넘어오면 운영에서 아무도 못 여는 링크를 조용히 계속 발급한다.
+      IEUM_S3_PUBLIC_ENDPOINT_URL: "${IEUM_S3_PUBLIC_ENDPOINT_URL:?브라우저가 접근할 스토리지 주소가 필요하다. 예) https://files.example.com}"
     restart: unless-stopped
 
   worker:
@@ -34,3 +37,7 @@ services:
     restart: unless-stopped
   minio:
     restart: unless-stopped
+    environment:
+      # 개발 기본값은 localhost 다. 운영 오리진을 안 넣으면 브라우저 업로드가
+      # 프리플라이트에서 막힌다.
+      MINIO_API_CORS_ALLOW_ORIGIN: "${IEUM_WEB_ORIGINS:?웹 오리진이 필요하다. 예) https://ieum.example.com}"

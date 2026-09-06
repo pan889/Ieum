@@ -50,6 +50,11 @@ class WorkerSettings:
     max_jobs = 10
     job_timeout = 120
 
-    @staticmethod
-    def redis_settings() -> RedisSettings:
-        return RedisSettings.from_dsn(get_settings().redis_url)
+    # arq 는 이걸 **클래스 `__dict__` 에서 그대로** 꺼낸다(`get_kwargs`).
+    # 그래서 값이어야 한다 — 메서드로 두면 함수 객체가 그대로 넘어가고
+    # arq 가 `.host` 를 찾다가 죽는다. 디스크립터도 안 통한다: `__dict__`
+    # 를 직접 읽으므로 `__get__` 이 호출되지 않는다.
+    #
+    # import 시점에 계산된다. 설정은 전부 기본값이 있어서 환경변수가 비어도
+    # 터지지 않고, 워커는 어차피 설정 없이는 할 일이 없다.
+    redis_settings = RedisSettings.from_dsn(get_settings().redis_url)

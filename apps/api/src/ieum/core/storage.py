@@ -59,9 +59,23 @@ class ObjectStore:
 
     def __init__(self, settings: Settings) -> None:
         self._bucket = settings.s3_bucket
-        self._client: Any = boto3.client(
+        self._client = self._make_client(settings, settings.s3_endpoint_url)
+        # presigned URL 은 **브라우저가** 연다. 컨테이너 안에서 보는 주소
+        # (`http://minio:9000`)로 서명하면 브라우저는 그 호스트를 못 찾는다 —
+        # compose 로 띄우면 첨부 업로드가 통째로 죽는다(실제로 그랬다).
+        # 공개 주소가 따로 없으면 같은 클라이언트를 쓴다.
+        public = settings.s3_public_endpoint_url
+        self._signer = (
+            self._client
+            if not public or public == settings.s3_endpoint_url
+            else self._make_client(settings, public)
+        )
+
+    @staticmethod
+    def _make_client(settings: Settings, endpoint_url: str | None) -> Any:
+        return boto3.client(
             "s3",
-            endpoint_url=settings.s3_endpoint_url,
+            endpoint_url=endpoint_url,
             region_name=settings.s3_region,
             aws_access_key_id=settings.s3_access_key.get_secret_value() or None,
             aws_secret_access_key=settings.s3_secret_key.get_secret_value() or None,
@@ -81,7 +95,7 @@ class ObjectStore:
         걸 수 없어서, 정확한 길이를 못 박는 게 유일한 사전 방어다. 클라이언트가
         다른 크기를 보내면 스토리지가 거절한다.
         """
-        url: str = self._client.generate_presigned_url(
+        url: str = self._signer.generate_presigned_url(
             "put_object",
             Params={
                 "Bucket": self._bucket,
@@ -101,7 +115,7 @@ class ObjectStore:
         """
         disposition = "inline" if inline else "attachment"
         safe = safe_filename(filename)
-        url: str = self._client.generate_presigned_url(
+        url: str = self._signer.generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": self._bucket,

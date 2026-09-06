@@ -44,6 +44,9 @@ dependencies = [
     "boto3>=1.36",
     # 메일 발송
     "aiosmtplib>=4.0",
+    # 웹훅 전송. **런타임 의존이다** — 워커의 전송 태스크가 import 한다.
+    # dev 에만 두면 개발 환경에서는 멀쩡하고 컨테이너에서만 워커가 죽는다.
+    "httpx>=0.28",
     # 관측성
     "structlog>=25.4",
     "prometheus-client>=0.24",
@@ -58,7 +61,6 @@ dev = [
     "pytest>=8.4",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7.0",
-    "httpx>=0.28",
     "moto[s3,server]>=5.0",  # 실제 S3 없이 presigned 업로드 전체 경로를 돈다
     "testcontainers[postgres]>=4.13",
     "bandit>=1.9",

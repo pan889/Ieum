@@ -150,6 +150,40 @@ class TestSafeFilename:
         assert safe_filename(raw) == expected
 
 
+class TestPublicEndpoint:
+    """presigned URL 은 **브라우저가** 연다.
+
+    compose 로 띄우면 서버는 `http://minio:9000` 을 보고 브라우저는 못 본다.
+    컨테이너 이름으로 서명하면 업로드가 통째로 죽는다 — 실제로 그랬다.
+    """
+
+    def _settings(self, internal: str, public: str | None) -> Settings:
+        return Settings(
+            secret_key=SecretStr("x" * 32),
+            s3_endpoint_url=internal,
+            s3_public_endpoint_url=public,
+            s3_bucket="b",
+            s3_access_key=SecretStr("k"),
+            s3_secret_key=SecretStr("s"),
+        )
+
+    def test_signs_with_the_public_host(self) -> None:
+        store = ObjectStore(self._settings("http://minio:9000", "http://localhost:9000"))
+        url = store.upload_url("k/x.txt", content_type="text/plain", content_length=3)
+        assert urlparse(url).netloc == "localhost:9000"
+
+    def test_download_urls_use_it_too(self) -> None:
+        store = ObjectStore(self._settings("http://minio:9000", "http://localhost:9000"))
+        url = store.download_url("k/x.txt", filename="x.txt", inline=False)
+        assert urlparse(url).netloc == "localhost:9000"
+
+    def test_falls_back_to_the_internal_host(self) -> None:
+        # 컨테이너 밖에서 돌 때는 하나뿐이다. 설정 하나를 더 요구하면 안 된다.
+        store = ObjectStore(self._settings("http://127.0.0.1:9555", None))
+        url = store.upload_url("k/x.txt", content_type="text/plain", content_length=3)
+        assert urlparse(url).netloc == "127.0.0.1:9555"
+
+
 class TestUploadRoundTrip:
     async def test_full_path(
         self, session: AsyncSession, ready_store: ObjectStore, uploader: Actor
