@@ -28,6 +28,7 @@ from ieum.modules.identity.models import User
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.models import (
     FieldDefinition,
+    Issue,
     IssueType,
     SecurityLevel,
     Workflow,
@@ -1212,3 +1213,175 @@ async def _latest_outbox(session: AsyncSession, event_type: str) -> OutboxEvent:
         )
     ).scalar_one()
     return row
+
+
+class TestProgressRollup:
+    """부모 진행률은 자식에서 계산한다. 직접 적어 두면 두 값이 어긋난다."""
+
+    async def _tree(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+        *,
+        children: int = 2,
+    ) -> tuple[UUID, list[UUID]]:
+        service = IssueService(session, permissions)
+        parent = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="parent")
+        )
+        kids = [
+            (
+                await service.create(
+                    actor,
+                    NewIssue(
+                        project_id=project.id,
+                        type_id=issue_type.id,
+                        summary=f"child {i}",
+                        parent_id=parent.issue.id,
+                    ),
+                )
+            ).issue.id
+            for i in range(children)
+        ]
+        return parent.issue.id, kids
+
+    async def test_child_progress_rolls_up(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        parent_id, kids = await self._tree(session, permissions, actor, project, issue_type)
+
+        await service.update(actor, kids[0], {"progress": 100})
+        await session.flush()
+        parent = await session.get(Issue, parent_id)
+        assert parent is not None
+        assert parent.progress == 50
+
+    async def test_parent_progress_cannot_be_set_by_hand(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """조용히 되돌리는 대신 지금 거절한다."""
+        actor = await full_access(session, user, project)
+        parent_id, _ = await self._tree(session, permissions, actor, project, issue_type)
+        with pytest.raises(ValidationError, match="직접 바꿀 수 없다"):
+            await IssueService(session, permissions).update(actor, parent_id, {"progress": 90})
+
+    async def test_archiving_a_child_removes_it_from_the_average(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """취소한 일 때문에 부모가 영원히 100% 가 안 되면 숫자를 안 믿는다."""
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        parent_id, kids = await self._tree(session, permissions, actor, project, issue_type)
+
+        await service.update(actor, kids[0], {"progress": 100})
+        await service.archive(actor, kids[1])
+        await session.flush()
+        parent = await session.get(Issue, parent_id)
+        assert parent is not None
+        assert parent.progress == 100
+
+    async def test_rollup_reaches_grandparents(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        top = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="top")
+        )
+        mid = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="mid",
+                parent_id=top.issue.id,
+            ),
+        )
+        leaf = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="leaf",
+                parent_id=mid.issue.id,
+            ),
+        )
+        await service.update(actor, leaf.issue.id, {"progress": 100})
+        await session.flush()
+
+        for issue_id in (mid.issue.id, top.issue.id):
+            row = await session.get(Issue, issue_id)
+            assert row is not None
+            assert row.progress == 100
+
+    async def test_transition_post_function_rolls_up(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """Resolve 는 후처리로 progress 를 100 으로 만든다. 부모도 따라와야 한다."""
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        parent_id, kids = await self._tree(
+            session, permissions, actor, project, issue_type, children=1
+        )
+        start = next(
+            t
+            for t in await service.available_transitions(actor, kids[0])
+            if t.name == "Start progress"
+        )
+        await service.transition(actor, kids[0], start.id)
+        resolve = next(
+            t for t in await service.available_transitions(actor, kids[0]) if t.name == "Resolve"
+        )
+        await service.transition(actor, kids[0], resolve.id)
+        await session.flush()
+
+        parent = await session.get(Issue, parent_id)
+        assert parent is not None
+        assert parent.progress == 100
+
+    async def test_leaf_progress_is_still_editable(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        view = await IssueService(session, permissions).create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="leaf")
+        )
+        updated = await IssueService(session, permissions).update(
+            actor, view.issue.id, {"progress": 42}
+        )
+        assert updated.issue.progress == 42

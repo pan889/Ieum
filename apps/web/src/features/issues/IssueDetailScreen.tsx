@@ -10,6 +10,7 @@ import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 import { Attachments } from './Attachments'
+import { Relations } from './Relations'
 import { TimeTracking } from './TimeTracking'
 import { categoryTone, formatDate, formatDateTime, priorityLabel } from './format'
 import { useUserNames, useUserSearch } from './hooks'
@@ -51,6 +52,7 @@ export function IssueDetailScreen() {
         <div className="flex flex-col gap-5">
           <SummaryAndDescription issue={data} onSaved={invalidate} />
           <Transitions issue={data} onMoved={invalidate} />
+          <Relations issueId={data.id} issueKey={data.key} />
           <TimeTracking issueId={data.id} version={data.version} />
           <Attachments ownerType="issue" ownerId={data.id} />
           <Comments issueId={data.id} />

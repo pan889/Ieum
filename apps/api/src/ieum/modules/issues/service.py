@@ -52,6 +52,7 @@ from ieum.modules.issues.repository import (
     SecurityLevelRepository,
     WorkflowRepository,
 )
+from ieum.modules.issues.rollup import has_children, recompute_ancestors
 from ieum.modules.issues.workflow import (
     TransitionContext,
     TransitionSpec,
@@ -173,6 +174,22 @@ class IssueView:
     type_name: str
     labels: list[str]
     custom_fields: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedIssue:
+    link_id: UUID
+    kind: str
+    #: True 면 이 이슈가 관계의 출발점이다 ("blocks" vs "blocked by").
+    outward: bool
+    issue: Issue
+
+
+@dataclass(frozen=True, slots=True)
+class IssueRelations:
+    parent: Issue | None
+    children: list[Issue]
+    links: list[RelatedIssue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,6 +467,8 @@ class IssueService:
                 ),
             ),
         )
+        if issue.parent_id is not None:
+            await recompute_ancestors(self._s, issue.id)
         log.info("issue.created", issue_key=issue_key, actor=str(actor.user_id))
         return await self.to_view(issue)
 
@@ -478,6 +497,14 @@ class IssueService:
             )
 
         changes = {name: _coerce_change(name, value) for name, value in changes.items()}
+
+        # 자식이 있으면 진행률은 계산값이다. 손으로 고쳐 봐야 다음 롤업에
+        # 덮어써지므로, 조용히 되돌리는 대신 지금 거절한다.
+        if "progress" in changes and await has_children(self._s, issue.id):
+            raise ValidationError(
+                "하위 이슈가 있는 이슈의 진행률은 직접 바꿀 수 없다.",
+                code="issues.progress_is_derived",
+            )
 
         if "assignee_id" in changes and changes["assignee_id"] != issue.assignee_id:
             await self._perms.require(
@@ -545,6 +572,10 @@ class IssueService:
                 ),
             )
             await self._s.flush()
+
+        # 진행률·추정·부모가 바뀌면 조상 계산이 달라진다.
+        if any(c["field"] in {"progress", "estimate_minutes", "parent_id"} for c in diff):
+            await recompute_ancestors(self._s, issue.id)
         return await self.to_view(issue)
 
     async def archive(self, actor: Actor, issue_id: UUID) -> Issue:
@@ -569,6 +600,10 @@ class IssueService:
 
         issue.archived_at = utcnow()
         issue.version += 1
+        await self._s.flush()
+        # 아카이브된 자식은 롤업에서 빠진다. 취소한 일 때문에 부모가 영원히
+        # 100% 가 안 되면 숫자를 아무도 안 믿는다.
+        await recompute_ancestors(self._s, issue.id)
         publish(
             self._s,
             issue_events.IssueArchived(
@@ -717,9 +752,81 @@ class IssueService:
                 reporter_id=issue.reporter_id,
             ),
         )
+        await self._s.flush()
+        # 전이 후처리가 progress 를 바꾼다(Resolve → 100). 부모도 따라 움직여야 한다.
+        await recompute_ancestors(self._s, issue.id)
         return await self.to_view(issue)
 
     # ── 관계 ────────────────────────────────────────────────────
+
+    async def relations(self, actor: Actor, issue_id: UUID) -> IssueRelations:
+        """부모·자식·링크를 한 번에. 상세 화면의 관계 패널이 쓴다."""
+        issue = await self._require_issue(issue_id)
+        await self._perms.require(
+            self._s,
+            actor,
+            perms.ISSUE_VIEW,
+            scope=Scope.project(issue.project_id),
+            subject=issue,
+        )
+        parent = None if issue.parent_id is None else await self._issues.get(issue.parent_id)
+        children = await self._issues.children_of(issue.id)
+        links = await self._links.for_issue(issue.id)
+
+        # 링크가 가리키는 상대 이슈를 한 번에 읽는다. 링크마다 조회하면
+        # 관계가 열 개인 이슈에서 왕복이 열 번 난다.
+        other_ids = {
+            (link.to_issue_id if link.from_issue_id == issue.id else link.from_issue_id)
+            for link in links
+        }
+        others = {row.id: row for row in await self._issues.get_many(sorted(other_ids))}
+
+        related: list[RelatedIssue] = []
+        for link in links:
+            outward = link.from_issue_id == issue.id
+            other = others.get(link.to_issue_id if outward else link.from_issue_id)
+            if other is None:
+                continue
+            related.append(
+                RelatedIssue(
+                    link_id=link.id,
+                    kind=link.kind,
+                    outward=outward,
+                    issue=other,
+                )
+            )
+
+        # 볼 수 없는 이슈는 관계에서도 감춘다. 제목만 보여도 비공개 이슈의
+        # 존재와 내용이 새어 나간다.
+        acl_children = [c for c in children if await self._can_view(actor, c)]
+        acl_related = [r for r in related if await self._can_view(actor, r.issue)]
+        visible_parent = (
+            parent if parent is not None and await self._can_view(actor, parent) else None
+        )
+        return IssueRelations(
+            parent=visible_parent,
+            children=acl_children,
+            links=acl_related,
+        )
+
+    async def unlink(self, actor: Actor, link_id: UUID) -> None:
+        link = await self._links.get(link_id)
+        if link is None:
+            raise NotFoundError("관계를 찾을 수 없다.")
+        issue = await self._require_issue(link.from_issue_id)
+        await self._perms.require(
+            self._s, actor, perms.ISSUE_LINK, scope=Scope.project(issue.project_id), subject=issue
+        )
+        await self._s.delete(link)
+
+    async def _can_view(self, actor: Actor, issue: Issue) -> bool:
+        return await self._perms.has(
+            self._s,
+            actor,
+            perms.ISSUE_VIEW,
+            scope=Scope.project(issue.project_id),
+            subject=issue,
+        )
 
     async def link(self, actor: Actor, from_id: UUID, to_id: UUID, kind: str) -> IssueLink:
         if from_id == to_id:

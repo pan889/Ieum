@@ -46,6 +46,9 @@ const newIssueRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/issues/new',
   component: NewIssueScreen,
+  // `?parent=ENG-1` 로 상위 이슈를 미리 채운다.
+  validateSearch: (search: Record<string, unknown>): { parent?: string } =>
+    typeof search['parent'] === 'string' ? { parent: search['parent'] } : {},
 })
 
 const issueDetailRoute = createRoute({

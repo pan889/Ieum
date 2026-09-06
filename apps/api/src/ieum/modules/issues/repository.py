@@ -162,6 +162,12 @@ class IssueRepository:
         self._s.add(issue)
         return issue
 
+    async def get_many(self, issue_ids: Sequence[UUID]) -> list[Issue]:
+        if not issue_ids:
+            return []
+        stmt = select(Issue).where(Issue.id.in_(issue_ids))
+        return list((await self._s.execute(stmt)).scalars().all())
+
     async def children_of(self, parent_id: UUID) -> list[Issue]:
         stmt = select(Issue).where(Issue.parent_id == parent_id).where(Issue.archived_at.is_(None))
         return list((await self._s.execute(stmt)).scalars().all())
@@ -274,6 +280,9 @@ class IssueLinkRepository:
             .where(IssueLink.kind == kind)
         )
         return bool((await self._s.execute(stmt)).scalar_one())
+
+    async def get(self, link_id: UUID) -> IssueLink | None:
+        return await self._s.get(IssueLink, link_id)
 
     async def for_issue(self, issue_id: UUID) -> list[IssueLink]:
         stmt = select(IssueLink).where(

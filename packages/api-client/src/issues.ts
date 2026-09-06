@@ -125,6 +125,20 @@ export interface WorklogPanel {
   items: Worklog[]
 }
 
+export interface RelatedIssue {
+  link_id: string
+  kind: string
+  /** True 면 이 이슈가 관계의 출발점이다 ("blocks" vs "blocked by"). */
+  outward: boolean
+  issue: IssueSummary
+}
+
+export interface IssueRelations {
+  parent: IssueSummary | null
+  children: IssueSummary[]
+  links: RelatedIssue[]
+}
+
 export interface NewIssue {
   project_id: string
   summary: string
@@ -206,7 +220,7 @@ export function createIssuesApi(client: ApiClient) {
     transition: (id: string, transitionId: string, version?: number) =>
       client.post<Issue>(`${BASE}/${id}/transition`, { transition_id: transitionId }, ifMatch(version)),
 
-    link: (id: string, body: { target_id: string; link_type: string }) =>
+    link: (id: string, body: { to_issue_id: string; kind: string }) =>
       client.post<void>(`${BASE}/${id}/links`, body),
 
     history: (id: string) => client.get<HistoryEntry[]>(`${BASE}/${id}/history`),
@@ -218,6 +232,11 @@ export function createIssuesApi(client: ApiClient) {
 
     editComment: (commentId: string, body: { body: string }) =>
       client.patch<IssueComment>(`${BASE}/comments/${commentId}`, body),
+
+    // ── 관계 ──────────────────────────────────────────────────
+    relations: (id: string) => client.get<IssueRelations>(`${BASE}/${id}/relations`),
+
+    unlink: (linkId: string) => client.delete<void>(`${BASE}/links/${linkId}`),
 
     // ── 시간 추적 ─────────────────────────────────────────────
     worklogs: (id: string) => client.get<WorklogPanel>(`${BASE}/${id}/worklogs`),

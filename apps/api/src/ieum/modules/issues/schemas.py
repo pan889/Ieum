@@ -226,3 +226,17 @@ class WorklogPanelResponse(BaseModel):
 
     summary: TimeSummaryResponse
     items: list[WorklogResponse]
+
+
+class RelatedIssueResponse(BaseModel):
+    link_id: UUID
+    kind: str
+    #: True 면 이 이슈가 관계의 출발점이다 ("blocks" vs "blocked by").
+    outward: bool
+    issue: IssueSummaryResponse
+
+
+class IssueRelationsResponse(BaseModel):
+    parent: IssueSummaryResponse | None
+    children: list[IssueSummaryResponse]
+    links: list[RelatedIssueResponse]

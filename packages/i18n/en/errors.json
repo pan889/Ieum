@@ -64,6 +64,7 @@
   "issues.parent_archived": "You can't nest under an archived issue.",
   "issues.parent_cycle": "That would make an issue its own ancestor.",
   "issues.subtask_too_deep": "Sub-tasks can nest up to {max_depth} levels.",
+  "issues.progress_is_derived": "Progress on a parent issue comes from its sub-issues.",
   "issues.has_active_children": "Deal with the {count, plural, one {# sub-issue} other {# sub-issues}} first.",
   "issues.self_link": "An issue can't be linked to itself.",
   "issues.link_exists": "That link already exists.",

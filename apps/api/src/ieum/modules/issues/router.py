@@ -19,11 +19,13 @@ from ieum.modules.issues.schemas import (
     HistoryEntryResponse,
     IssueCreateRequest,
     IssuePageResponse,
+    IssueRelationsResponse,
     IssueResponse,
     IssueSummaryResponse,
     IssueTypeResponse,
     IssueUpdateRequest,
     LinkRequest,
+    RelatedIssueResponse,
     TimeSummaryResponse,
     TransitionRequest,
     TransitionResponse,
@@ -427,4 +429,52 @@ async def delete_worklog(
     permissions: PermissionDep,
 ) -> None:
     await WorklogService(session, permissions).delete(actor, worklog_id)
+    await session.commit()
+
+
+# ── 관계 ────────────────────────────────────────────────────────
+
+
+@issues_router.get("/{issue_id}/relations", response_model=IssueRelationsResponse)
+async def list_relations(
+    issue_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> IssueRelationsResponse:
+    """부모·자식·링크를 한 번에. 상세 화면의 관계 패널이 쓴다."""
+    service = IssueService(session, permissions)
+    relations = await service.relations(actor, issue_id)
+
+    # 모든 관련 이슈의 key·상태를 한 번에 채운다.
+    everything = [
+        *([relations.parent] if relations.parent is not None else []),
+        *relations.children,
+        *[link.issue for link in relations.links],
+    ]
+    rows = {row.id: row for row in await summary_rows(service, everything)}
+
+    return IssueRelationsResponse(
+        parent=None if relations.parent is None else rows[relations.parent.id],
+        children=[rows[c.id] for c in relations.children],
+        links=[
+            RelatedIssueResponse(
+                link_id=link.link_id,
+                kind=link.kind,
+                outward=link.outward,
+                issue=rows[link.issue.id],
+            )
+            for link in relations.links
+        ],
+    )
+
+
+@issues_router.delete("/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unlink_issue(
+    link_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    await IssueService(session, permissions).unlink(actor, link_id)
     await session.commit()

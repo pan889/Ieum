@@ -29,6 +29,8 @@ export {
   type HistoryEntry,
   type Issue,
   type IssueChanges,
+  type IssueRelations,
+  type RelatedIssue,
   type IssueComment,
   type IssuePage,
   type IssuePatch,

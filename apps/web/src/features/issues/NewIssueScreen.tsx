@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -14,6 +14,9 @@ import { useFieldDefinitions, useIssueTypes, useProjects } from './hooks'
 export function NewIssueScreen() {
   const { t } = useTranslation(['issues', 'common'])
   const navigate = useNavigate()
+  // `?parent=ENG-1` 로 들어오면 상위 이슈를 미리 채운다. 상세 화면의
+  // "하위 이슈 만들기" 가 이 경로로 보낸다.
+  const search = useSearch({ from: '/issues/new' })
 
   const projects = useProjects()
   const [projectId, setProjectId] = useState<string | null>(null)
@@ -24,6 +27,7 @@ export function NewIssueScreen() {
   const [priority, setPriority] = useState(3)
   const [dueDate, setDueDate] = useState('')
   const [labels, setLabels] = useState('')
+  const [parentKey, setParentKey] = useState(search.parent ?? '')
   const [custom, setCustom] = useState<Record<string, string>>({})
 
   const types = useIssueTypes(projectId)
@@ -32,8 +36,13 @@ export function NewIssueScreen() {
   const fields = useFieldDefinitions(projectId, typeId)
 
   const create = useMutation({
-    mutationFn: () =>
-      issuesApi.create({
+    mutationFn: async () => {
+      // 사람은 키로 말한다. id 는 여기서 찾는다 — UUID 를 복사하게 만들면
+      // 아무도 하위 이슈를 안 만든다.
+      const parent = parentKey.trim()
+        ? await issuesApi.getByKey(parentKey.trim().toUpperCase())
+        : null
+      return issuesApi.create({
         project_id: projectId as string,
         summary,
         ...(typeId ? { type_id: typeId } : {}),
@@ -44,7 +53,9 @@ export function NewIssueScreen() {
           ? { labels: labels.split(',').map((l) => l.trim()).filter(Boolean) }
           : {}),
         ...(Object.keys(custom).length > 0 ? { custom_fields: custom } : {}),
-      }),
+        ...(parent ? { parent_id: parent.id } : {}),
+      })
+    },
     onSuccess: (issue) => {
       void navigate({ to: '/issues/$issueKey', params: { issueKey: issue.key } })
     },
@@ -121,6 +132,14 @@ export function NewIssueScreen() {
             type="date"
             value={dueDate}
             onChange={(e) => { setDueDate(e.target.value); }}
+          />
+
+          <Field
+            label={t('issues:create.parent')}
+            hint={t('issues:create.parentHint')}
+            placeholder="ENG-123"
+            value={parentKey}
+            onChange={(e) => { setParentKey(e.target.value); }}
           />
 
           <Field
