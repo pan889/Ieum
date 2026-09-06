@@ -51,12 +51,19 @@ async def current_actor(
     settings: AppSettings,
     authorization: Annotated[str | None, Header()] = None,
 ) -> Actor:
-    """MFA 까지 완료된 액터. 일반 API 는 전부 이걸 쓴다."""
-    from ieum.modules.identity.service import AuthService
+    """MFA 까지 완료된 액터. 일반 API 는 전부 이걸 쓴다.
 
-    actor, _ = await AuthService(session, settings).authenticate_access_token(
-        _bearer_token(authorization), require_mfa=True
-    )
+    세션 액세스 토큰과 PAT 을 모두 받는다. 어느 쪽인지는 **접두사로** 가른다 —
+    양쪽 테이블을 다 뒤지면 요청마다 쿼리가 하나씩 늘고, 실패 응답 시간으로
+    "이 토큰이 어느 종류인지" 가 새어 나간다.
+    """
+    from ieum.modules.identity.service import ApiTokenService, AuthService
+
+    raw = _bearer_token(authorization)
+    if ApiTokenService.looks_like_token(raw):
+        return await ApiTokenService(session, settings).authenticate(raw)
+
+    actor, _ = await AuthService(session, settings).authenticate_access_token(raw, require_mfa=True)
     return actor
 
 

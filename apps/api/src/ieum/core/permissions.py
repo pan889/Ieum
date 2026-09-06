@@ -216,6 +216,11 @@ class PermissionService:
         if not actor.is_active or actor.is_customer:
             return False
 
+        # PAT 은 발급 시 고른 스코프 **교집합**만 쓸 수 있다. 사용자 권한이
+        # 나중에 늘어나도 토큰이 같이 커지지 않는다.
+        if not actor.scope_allows(permission):
+            return False
+
         granted = await actor.cached(
             ("perms", target.kind, target.id),
             lambda: self.resolver.permissions_in_scope(session, actor, target),
@@ -265,6 +270,13 @@ class PermissionService:
 
     def _require_step_up(self, actor: Actor) -> None:
         """민감 작업은 최근 N분 내 MFA 재확인을 요구한다."""
+        if actor.via_api_token:
+            # PAT 은 step-up 을 통과할 수 없다. step-up 은 "사람이 방금 MFA 를
+            # 다시 통과했다" 는 뜻인데, 오래 사는 토큰은 그걸 증명할 수 없다.
+            raise StepUpRequiredError(
+                "이 작업은 API 토큰으로 할 수 없다.",
+                code="auth.step_up_not_available_for_token",
+            )
         satisfied_at = actor.mfa_satisfied_at
         if satisfied_at is None:
             raise StepUpRequiredError()

@@ -22,6 +22,9 @@ from ieum.core.permissions import Scope
 from ieum.modules.identity import permissions as perms
 from ieum.modules.identity.schemas import (
     AcceptInviteRequest,
+    ApiTokenCreateRequest,
+    ApiTokenIssuedResponse,
+    ApiTokenResponse,
     BackupCodesResponse,
     ChangePasswordRequest,
     InviteRequest,
@@ -35,6 +38,7 @@ from ieum.modules.identity.schemas import (
     UserResponse,
 )
 from ieum.modules.identity.service import (
+    ApiTokenService,
     AuthService,
     IssuedTokens,
     MFAService,
@@ -287,4 +291,51 @@ async def change_password(
         current_password=body.current_password,
         new_password=body.new_password,
     )
+    await session.commit()
+
+
+# ── 개인 액세스 토큰 (PAT) ──────────────────────────────────────
+
+tokens_router = APIRouter(prefix="/tokens", tags=["tokens"])
+
+
+@tokens_router.post("", response_model=ApiTokenIssuedResponse, status_code=status.HTTP_201_CREATED)
+async def issue_token(
+    body: ApiTokenCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> ApiTokenIssuedResponse:
+    """토큰 발급. step-up 이 필요하다 (auth.md 3절).
+
+    PAT 은 step-up 을 통과할 수 없으므로, 토큰으로 토큰을 발급할 수도 없다 —
+    하나가 새면 무한히 늘어나는 것을 막는다.
+    """
+    await permissions.require(session, actor, perms.TOKEN_ISSUE, scope=Scope.global_())
+    row, secret = await ApiTokenService(session, settings).issue(
+        actor,
+        name=body.name,
+        scopes=body.scopes,
+        expires_in_days=body.expires_in_days,
+    )
+    await session.commit()
+    return ApiTokenIssuedResponse(token=ApiTokenResponse.model_validate(row), secret=secret)
+
+
+@tokens_router.get("", response_model=list[ApiTokenResponse])
+async def list_tokens(
+    actor: CurrentActor, session: DbSession, settings: AppSettings
+) -> list[ApiTokenResponse]:
+    """내 토큰. 평문은 없다 — 해시만 저장한다."""
+    rows = await ApiTokenService(session, settings).list_for(actor)
+    return [ApiTokenResponse.model_validate(r) for r in rows]
+
+
+@tokens_router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_token(
+    token_id: UUID, actor: CurrentActor, session: DbSession, settings: AppSettings
+) -> None:
+    """폐기는 step-up 없이 할 수 있다. 잠그는 쪽은 언제나 쉬워야 한다."""
+    await ApiTokenService(session, settings).revoke(actor, token_id)
     await session.commit()

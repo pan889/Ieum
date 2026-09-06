@@ -1,10 +1,12 @@
 import {
   ApiClient,
+  createApiTokensApi,
   createAttachmentsApi,
   createAuthApi,
   createBoardsApi,
   createIssuesApi,
   createProjectsApi,
+  createRolesApi,
   createSearchApi,
   createUsersApi,
 } from '@ieum/api-client'
@@ -26,3 +28,5 @@ export const searchApi = createSearchApi(apiClient)
 export const boardsApi = createBoardsApi(apiClient)
 export const usersApi = createUsersApi(apiClient)
 export const attachmentsApi = createAttachmentsApi(apiClient)
+export const apiTokensApi = createApiTokensApi(apiClient)
+export const rolesApi = createRolesApi(apiClient)

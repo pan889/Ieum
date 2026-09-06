@@ -38,9 +38,23 @@ class Actor:
     session_id: UUID | None = None
     mfa_satisfied_at: Any = None
     group_ids: frozenset[UUID] = frozenset()
+    #: PAT 로 인증했으면 토큰 id. 사람이 브라우저에서 하는 것과 구분한다.
+    api_token_id: UUID | None = None
+    #: PAT 의 스코프. None 이면 제한 없음(사람 세션). 있으면 **교집합**만 유효하다.
+    token_scopes: frozenset[str] | None = None
 
     # 요청 1회 동안만 유효한 권한 계산 캐시.
     _permission_cache: dict[Any, Any] = field(default_factory=dict, repr=False)
+
+    @property
+    def via_api_token(self) -> bool:
+        return self.api_token_id is not None
+
+    def scope_allows(self, permission: str) -> bool:
+        """PAT 스코프가 이 권한을 허용하는가. 사람 세션은 언제나 True."""
+        if self.token_scopes is None:
+            return True
+        return permission in self.token_scopes
 
     @property
     def principal_ids(self) -> frozenset[UUID]:

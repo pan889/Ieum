@@ -11,6 +11,7 @@ import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
 import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
 import { PlaceholderScreen } from '@/features/projects/PlaceholderScreen'
+import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 
 import { AppShell } from './AppShell'
@@ -65,6 +66,12 @@ const boardRoute = createRoute({
   component: BoardScreen,
 })
 
+const tokensRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/tokens',
+  component: ApiTokensScreen,
+})
+
 const wikiRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/wiki',
@@ -79,6 +86,7 @@ const routeTree = rootRoute.addChildren([
   issueDetailRoute,
   boardsRoute,
   boardRoute,
+  tokensRoute,
   wikiRoute,
 ])
 

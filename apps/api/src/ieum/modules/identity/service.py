@@ -16,6 +16,7 @@ from uuid import UUID
 import pyotp
 import qrcode
 import qrcode.image.svg
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.config import Settings
@@ -31,6 +32,7 @@ from ieum.core.exceptions import (
     ConflictError,
     MFARequiredError,
     NotFoundError,
+    PermissionDeniedError,
     RateLimitedError,
     ValidationError,
 )
@@ -38,9 +40,15 @@ from ieum.core.ids import new_id, new_token
 from ieum.core.logging import get_logger
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
+from ieum.core.permissions import (
+    Scope,
+    ScopeKind,
+    get_permission_service,
+    registry,
+)
 from ieum.core.time import in_seconds, utcnow
 from ieum.modules.identity import events as identity_events
-from ieum.modules.identity.models import MFACredential, User, UserSession
+from ieum.modules.identity.models import ApiToken, MFACredential, User, UserSession
 from ieum.modules.identity.repository import (
     AuditRepository,
     LoginAttemptRepository,
@@ -648,3 +656,196 @@ __all__ = [
     "TOTPEnrollment",
     "UserService",
 ]
+
+
+class ApiTokenService:
+    """개인 액세스 토큰(PAT).
+
+    토큰은 **발급 시 한 번만** 평문으로 보여준다. 해시만 저장하므로 잃어버리면
+    다시 만들어야 한다 — 조회로 다시 볼 수 있으면 DB 유출이 곧 계정 탈취다.
+
+    스코프는 발급 시 고른 권한의 교집합으로 동작한다. 사용자 권한이 나중에
+    늘어나도 토큰이 같이 커지지 않는다.
+    """
+
+    #: 토큰 접두사. 시크릿 스캐너가 커밋에서 잡을 수 있고, 인증 경로가
+    #: DB 를 치기 전에 어떤 종류인지 구분할 수 있다.
+    PREFIX = "ieum_pat_"
+    MAX_PER_USER = 20
+    #: last_used_at 을 매 요청 쓰면 토큰 하나가 뜨거운 로우가 된다.
+    TOUCH_INTERVAL_SECONDS = 300
+
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        self._s = session
+        self._settings = settings
+        self._users = UserRepository(session)
+        self._audit = AuditRepository(session)
+
+    @staticmethod
+    def looks_like_token(raw: str) -> bool:
+        return raw.startswith(ApiTokenService.PREFIX)
+
+    async def issue(
+        self,
+        actor: Actor,
+        *,
+        name: str,
+        scopes: Sequence[str],
+        expires_in_days: int | None = None,
+    ) -> tuple[ApiToken, str]:
+        """토큰을 만들고 (행, 평문) 을 돌려준다."""
+        label = name.strip()
+        if not label:
+            raise ValidationError("토큰 이름이 필요하다.", code="identity.token_name_required")
+
+        # PAT 은 오래 사는 무기명 자격증명이다. 2차 요소 없이 발급하면
+        # 비밀번호 하나가 새는 순간 만료 없는 접근 권한이 따라 나간다.
+        # step-up(최근 5분 내 MFA)만으로는 부족하다 — MFA 를 아예 등록하지
+        # 않은 계정은 로그인 자체가 그 창을 채우기 때문이다.
+        if await MFARepository(self._s).confirmed_totp_for(actor.user_id) is None:
+            raise PermissionDeniedError(
+                "API 토큰을 발급하려면 2단계 인증을 먼저 등록해야 한다.",
+                code="identity.token_requires_mfa",
+            )
+
+        requested = _validate_scopes(scopes)
+        # 자기가 가진 것보다 넓은 스코프는 줄 수 없다. 검사를 생략하면
+        # 권한이 늘어난 뒤 그 토큰이 조용히 강해진다.
+        await self._require_owned_scopes(actor, requested)
+
+        existing = await self._count_active(actor.user_id)
+        if existing >= self.MAX_PER_USER:
+            raise ConflictError(
+                "토큰이 너무 많다. 쓰지 않는 것을 먼저 지운다.",
+                code="identity.too_many_tokens",
+                details={"max": self.MAX_PER_USER},
+            )
+
+        raw = f"{self.PREFIX}{secrets.token_urlsafe(32)}"
+        row = ApiToken(
+            user_id=actor.user_id,
+            name=label,
+            token_hash=hash_token(raw),
+            scopes=sorted(requested),
+            expires_at=(None if expires_in_days is None else in_seconds(expires_in_days * 86_400)),
+        )
+        self._s.add(row)
+        await self._s.flush()
+
+        self._audit.record(
+            action="identity.token.issued",
+            actor_id=actor.user_id,
+            target_type="api_token",
+            target_id=row.id,
+            metadata={"name": label, "scopes": sorted(requested)},
+        )
+        log.info("api_token.issued", token=str(row.id), user=str(actor.user_id))
+        return row, raw
+
+    async def list_for(self, actor: Actor) -> list[ApiToken]:
+        stmt = (
+            select(ApiToken)
+            .where(ApiToken.user_id == actor.user_id)
+            .where(ApiToken.revoked_at.is_(None))
+            .order_by(ApiToken.created_at.desc())
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def revoke(self, actor: Actor, token_id: UUID) -> None:
+        row = await self._s.get(ApiToken, token_id)
+        # 남의 토큰은 존재 자체를 숨긴다.
+        if row is None or row.user_id != actor.user_id or row.revoked_at is not None:
+            raise NotFoundError("토큰을 찾을 수 없다.")
+        row.revoked_at = utcnow()
+        self._audit.record(
+            action="identity.token.revoked",
+            actor_id=actor.user_id,
+            target_type="api_token",
+            target_id=row.id,
+            metadata={"name": row.name},
+        )
+        await self._s.flush()
+
+    async def authenticate(self, raw: str) -> Actor:
+        """PAT 으로 액터를 복원한다.
+
+        세션과 달리 MFA 상태를 갖지 않는다. 대신 step-up 이 필요한 권한은
+        PermissionService 가 토큰 액터에게 거절한다 — 오래 사는 토큰은
+        "방금 사람이 MFA 를 통과했다" 를 증명할 수 없다.
+        """
+        stmt = select(ApiToken).where(ApiToken.token_hash == hash_token(raw))
+        row = (await self._s.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            raise AuthenticationError("API 토큰이 유효하지 않다.", code="auth.invalid_token")
+
+        now = utcnow()
+        if row.revoked_at is not None:
+            raise AuthenticationError("API 토큰이 폐기됐다.", code="auth.invalid_token")
+        if row.expires_at is not None and row.expires_at <= now:
+            raise AuthenticationError("API 토큰이 만료됐다.", code="auth.token_expired")
+
+        user = await self._users.get(row.user_id)
+        if user is None or not user.is_active:
+            raise AuthenticationError("계정을 사용할 수 없다.")
+
+        # 매 요청 쓰면 뜨거운 로우가 된다. 간격을 두고만 갱신한다.
+        if (
+            row.last_used_at is None
+            or (now - row.last_used_at).total_seconds() > self.TOUCH_INTERVAL_SECONDS
+        ):
+            row.last_used_at = now
+
+        return Actor(
+            user_id=user.id,
+            email=user.email,
+            is_customer=user.is_customer,
+            is_active=user.is_active,
+            locale=user.locale,
+            timezone=user.timezone,
+            # 사람 세션이 아니므로 session_id 는 없다.
+            mfa_satisfied_at=None,
+            group_ids=await self._users.group_ids_for(user.id),
+            api_token_id=row.id,
+            token_scopes=frozenset(row.scopes),
+        )
+
+    async def _count_active(self, user_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(ApiToken)
+            .where(ApiToken.user_id == user_id)
+            .where(ApiToken.revoked_at.is_(None))
+        )
+        return int((await self._s.execute(stmt)).scalar_one())
+
+    async def _require_owned_scopes(self, actor: Actor, requested: set[str]) -> None:
+        service = get_permission_service()
+        missing: list[str] = []
+        for permission in sorted(requested):
+            definition = registry.get(permission)
+            # 전역 권한만 여기서 판정한다. 프로젝트 스코프 권한은 프로젝트
+            # 어딘가에 있으면 통과 — 토큰 사용 시점에 스코프별로 다시 본다.
+            if ScopeKind.GLOBAL in definition.scope_kinds and not await service.has(
+                self._s, actor, permission, scope=Scope.global_()
+            ):
+                missing.append(permission)
+        if missing:
+            raise PermissionDeniedError(
+                "자기가 갖지 않은 권한은 토큰에 담을 수 없다.",
+                details={"permissions": missing},
+            )
+
+
+def _validate_scopes(scopes: Sequence[str]) -> set[str]:
+    if not scopes:
+        raise ValidationError("스코프를 하나 이상 고른다.", code="identity.token_scopes_required")
+    unknown = [s for s in scopes if s not in registry]
+    if unknown:
+        # 오타 난 스코프를 통과시키면 토큰이 "아무것도 못 하는" 상태로
+        # 조용히 만들어진다.
+        raise ValidationError(
+            "알 수 없는 권한이다.",
+            code="identity.unknown_scope",
+            details={"scopes": sorted(unknown)},
+        )
+    return set(scopes)

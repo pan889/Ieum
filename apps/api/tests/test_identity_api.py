@@ -238,3 +238,129 @@ class TestBackupCodes:
             f"{BASE}/auth/mfa/verify", headers=pending, json={"code": codes[0]}
         )
         assert again.status_code == 422
+
+
+class TestApiTokens:
+    """PAT. 발급 시 한 번만 보이고, step-up 은 통과할 수 없다."""
+
+    async def _mfa_headers(self, client: httpx.AsyncClient) -> dict[str, str]:
+        tokens = await _login(client)
+        headers = _auth(tokens)
+        await _enroll_totp(client, headers)
+        return headers
+
+    async def test_issue_shows_the_secret_once(self, app_client: httpx.AsyncClient) -> None:
+        headers = await self._mfa_headers(app_client)
+        created = await app_client.post(
+            f"{BASE}/tokens",
+            json={"name": "ci", "scopes": ["identity.user.view"]},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert body["secret"].startswith("ieum_pat_")
+
+        listed = await app_client.get(f"{BASE}/tokens", headers=headers)
+        assert listed.status_code == 200, listed.text
+        # 목록에는 평문이 없다. 해시만 저장하므로 다시 볼 방법이 없어야 한다.
+        assert "secret" not in listed.text
+        assert [t["name"] for t in listed.json()] == ["ci"]
+
+    async def test_token_authenticates_within_its_scopes(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await self._mfa_headers(app_client)
+        secret = (
+            await app_client.post(
+                f"{BASE}/tokens",
+                json={"name": "reader", "scopes": ["identity.user.view"]},
+                headers=headers,
+            )
+        ).json()["secret"]
+        token_headers = {"Authorization": f"Bearer {secret}"}
+
+        allowed = await app_client.get(f"{BASE}/users", headers=token_headers)
+        assert allowed.status_code == 200, allowed.text
+
+    async def test_token_cannot_use_permissions_outside_its_scopes(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """사용자 권한이 넓어도 토큰은 발급 시 고른 것만 쓴다."""
+        headers = await self._mfa_headers(app_client)
+        secret = (
+            await app_client.post(
+                f"{BASE}/tokens",
+                json={"name": "narrow", "scopes": ["org.project.view"]},
+                headers=headers,
+            )
+        ).json()["secret"]
+        token_headers = {"Authorization": f"Bearer {secret}"}
+
+        denied = await app_client.get(f"{BASE}/users", headers=token_headers)
+        assert denied.status_code == 403, denied.text
+
+    async def test_token_cannot_issue_another_token(self, app_client: httpx.AsyncClient) -> None:
+        """step-up 은 '사람이 방금 MFA 를 통과했다' 는 뜻이다. 토큰은 못 한다.
+
+        막지 않으면 새어 나간 토큰 하나가 토큰을 무한히 찍어낸다.
+        """
+        headers = await self._mfa_headers(app_client)
+        secret = (
+            await app_client.post(
+                f"{BASE}/tokens",
+                json={"name": "seed", "scopes": ["identity.token.issue"]},
+                headers=headers,
+            )
+        ).json()["secret"]
+
+        again = await app_client.post(
+            f"{BASE}/tokens",
+            json={"name": "child", "scopes": ["identity.user.view"]},
+            headers={"Authorization": f"Bearer {secret}"},
+        )
+        assert again.status_code == 403, again.text
+        assert again.json()["error"]["code"] == "auth.step_up_not_available_for_token"
+
+    async def test_revoked_token_stops_working(self, app_client: httpx.AsyncClient) -> None:
+        headers = await self._mfa_headers(app_client)
+        issued = (
+            await app_client.post(
+                f"{BASE}/tokens",
+                json={"name": "temp", "scopes": ["identity.user.view"]},
+                headers=headers,
+            )
+        ).json()
+        token_headers = {"Authorization": f"Bearer {issued['secret']}"}
+        assert (await app_client.get(f"{BASE}/users", headers=token_headers)).status_code == 200
+
+        revoked = await app_client.delete(f"{BASE}/tokens/{issued['token']['id']}", headers=headers)
+        assert revoked.status_code == 204, revoked.text
+        # 세션과 같은 원칙이다: 폐기는 즉시 반영된다.
+        assert (await app_client.get(f"{BASE}/users", headers=token_headers)).status_code == 401
+
+    async def test_rejects_unknown_scopes(self, app_client: httpx.AsyncClient) -> None:
+        """오타 난 스코프를 통과시키면 아무것도 못 하는 토큰이 조용히 생긴다."""
+        headers = await self._mfa_headers(app_client)
+        r = await app_client.post(
+            f"{BASE}/tokens",
+            json={"name": "typo", "scopes": ["identity.user.veiw"]},
+            headers=headers,
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "identity.unknown_scope"
+
+    async def test_issuing_requires_enrolled_mfa(self, app_client: httpx.AsyncClient) -> None:
+        """2FA 를 등록하지 않은 계정은 토큰을 못 만든다.
+
+        step-up(최근 5분 내 MFA)만으로는 부족하다 — MFA 를 아예 등록하지 않은
+        계정은 로그인 자체가 그 창을 채우기 때문이다. PAT 은 만료 없는
+        무기명 자격증명이라 비밀번호 하나로 발급되면 안 된다.
+        """
+        headers = _auth(await _login(app_client))
+        r = await app_client.post(
+            f"{BASE}/tokens",
+            json={"name": "no-mfa", "scopes": ["identity.user.view"]},
+            headers=headers,
+        )
+        assert r.status_code == 403, r.text
+        assert r.json()["error"]["code"] == "identity.token_requires_mfa"

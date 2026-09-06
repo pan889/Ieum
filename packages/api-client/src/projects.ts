@@ -45,3 +45,20 @@ export function createProjectsApi(client: ApiClient) {
 }
 
 export type ProjectsApi = ReturnType<typeof createProjectsApi>
+
+
+export interface PermissionDef {
+  key: string
+  description: string
+  scope_kinds: string[]
+  requires_step_up: boolean
+}
+
+export function createRolesApi(client: ApiClient) {
+  return {
+    /** 등록된 권한 상수 전부. 토큰 스코프 고르기와 역할 편집이 쓴다. */
+    permissions: () => client.get<PermissionDef[]>('/api/v1/roles/permissions'),
+  }
+}
+
+export type RolesApi = ReturnType<typeof createRolesApi>

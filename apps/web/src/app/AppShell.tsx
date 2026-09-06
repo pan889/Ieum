@@ -13,6 +13,7 @@ const NAV = [
   { to: '/issues', labelKey: 'common:nav.issues' },
   { to: '/boards', labelKey: 'common:nav.boards' },
   { to: '/wiki', labelKey: 'common:nav.wiki' },
+  { to: '/settings/tokens', labelKey: 'common:nav.settings' },
 ] as const
 
 export function AppShell() {

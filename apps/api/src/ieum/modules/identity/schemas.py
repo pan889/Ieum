@@ -94,3 +94,29 @@ class SessionResponse(BaseModel):
     expires_at: datetime
     mfa_satisfied_at: datetime | None
     is_current: bool = False
+
+
+class ApiTokenCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    #: 권한 이름 목록. 자기가 가진 것만 담을 수 있다.
+    scopes: list[str] = Field(min_length=1, max_length=100)
+    expires_in_days: int | None = Field(default=None, ge=1, le=730)
+
+
+class ApiTokenResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    scopes: list[str]
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    created_at: datetime
+
+
+class ApiTokenIssuedResponse(BaseModel):
+    """발급 응답. `token` 은 **이때만** 볼 수 있다."""
+
+    token: ApiTokenResponse
+    #: 평문. 저장하지 않으므로 다시 못 본다.
+    secret: str
