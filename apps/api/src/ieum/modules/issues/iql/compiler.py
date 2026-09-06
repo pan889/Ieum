@@ -19,6 +19,7 @@ from sqlalchemy import (
     SQLColumnExpression,
     and_,
     exists,
+    func,
     literal,
     not_,
     or_,
@@ -62,6 +63,7 @@ from ieum.modules.issues.models import (
     IssueLabel,
     IssueType,
     WorkflowState,
+    Worklog,
 )
 
 #: 결과 상한. 내보내기는 별도 경로를 쓴다 (query-language.md 3절).
@@ -485,6 +487,16 @@ class Compiler:
 
 
 #: 필드 이름 → Issue 컬럼. 화이트리스트이므로 getattr 로 임의 접근하지 않는다.
+def _spent_minutes() -> SQLColumnExpression[Any]:
+    """이슈별 worklog 합계. 기록이 없으면 0 이다 (NULL 이 아니라)."""
+    return (
+        select(func.coalesce(func.sum(Worklog.spent_minutes), 0))
+        .where(Worklog.issue_id == Issue.id)
+        .correlate(Issue)
+        .scalar_subquery()
+    )
+
+
 _COLUMNS: dict[str, SQLColumnExpression[Any]] = {
     "key": Issue.key_seq,
     "summary": Issue.summary,
@@ -498,6 +510,7 @@ _COLUMNS: dict[str, SQLColumnExpression[Any]] = {
     "startdate": Issue.start_date,
     "resolved": Issue.resolved_at,
     "estimate": Issue.estimate_minutes,
+    "timespent": _spent_minutes(),
     "progress": Issue.progress,
 }
 

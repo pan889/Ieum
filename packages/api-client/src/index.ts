@@ -33,7 +33,10 @@ export {
   type IssueType,
   type IssuesApi,
   type NewIssue,
+  type TimeSummary,
   type WorkflowStateInfo,
+  type Worklog,
+  type WorklogPanel,
 } from './issues'
 export {
   createSearchApi,

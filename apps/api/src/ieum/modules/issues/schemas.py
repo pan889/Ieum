@@ -76,7 +76,9 @@ class IssueResponse(BaseModel):
     assignee_id: UUID | None
     priority: int
     parent_id: UUID | None
+    start_date: date | None
     due_date: date | None
+    estimate_minutes: int | None
     progress: int
     resolved_at: datetime | None
     archived_at: datetime | None
@@ -175,3 +177,52 @@ class WorkflowStateResponse(BaseModel):
     category: str
     position: int
     is_initial: bool
+
+
+class WorklogCreateRequest(BaseModel):
+    """작업 로그.
+
+    분 단위 정수만 받는다. "2h 30m" 같은 사람용 표기는 클라이언트가 파싱해서
+    분으로 바꿔 보낸다 — 서버가 두 형식을 다 받으면 둘이 어긋날 때 어느 쪽이
+    이기는지 규칙이 하나 더 생긴다.
+    """
+
+    spent_minutes: int = Field(gt=0)
+    work_date: date | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class WorklogUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    spent_minutes: int | None = Field(default=None, gt=0)
+    work_date: date | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+    #: null 을 "값 없음" 과 구분할 방법이 JSON 에 없다. 지우려면 이 플래그를 쓴다.
+    clear_comment: bool = False
+
+
+class WorklogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    issue_id: UUID
+    user_id: UUID | None
+    spent_minutes: int
+    work_date: date
+    comment: str | None
+    created_at: datetime
+
+
+class TimeSummaryResponse(BaseModel):
+    estimate_minutes: int | None
+    spent_minutes: int
+    remaining_minutes: int | None
+    over_estimate: bool
+
+
+class WorklogPanelResponse(BaseModel):
+    """이슈 상세의 시간 패널. 목록과 합계를 한 번에 준다."""
+
+    summary: TimeSummaryResponse
+    items: list[WorklogResponse]

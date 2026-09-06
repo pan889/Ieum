@@ -112,3 +112,44 @@ test('표시 컬럼 선택이 새로고침 후에도 남는다', async ({ page, 
 
   expect(consoleErrors).toEqual([])
 })
+
+test('시간을 기록하면 추정 대비 실적이 보인다', async ({ page, consoleErrors }) => {
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  await createIssue(page, key, 'timed issue')
+
+  // 추정을 먼저 잡는다.
+  await page.getByRole('button', { name: /no estimate set/i }).click()
+  await page.getByLabel(/set estimate/i).fill('2h')
+  await page.getByRole('button', { name: /^save$/i }).click()
+  await expect(page.getByRole('button', { name: '2h' })).toBeVisible()
+
+  // "1h 30m" 이 90분으로 읽혔다는 걸 저장 전에 보여줘야 한다.
+  await page.getByLabel(/time spent/i).fill('1h 30m')
+  await expect(page.getByText('= 1h 30m (90m)')).toBeVisible()
+  await page.getByRole('button', { name: /^log$/i }).click()
+
+  await expect(page.getByText('1h 30m').first()).toBeVisible()
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '90')
+
+  // 넘기면 초과 표시.
+  await page.getByLabel(/time spent/i).fill('1h')
+  await page.getByRole('button', { name: /^log$/i }).click()
+  await expect(page.getByText(/over estimate by 30m/i)).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('읽을 수 없는 기간은 저장을 막는다', async ({ page, consoleErrors }) => {
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  await createIssue(page, key, 'bad duration')
+
+  await page.getByLabel(/time spent/i).fill('two hours')
+  await expect(page.getByText(/can't read that as a duration/i)).toBeVisible()
+  await expect(page.getByRole('button', { name: /^log$/i })).toBeDisabled()
+
+  expect(consoleErrors).toEqual([])
+})

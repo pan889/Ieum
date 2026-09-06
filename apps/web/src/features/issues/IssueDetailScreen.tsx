@@ -9,6 +9,7 @@ import { Markdown } from '@/shared/markdown/Markdown'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
+import { TimeTracking } from './TimeTracking'
 import { categoryTone, formatDate, formatDateTime, priorityLabel } from './format'
 import { useUserNames, useUserSearch } from './hooks'
 
@@ -49,6 +50,7 @@ export function IssueDetailScreen() {
         <div className="flex flex-col gap-5">
           <SummaryAndDescription issue={data} onSaved={invalidate} />
           <Transitions issue={data} onMoved={invalidate} />
+          <TimeTracking issueId={data.id} version={data.version} />
           <Comments issueId={data.id} />
           <History issueId={data.id} />
         </div>

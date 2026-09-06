@@ -24,9 +24,14 @@ from ieum.modules.issues.schemas import (
     IssueTypeResponse,
     IssueUpdateRequest,
     LinkRequest,
+    TimeSummaryResponse,
     TransitionRequest,
     TransitionResponse,
     WorkflowStateResponse,
+    WorklogCreateRequest,
+    WorklogPanelResponse,
+    WorklogResponse,
+    WorklogUpdateRequest,
 )
 from ieum.modules.issues.service import (
     CommentService,
@@ -34,6 +39,7 @@ from ieum.modules.issues.service import (
     IssueView,
     NewIssue,
 )
+from ieum.modules.issues.worklog import TimeSummary, WorklogService
 
 issues_router = APIRouter(prefix="/issues", tags=["issues"])
 
@@ -90,7 +96,9 @@ def _to_response(view: IssueView) -> IssueResponse:
         assignee_id=issue.assignee_id,
         priority=issue.priority,
         parent_id=issue.parent_id,
+        start_date=issue.start_date,
         due_date=issue.due_date,
+        estimate_minutes=issue.estimate_minutes,
         progress=issue.progress,
         resolved_at=issue.resolved_at,
         archived_at=issue.archived_at,
@@ -340,3 +348,83 @@ async def edit_comment(
     comment = await CommentService(session, permissions).edit(actor, comment_id, body.body)
     await session.commit()
     return CommentResponse.model_validate(comment)
+
+
+# ── 시간 추적 ───────────────────────────────────────────────────
+
+
+def _summary(summary: TimeSummary) -> TimeSummaryResponse:
+    return TimeSummaryResponse(
+        estimate_minutes=summary.estimate_minutes,
+        spent_minutes=summary.spent_minutes,
+        remaining_minutes=summary.remaining_minutes,
+        over_estimate=summary.over_estimate,
+    )
+
+
+@issues_router.get("/{issue_id}/worklogs", response_model=WorklogPanelResponse)
+async def list_worklogs(
+    issue_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> WorklogPanelResponse:
+    service = WorklogService(session, permissions)
+    return WorklogPanelResponse(
+        summary=_summary(await service.summary(actor, issue_id)),
+        items=[WorklogResponse.model_validate(r) for r in await service.list_for(actor, issue_id)],
+    )
+
+
+@issues_router.post(
+    "/{issue_id}/worklogs",
+    response_model=WorklogResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_worklog(
+    issue_id: UUID,
+    body: WorklogCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> WorklogResponse:
+    row = await WorklogService(session, permissions).add(
+        actor,
+        issue_id,
+        spent_minutes=body.spent_minutes,
+        work_date=body.work_date,
+        comment=body.comment,
+    )
+    await session.commit()
+    return WorklogResponse.model_validate(row)
+
+
+@issues_router.patch("/worklogs/{worklog_id}", response_model=WorklogResponse)
+async def update_worklog(
+    worklog_id: UUID,
+    body: WorklogUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> WorklogResponse:
+    row = await WorklogService(session, permissions).update(
+        actor,
+        worklog_id,
+        spent_minutes=body.spent_minutes,
+        work_date=body.work_date,
+        comment=body.comment,
+        clear_comment=body.clear_comment,
+    )
+    await session.commit()
+    return WorklogResponse.model_validate(row)
+
+
+@issues_router.delete("/worklogs/{worklog_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_worklog(
+    worklog_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    await WorklogService(session, permissions).delete(actor, worklog_id)
+    await session.commit()

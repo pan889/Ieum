@@ -98,6 +98,15 @@ for _spec in (
     FieldSpec("startdate", FieldType.DATE, "시작일"),
     FieldSpec("resolved", FieldType.DATE, "완료 시각", aliases=("resolutiondate",)),
     FieldSpec("estimate", FieldType.NUMBER, "추정 공수(분)"),
+    # 실적은 worklog 합계라 상관 서브쿼리로 계산한다. 이슈에 합계 컬럼을
+    # 두면 두 값이 어긋나는 순간 어느 쪽이 진실인지 알 수 없다.
+    FieldSpec(
+        "timespent",
+        FieldType.NUMBER,
+        "기록된 실적(분)",
+        nullable=False,
+        aliases=("spent",),
+    ),
     FieldSpec("progress", FieldType.NUMBER, "진행률 0~100", nullable=False),
     FieldSpec("archived", FieldType.BOOL, "아카이브 여부", sortable=False, nullable=False),
 ):
