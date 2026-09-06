@@ -133,5 +133,19 @@
   "link.copied.inward": "was copied from",
   "create.parent": "Parent issue",
   "create.parentHint": "Leave empty for a top-level issue",
-  "relations.addChild": "New sub-issue"
+  "relations.addChild": "New sub-issue",
+  "bulk.selected": "{count, plural, one {# selected} other {# selected}}",
+  "bulk.clear": "Clear selection",
+  "bulk.edit": "Edit selected",
+  "bulk.priority": "Set priority",
+  "bulk.assignee": "Set assignee",
+  "bulk.addLabels": "Add labels",
+  "bulk.removeLabels": "Remove labels",
+  "bulk.apply": "Apply",
+  "bulk.done": "{count, plural, one {# issue updated} other {# issues updated}}",
+  "bulk.someFailed": "{count, plural, one {# issue couldn't be updated} other {# issues couldn't be updated}}",
+  "bulk.selectAll": "Select all on this page",
+  "bulk.select": "Select issue",
+  "export.csv": "Export CSV",
+  "export.needsFilter": "Narrow the query before exporting."
 }

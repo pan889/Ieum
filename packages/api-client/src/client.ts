@@ -68,6 +68,25 @@ export class ApiClient {
     return this.request<T>(path, { ...options, method: 'PATCH', body })
   }
 
+  /**
+   * JSON 이 아니라 파일을 받는 POST. CSV 내보내기처럼 스트리밍 응답에 쓴다.
+   *
+   * 401 리프레시는 request() 와 같은 경로를 타야 하므로 send() 를 재사용한다.
+   */
+  async postForBlob(path: string, body?: unknown): Promise<Blob> {
+    let response = await this.send(path, { method: 'POST', body })
+    if (response.status === 401) {
+      const refreshed = await this.refreshOnce()
+      if (refreshed) response = await this.send(path, { method: 'POST', body })
+      else {
+        tokenStore.clear()
+        this.onSessionLost?.()
+      }
+    }
+    if (!response.ok) throw await ApiError.fromResponse(response)
+    return response.blob()
+  }
+
   delete<T>(path: string, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
     return this.request<T>(path, { ...options, method: 'DELETE' })
   }

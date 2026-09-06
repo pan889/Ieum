@@ -177,6 +177,17 @@ export interface IssuePatch {
   custom_fields?: Record<string, unknown>
 }
 
+export interface BulkFailure {
+  issue_id: string
+  code: string
+  message: string
+}
+
+export interface BulkEditResult {
+  updated: string[]
+  failed: BulkFailure[]
+}
+
 const BASE = '/api/v1/issues'
 
 /** 낙관적 잠금 헤더. version 이 없으면 검사하지 않는다. */
@@ -232,6 +243,17 @@ export function createIssuesApi(client: ApiClient) {
 
     editComment: (commentId: string, body: { body: string }) =>
       client.patch<IssueComment>(`${BASE}/comments/${commentId}`, body),
+
+    /**
+     * 일괄 편집. **부분 성공**을 돌려준다 — 200 이어도 failed 를 봐야 한다.
+     */
+    bulkEdit: (body: {
+      issue_ids: string[]
+      changes?: Record<string, unknown>
+      add_labels?: string[]
+      remove_labels?: string[]
+      transition_id?: string
+    }) => client.post<BulkEditResult>(`${BASE}/bulk`, body),
 
     // ── 관계 ──────────────────────────────────────────────────
     relations: (id: string) => client.get<IssueRelations>(`${BASE}/${id}/relations`),

@@ -9,9 +9,13 @@ from fastapi import APIRouter, Header, Query, status
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
+from ieum.modules.issues.bulk import BulkService
 from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import HistoryRepository
 from ieum.modules.issues.schemas import (
+    BulkEditRequest,
+    BulkEditResponse,
+    BulkFailureResponse,
     CommentCreateRequest,
     CommentResponse,
     CommentUpdateRequest,
@@ -478,3 +482,36 @@ async def unlink_issue(
 ) -> None:
     await IssueService(session, permissions).unlink(actor, link_id)
     await session.commit()
+
+
+# ── 일괄 편집 ───────────────────────────────────────────────────
+
+
+@issues_router.post("/bulk", response_model=BulkEditResponse)
+async def bulk_edit(
+    body: BulkEditRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> BulkEditResponse:
+    """고른 이슈를 한 번에 바꾼다.
+
+    200 으로 돌려주되 건별 결과를 담는다. 하나가 실패했다고 전체를 4xx 로
+    내면 성공한 것까지 실패로 보이고, 조용히 넘기면 무엇이 안 됐는지 모른다.
+    """
+    result = await BulkService(session, permissions).edit(
+        actor,
+        body.issue_ids,
+        changes=body.changes,
+        add_labels=body.add_labels,
+        remove_labels=body.remove_labels,
+        transition_id=body.transition_id,
+    )
+    await session.commit()
+    return BulkEditResponse(
+        updated=result.updated,
+        failed=[
+            BulkFailureResponse(issue_id=f.issue_id, code=f.code, message=f.message)
+            for f in result.failed
+        ],
+    )

@@ -240,3 +240,26 @@ class IssueRelationsResponse(BaseModel):
     parent: IssueSummaryResponse | None
     children: list[IssueSummaryResponse]
     links: list[RelatedIssueResponse]
+
+
+class BulkEditRequest(BaseModel):
+    """일괄 편집. 부분 성공을 허용한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    issue_ids: list[UUID] = Field(min_length=1, max_length=100)
+    changes: dict[str, Any] = Field(default_factory=dict)
+    add_labels: list[str] | None = None
+    remove_labels: list[str] | None = None
+    transition_id: UUID | None = None
+
+
+class BulkFailureResponse(BaseModel):
+    issue_id: UUID
+    code: str
+    message: str
+
+
+class BulkEditResponse(BaseModel):
+    updated: list[UUID]
+    failed: list[BulkFailureResponse]

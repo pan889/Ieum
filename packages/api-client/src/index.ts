@@ -28,6 +28,8 @@ export {
   type FieldDefinition,
   type HistoryEntry,
   type Issue,
+  type BulkEditResult,
+  type BulkFailure,
   type IssueChanges,
   type IssueRelations,
   type RelatedIssue,

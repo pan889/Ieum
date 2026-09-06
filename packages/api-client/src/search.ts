@@ -48,6 +48,13 @@ export function createSearchApi(client: ApiClient) {
 
     catalog: () => client.get<IqlCatalog>('/api/v1/iql/fields'),
 
+    /**
+     * IQL 결과를 CSV 로. 스트리밍 응답이라 blob 으로 받는다.
+     *
+     * ApiClient 는 JSON 을 전제로 하므로 여기서만 fetch 를 직접 쓴다.
+     */
+    exportCsv: (iql: string) => client.postForBlob('/api/v1/search/issues/export', { iql }),
+
     filters: {
       list: () => client.get<SavedFilter[]>('/api/v1/filters'),
       create: (body: { name: string; iql: string; description?: string; is_shared?: boolean }) =>

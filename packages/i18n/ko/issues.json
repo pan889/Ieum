@@ -133,5 +133,19 @@
   "link.copied.inward": "복사해 옴",
   "create.parent": "상위 이슈",
   "create.parentHint": "비워 두면 최상위 이슈가 됩니다",
-  "relations.addChild": "하위 이슈 만들기"
+  "relations.addChild": "하위 이슈 만들기",
+  "bulk.selected": "{count, plural, other {#건 선택}}",
+  "bulk.clear": "선택 해제",
+  "bulk.edit": "선택 항목 편집",
+  "bulk.priority": "우선순위 지정",
+  "bulk.assignee": "담당자 지정",
+  "bulk.addLabels": "라벨 추가",
+  "bulk.removeLabels": "라벨 제거",
+  "bulk.apply": "적용",
+  "bulk.done": "{count, plural, other {#건 수정됨}}",
+  "bulk.someFailed": "{count, plural, other {#건은 수정하지 못했습니다}}",
+  "bulk.selectAll": "이 페이지 전체 선택",
+  "bulk.select": "이슈 선택",
+  "export.csv": "CSV 내보내기",
+  "export.needsFilter": "내보내기 전에 범위를 좁히세요."
 }

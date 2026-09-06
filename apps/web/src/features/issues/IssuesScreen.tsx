@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import type { BulkEditResult } from '@ieum/api-client'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -7,6 +8,7 @@ import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Badge, Button, Card, Chip } from '@/shared/ui/primitives'
 
+import { BulkBar } from './BulkBar'
 import { FilterBar } from './FilterBar'
 import { formatDate, formatRelative, priorityLabel, categoryTone } from './format'
 import { useUserNames } from './hooks'
@@ -42,6 +44,8 @@ export function IssuesScreen() {
   const [ranIql, setRanIql] = useState<string | null>(null)
   const [columns, setColumns] = useState<ColumnId[]>(loadColumns)
   const [cursors, setCursors] = useState<string[]>([])
+  const [selected, setSelected] = useState<string[]>([])
+  const [bulkResult, setBulkResult] = useState<BulkEditResult | null>(null)
 
   // 칩 모드면 칩이 진실이고, IQL 모드면 마지막으로 "실행" 한 질의가 진실이다.
   const activeIql = iqlDraft === null ? toIql(filters) : (ranIql ?? toIql(filters))
@@ -53,6 +57,23 @@ export function IssuesScreen() {
   })
 
   const names = useUserNames((results.data?.items ?? []).map((i) => i.assignee_id))
+
+  /**
+   * CSV 는 스트리밍 응답이라 fetch 로 받아 blob 으로 저장한다.
+   * `<a href>` 로 걸 수 없다 — 액세스 토큰이 메모리에만 있어 앵커 클릭에는
+   * Authorization 헤더가 안 붙는다 (첨부 다운로드와 같은 이유).
+   */
+  const exporting = useMutation({
+    mutationFn: () => searchApi.exportCsv(activeIql),
+    onSuccess: (blob) => {
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `ieum-issues-${new Date().toISOString().slice(0, 10)}.csv`
+      anchor.click()
+      URL.revokeObjectURL(url)
+    },
+  })
 
   const toggleColumn = (id: ColumnId) => {
     const next = columns.includes(id) ? columns.filter((c) => c !== id) : [...COLUMNS].filter(
@@ -67,18 +88,29 @@ export function IssuesScreen() {
     }
   }
 
-  const resetPaging = () => { setCursors([]); }
+  const resetPaging = () => { setCursors([]); setSelected([]); setBulkResult(null) }
 
   return (
     <section className="mx-auto flex max-w-6xl flex-col gap-5">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t('issues:list.title')}</h1>
-        <Link
-          to="/issues/new"
-          className="rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-accent-fg"
-        >
-          {t('issues:create.title')}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            loading={exporting.isPending}
+            disabled={activeIql.trim() === ''}
+            title={activeIql.trim() === '' ? t('issues:export.needsFilter') : undefined}
+            onClick={() => { exporting.mutate(); }}
+          >
+            {t('issues:export.csv')}
+          </Button>
+          <Link
+            to="/issues/new"
+            className="rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-accent-fg"
+          >
+            {t('issues:create.title')}
+          </Link>
+        </div>
       </header>
 
       <FilterBar
@@ -104,6 +136,45 @@ export function IssuesScreen() {
         ))}
       </div>
 
+      {selected.length > 0 ? (
+        <BulkBar
+          selected={selected}
+          onClear={() => { setSelected([]); }}
+          onApplied={(result) => {
+            setBulkResult(result)
+            setSelected([])
+            void results.refetch()
+          }}
+        />
+      ) : null}
+
+      {/* 선택이 풀려도 결과는 남는다. 실패 목록이 같이 사라지면 100건 중
+          3건이 실패해도 사용자는 모른다. */}
+      {bulkResult ? (
+        <Card className="flex flex-col gap-1 py-3 text-sm">
+          <div className="flex items-center gap-3">
+            <span>{t('issues:bulk.done', { count: bulkResult.updated.length })}</span>
+            <Button
+              variant="ghost"
+              className="ml-auto text-xs"
+              onClick={() => { setBulkResult(null); }}
+            >
+              {t('common:action.close')}
+            </Button>
+          </div>
+          {bulkResult.failed.length > 0 ? (
+            <Alert>
+              {t('issues:bulk.someFailed', { count: bulkResult.failed.length })}
+              <ul className="mt-1 list-disc pl-4 text-xs">
+                {bulkResult.failed.slice(0, 5).map((failure) => (
+                  <li key={failure.issue_id}>{failure.message}</li>
+                ))}
+              </ul>
+            </Alert>
+          ) : null}
+        </Card>
+      ) : null}
+
       {results.isPending ? (
         <p className="text-sm text-muted">{t('common:state.loading')}</p>
       ) : results.isError ? (
@@ -122,6 +193,21 @@ export function IssuesScreen() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface-raised text-left">
+                  <th scope="col" className="w-8 px-2">
+                    <input
+                      type="checkbox"
+                      aria-label={t('issues:bulk.selectAll')}
+                      checked={
+                        results.data.items.length > 0 &&
+                        selected.length === results.data.items.length
+                      }
+                      onChange={(event) => {
+                        setSelected(
+                          event.target.checked ? results.data.items.map((i) => i.id) : [],
+                        )
+                      }}
+                    />
+                  </th>
                   {columns.map((id) => (
                     <th key={id} scope="col" className="px-3 py-2 text-xs font-medium text-muted">
                       {t(`issues:list.column.${id}`)}
@@ -134,6 +220,20 @@ export function IssuesScreen() {
                   const key = issue.key
                   return (
                     <tr key={issue.id} className="border-b border-border last:border-0">
+                      <td className="px-2 align-top">
+                        <input
+                          type="checkbox"
+                          aria-label={t('issues:bulk.select')}
+                          checked={selected.includes(issue.id)}
+                          onChange={(event) => {
+                            setSelected((current) =>
+                              event.target.checked
+                                ? [...current, issue.id]
+                                : current.filter((id) => id !== issue.id),
+                            )
+                          }}
+                        />
+                      </td>
                       {columns.map((id) => (
                         <td key={id} className="px-3 py-2 align-top">
                           {id === 'key' ? (

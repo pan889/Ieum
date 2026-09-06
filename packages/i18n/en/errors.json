@@ -95,5 +95,9 @@
   "notify.invalid_webhook_url": "Webhook URLs must be http or https.",
   "notify.webhook_secret_too_short": "Use a secret of at least 16 characters.",
   "notify.unknown_event_type": "Unknown event type.",
-  "notify.no_events_selected": "Choose at least one event to subscribe to."
+  "notify.no_events_selected": "Choose at least one event to subscribe to.",
+  "issues.bulk_empty": "Select at least one issue.",
+  "issues.bulk_too_many": "You can change up to {max} issues at once.",
+  "issues.bulk_no_changes": "Nothing to change.",
+  "issues.export_needs_filter": "Narrow the query before exporting — at least pick a project."
 }

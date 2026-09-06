@@ -6,10 +6,13 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
+from ieum.core.time import utcnow
+from ieum.modules.issues.export import stream_csv, validate_export_query
 from ieum.modules.issues.router import summary_rows
 from ieum.modules.issues.schemas import IssuePageResponse
 from ieum.modules.issues.search import (
@@ -152,3 +155,28 @@ async def delete_filter(
 ) -> None:
     await SavedFilterService(session, permissions).delete(actor, filter_id)
     await session.commit()
+
+
+@search_router.post("/search/issues/export")
+async def export_issues(
+    body: ValidateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> StreamingResponse:
+    """IQL 결과를 CSV 로 흘려보낸다.
+
+    검색(1000건 상한)과 다른 경로다 — 내보내기는 "전부 달라" 는 요청이라
+    같은 상한을 쓸 수 없다 (query-language.md 3절).
+    """
+    validate_export_query(body.iql)
+    stamp = utcnow().strftime("%Y%m%d-%H%M%S")
+    return StreamingResponse(
+        stream_csv(session, permissions, actor, body.iql),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="ieum-issues-{stamp}.csv"',
+            # 내보내기 결과는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
+            "Cache-Control": "no-store",
+        },
+    )
