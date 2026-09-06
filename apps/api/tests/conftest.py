@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -23,6 +24,17 @@ from ieum.db.models import Base
 
 TEST_SECRET = "test-secret-key-at-least-32-characters-long-xxxx"
 
+#: compose·CI 와 같은 이미지. PGroonga 가 들어 있다.
+POSTGRES_IMAGE = "groonga/pgroonga:4.0.1-alpine-16"
+#: 운영이 쓰는 확장 목록. 한 곳에서만 관리한다.
+EXTENSIONS_SQL = (
+    Path(__file__).resolve().parents[3]
+    / "deploy"
+    / "compose"
+    / "postgres-init"
+    / "01-extensions.sql"
+)
+
 
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
@@ -34,7 +46,9 @@ def database_url() -> Iterator[str]:
     # 로컬에 DB 가 없을 때만 컨테이너를 띄운다. 느리므로 최후 수단이다.
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16-alpine", driver="asyncpg") as pg:
+    # compose·CI 와 **같은 이미지**를 쓴다. 여기만 맨 postgres 를 쓰면
+    # PGroonga 를 쓰는 검색 테스트가 로컬에서만 조용히 실패한다(실제로 그랬다).
+    with PostgresContainer(POSTGRES_IMAGE, driver="asyncpg") as pg:
         yield pg.get_connection_url()
 
 
@@ -56,6 +70,12 @@ def settings(database_url: str) -> Settings:
 async def engine(settings: Settings) -> AsyncIterator[object]:
     eng = create_async_engine(settings.database_url, poolclass=None)
     async with eng.begin() as conn:
+        # 확장은 마이그레이션이 아니라 초기화 SQL 이 깐다(운영과 같다).
+        # 테스트 DB 는 그 SQL 을 안 거치므로 여기서 직접 깐다.
+        for statement in EXTENSIONS_SQL.read_text(encoding="utf-8").splitlines():
+            line = statement.strip()
+            if line.startswith("CREATE EXTENSION"):
+                await conn.execute(text(line.rstrip(";")))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield eng

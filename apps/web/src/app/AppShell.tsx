@@ -1,6 +1,7 @@
-import { Link, Outlet, useRouterState } from '@tanstack/react-router'
+import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useMutation } from '@tanstack/react-query'
 import clsx from 'clsx'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useAuthStore } from '@/features/auth/store'
@@ -21,6 +22,8 @@ export function AppShell() {
   const user = useAuthStore((s) => s.user)
   const reset = useAuthStore((s) => s.reset)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
 
   const signOut = useMutation({
     mutationFn: () => authApi.logout(),
@@ -34,6 +37,27 @@ export function AppShell() {
         className="flex w-56 shrink-0 flex-col border-r border-border bg-surface"
       >
         <div className="px-4 py-4 text-lg font-semibold tracking-tight">Ieum</div>
+
+        {/* 어디서든 한 상자로 찾는다. 검색어는 URL 이 소유하므로 결과를
+            그대로 링크로 넘길 수 있다. */}
+        <form
+          className="px-2 pb-2"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!query.trim()) return
+            void navigate({ to: '/search', search: { q: query.trim(), offset: 0 } })
+          }}
+        >
+          <input
+            type="search"
+            aria-label={t('common:nav.search')}
+            placeholder={t('common:nav.searchPlaceholder')}
+            className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg placeholder:text-muted"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value) }}
+          />
+        </form>
 
         <ul className="flex flex-1 flex-col gap-0.5 px-2">
           {NAV.map((item) => (

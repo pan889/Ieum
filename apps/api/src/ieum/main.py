@@ -38,6 +38,7 @@ from ieum.modules.notify.router import (
 )
 from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.router import projects_router, roles_router
+from ieum.modules.search.router import router as unified_search_router
 from ieum.modules.wiki.contracts import page_model as wiki_page_model
 from ieum.modules.wiki.router import pages_router, spaces_router
 from ieum.modules.wiki.service import PageRestrictionGuard
@@ -140,6 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         filters_router,
         spaces_router,
         pages_router,
+        unified_search_router,
         notifications_router,
         watches_router,
         webhooks_router,

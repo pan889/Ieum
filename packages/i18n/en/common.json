@@ -33,5 +33,7 @@
   "pagination.loadMore": "Load more",
   "pagination.itemCount": "{count, plural, one {# item} other {# items}}",
   "action.loadMore": "Load more",
-  "action.create": "Create"
+  "action.create": "Create",
+  "nav.search": "Search",
+  "nav.searchPlaceholder": "Search issues and docs"
 }

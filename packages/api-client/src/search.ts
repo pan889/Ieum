@@ -39,10 +39,40 @@ export interface SavedFilter {
   is_shared: boolean
 }
 
+
+export type SearchKind = 'issue' | 'page'
+
+export interface SearchHit {
+  kind: SearchKind
+  entity_id: string
+  /** 사람이 읽는 식별자. 이슈 키(`ENG-1`)나 문서 경로(`ENG/deploy`). */
+  ref: string
+  title: string
+  snippet: string
+  scope_id: string
+  updated_at: string
+}
+
+export interface UnifiedSearchPage {
+  items: SearchHit[]
+  total: number
+  /** 화면이 굵게 칠할 낱말. 서버는 HTML 을 만들지 않는다. */
+  keywords: string[]
+}
+
 export function createSearchApi(client: ApiClient) {
   return {
     search: (body: { iql: string; cursor?: string; limit?: number }) =>
       client.post<IssuePage>('/api/v1/search/issues', body),
+
+    /** 이슈와 문서를 한 번에. 권한은 서버가 질의에 얹어 거른다. */
+    everything: (params: { q: string; kind?: SearchKind[]; limit?: number; offset?: number }) => {
+      const query = new URLSearchParams({ q: params.q })
+      for (const kind of params.kind ?? []) query.append('kind', kind)
+      if (params.limit) query.set('limit', String(params.limit))
+      if (params.offset) query.set('offset', String(params.offset))
+      return client.get<UnifiedSearchPage>(`/api/v1/search?${query.toString()}`)
+    },
 
     validate: (iql: string) => client.post<IqlValidation>('/api/v1/iql/validate', { iql }),
 

@@ -33,5 +33,7 @@
   "pagination.loadMore": "더 보기",
   "pagination.itemCount": "{count}개",
   "action.loadMore": "더 보기",
-  "action.create": "만들기"
+  "action.create": "만들기",
+  "nav.search": "검색",
+  "nav.searchPlaceholder": "이슈·문서 검색"
 }

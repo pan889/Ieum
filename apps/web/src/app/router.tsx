@@ -16,6 +16,7 @@ import type { IssuesSearch } from '@/features/issues/urlState'
 import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
 import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
+import { SearchScreen } from '@/features/search/SearchScreen'
 
 import { AppShell } from './AppShell'
 
@@ -80,6 +81,30 @@ const tokensRoute = createRoute({
   component: ApiTokensScreen,
 })
 
+/** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
+export interface SearchParams {
+  q: string
+  /** 없으면 전체. `undefined` 를 넣어 종류 필터를 끌 수 있어야 한다. */
+  kind?: 'issue' | 'page' | undefined
+  offset: number
+}
+
+const searchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/search',
+  component: SearchScreen,
+  validateSearch: (search: Record<string, unknown>): SearchParams => {
+    const kind = search['kind']
+    const offset = Number(search['offset'])
+    return {
+      q: typeof search['q'] === 'string' ? search['q'] : '',
+      ...(kind === 'issue' || kind === 'page' ? { kind } : {}),
+      // 망가진 링크도 목록을 보여 준다. 숫자가 아니면 처음부터.
+      offset: Number.isInteger(offset) && offset > 0 ? offset : 0,
+    }
+  },
+})
+
 const wikiRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/wiki',
@@ -109,6 +134,7 @@ const routeTree = rootRoute.addChildren([
   boardsRoute,
   boardRoute,
   tokensRoute,
+  searchRoute,
   wikiRoute,
   spaceRoute,
   wikiPageRoute,

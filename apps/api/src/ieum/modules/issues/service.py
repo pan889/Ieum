@@ -22,7 +22,7 @@ from ieum.core.exceptions import (
     ValidationError,
 )
 from ieum.core.logging import get_logger
-from ieum.core.markdown import extract_mentions
+from ieum.core.markdown import extract_mentions, to_plaintext
 from ieum.core.markdown import normalize as normalize_markdown
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
@@ -62,6 +62,7 @@ from ieum.modules.issues.workflow import (
     evaluate_conditions,
 )
 from ieum.modules.org import contracts as org
+from ieum.modules.search import contracts as search
 
 log = get_logger(__name__)
 
@@ -477,6 +478,7 @@ class IssueService:
         )
         if issue.parent_id is not None:
             await recompute_ancestors(self._s, issue.id)
+        await self._reindex(issue, labels=labels)
         log.info("issue.created", issue_key=issue_key, actor=str(actor.user_id))
         return await self.to_view(issue)
 
@@ -584,6 +586,7 @@ class IssueService:
         # 진행률·추정·부모가 바뀌면 조상 계산이 달라진다.
         if any(c["field"] in {"progress", "estimate_minutes", "parent_id"} for c in diff):
             await recompute_ancestors(self._s, issue.id)
+        await self._reindex(issue)
         return await self.to_view(issue)
 
     async def archive(self, actor: Actor, issue_id: UUID) -> Issue:
@@ -609,6 +612,9 @@ class IssueService:
         issue.archived_at = utcnow()
         issue.version += 1
         await self._s.flush()
+        # 휴지통으로 간 이슈는 검색에서 빠진다. 남겨 두면 열 수 없는 결과가
+        # 목록에 뜬다.
+        await self._reindex(issue)
         # 아카이브된 자식은 롤업에서 빠진다. 취소한 일 때문에 부모가 영원히
         # 100% 가 안 되면 숫자를 아무도 안 믿는다.
         await recompute_ancestors(self._s, issue.id)
@@ -855,6 +861,20 @@ class IssueService:
 
     # ── 내부 ────────────────────────────────────────────────────
 
+    async def _reindex(self, issue: Issue, *, labels: list[str] | None = None) -> None:
+        """검색 색인을 원본과 같은 트랜잭션에서 맞춘다.
+
+        읽기 경로(`to_view`)에 넣지 않는다 — 목록을 그릴 때마다 색인에
+        쓰게 된다.
+        """
+        project = await org.get_project(self._s, issue.project_id)
+        await index_issue(
+            self._s,
+            issue,
+            project_key=project.key if project else "",
+            labels=labels if labels is not None else await self._labels.for_issue(issue.id),
+        )
+
     async def _require_issue(self, issue_id: UUID) -> Issue:
         issue = await self._issues.get(issue_id)
         if issue is None:
@@ -1097,6 +1117,49 @@ class IssueService:
             labels=await self._labels.for_issue(issue.id),
             custom_fields=await self._values.for_issue(issue.id),
         )
+
+
+async def index_issue(
+    session: AsyncSession, issue: Issue, *, project_key: str, labels: list[str] | None = None
+) -> None:
+    """이슈 하나를 검색 색인에 반영한다. 원본과 **같은 트랜잭션**이다.
+
+    워커로 미루면 방금 만든 이슈가 검색에 안 나온다. 색인이 실패해도 본업이
+    실패해서는 안 되지만, 여기서는 같은 트랜잭션이라 함께 롤백되는 편이
+    낫다 — 색인만 남아 유령 결과가 되는 것보다 낫다.
+
+    보안 레벨이 걸린 이슈는 볼 수 있는 주체를 함께 넣는다. 스코프만으로
+    거르면 검색이 보안 레벨을 우회하는 통로가 된다.
+    """
+    if issue.is_archived:
+        await search.remove_document(session, kind=search.ISSUE, entity_id=issue.id)
+        return
+
+    restricted: list[UUID] | None = None
+    if issue.security_level_id is not None:
+        level = await SecurityLevelRepository(session).get(issue.security_level_id)
+        if level is not None:
+            restricted = [
+                UUID(g["id"])
+                for g in level.grantees
+                if g.get("kind") in {"user", "group"} and g.get("id")
+            ]
+
+    body_parts = [issue.description or ""]
+    if labels:
+        body_parts.append(" ".join(labels))
+    await search.index_document(
+        session,
+        kind=search.ISSUE,
+        entity_id=issue.id,
+        scope_kind="project",
+        scope_id=issue.project_id,
+        ref=f"{project_key}-{issue.key_seq}",
+        title=issue.summary,
+        body=to_plaintext("\n\n".join(p for p in body_parts if p)),
+        restricted_to=restricted,
+        updated_at=issue.updated_at,
+    )
 
 
 class CommentService:

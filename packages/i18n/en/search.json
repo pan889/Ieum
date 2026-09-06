@@ -1,0 +1,12 @@
+{
+  "query": "Search",
+  "run": "Search",
+  "empty": "Type something to search issues and docs.",
+  "none": "Nothing matches “{query}”.",
+  "count": "{count, plural, one {# result} other {# results}}",
+  "range": "Showing {shown, number} of {total, number}",
+  "kind.all": "All",
+  "kind.issue": "Issue",
+  "kind.page": "Doc",
+  "results": "Results"
+}

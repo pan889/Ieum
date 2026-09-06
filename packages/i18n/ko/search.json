@@ -1,0 +1,12 @@
+{
+  "query": "검색",
+  "run": "찾기",
+  "empty": "찾을 말을 입력한다. 이슈와 문서를 함께 찾는다.",
+  "none": "“{query}” 에 맞는 것이 없다.",
+  "count": "{count, plural, other {#건}}",
+  "range": "{total, number}건 중 {shown, number}건",
+  "kind.all": "전체",
+  "kind.issue": "이슈",
+  "kind.page": "문서",
+  "results": "검색 결과"
+}

@@ -10,6 +10,7 @@ import issuesEn from '@ieum/i18n/en/issues.json'
 import markdownEn from '@ieum/i18n/en/markdown.json'
 import notificationsEn from '@ieum/i18n/en/notifications.json'
 import projectsEn from '@ieum/i18n/en/projects.json'
+import searchEn from '@ieum/i18n/en/search.json'
 import wikiEn from '@ieum/i18n/en/wiki.json'
 import authKo from '@ieum/i18n/ko/auth.json'
 import boardsKo from '@ieum/i18n/ko/boards.json'
@@ -19,6 +20,7 @@ import issuesKo from '@ieum/i18n/ko/issues.json'
 import markdownKo from '@ieum/i18n/ko/markdown.json'
 import notificationsKo from '@ieum/i18n/ko/notifications.json'
 import projectsKo from '@ieum/i18n/ko/projects.json'
+import searchKo from '@ieum/i18n/ko/search.json'
 import wikiKo from '@ieum/i18n/ko/wiki.json'
 
 export const SUPPORTED_LOCALES = ['en', 'ko'] as const
@@ -35,6 +37,7 @@ const resources = {
     notifications: notificationsEn,
     wiki: wikiEn,
     markdown: markdownEn,
+    search: searchEn,
   },
   ko: {
     common: commonKo,
@@ -46,6 +49,7 @@ const resources = {
     notifications: notificationsKo,
     wiki: wikiKo,
     markdown: markdownKo,
+    search: searchKo,
   },
 } as const
 
@@ -107,6 +111,7 @@ export async function initI18n(locale: Locale = detectLocale()): Promise<typeof 
         'notifications',
         'wiki',
         'markdown',
+        'search',
       ],
       interpolation: { escapeValue: false },
       returnNull: false,

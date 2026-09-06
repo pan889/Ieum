@@ -30,12 +30,20 @@ def _cmd_seed_fields() -> int:
     return asyncio.run(run_seed_fields())
 
 
+def _cmd_reindex() -> int:
+    """검색 색인을 다시 만든다. 멱등하다."""
+    from ieum.reindex import run_reindex
+
+    return asyncio.run(run_reindex())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ieum")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("openapi", help="OpenAPI 스키마 덤프")
     sub.add_parser("seed", help="초기 데이터 생성 (멱등)")
     sub.add_parser("seed-fields", help="데모용 커스텀 필드 정의 생성 (멱등)")
+    sub.add_parser("reindex", help="검색 색인 재생성 (멱등)")
 
     args = parser.parse_args(argv)
     match args.command:
@@ -45,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_seed()
         case "seed-fields":
             return _cmd_seed_fields()
+        case "reindex":
+            return _cmd_reindex()
         case _:  # pragma: no cover
             parser.error(f"알 수 없는 명령: {args.command}")
 

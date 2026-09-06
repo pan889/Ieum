@@ -11,6 +11,7 @@ from __future__ import annotations
 from markdown_it.token import Token
 
 from ieum.core.markdown.dialect import parser
+from ieum.core.markdown.directives import LEAF_NAMES, parse_leaf
 
 #: 평문 추출에서 통째로 버리는 블록. 검색 색인이 코드로 오염되지 않게 한다
 #: (wiki-markdown.md 10절 — 코드는 별도 필드로 색인한다).
@@ -54,6 +55,11 @@ def to_plaintext(text: str, *, include_code: bool = False) -> str:
 
 
 def _inline_text(token: Token) -> str:
+    # 리프 디렉티브는 매크로 호출이지 글이 아니다. 색인에 넣으면 `::toc`
+    # 로도 문서가 검색되고, 발췌에 매크로 원문이 뜬다 (wiki-markdown.md 10절).
+    directive = parse_leaf(token.content)
+    if directive is not None and directive.name in LEAF_NAMES:
+        return ""
     if not token.children:
         return token.content
     out: list[str] = []

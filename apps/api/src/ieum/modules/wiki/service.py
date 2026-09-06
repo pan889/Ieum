@@ -31,6 +31,7 @@ from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
+from ieum.modules.search import contracts as search
 from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import (
     MAX_DEPTH,
@@ -373,6 +374,7 @@ class PageService:
             version.front_matter = payload.front_matter
 
         await self._s.flush()
+        await self._reindex(page, space=space)
         log.info("wiki.page_created", actor=str(actor.user_id), page=str(page.id))
         return await self.to_view(page, space=space)
 
@@ -438,6 +440,7 @@ class PageService:
         if changed:
             page.version += 1
             await self._s.flush()
+            await self._reindex(page)
         return await self.to_view(page)
 
     async def restore(self, actor: Actor, page_id: UUID, number: int) -> PageView:
@@ -467,6 +470,7 @@ class PageService:
             page.current_version_id = version.id
         page.version += 1
         await self._s.flush()
+        await self._reindex(page)
         return await self.to_view(page)
 
     async def move(
@@ -526,6 +530,9 @@ class PageService:
             descendant.path = new_path + descendant.path[len(old_path) :]
 
         await self._s.flush()
+        # 경로가 바뀌면 후손의 경로도 바뀐다. 색인의 `ref` 가 옛 경로로
+        # 남으면 검색 결과에서 눌러도 없는 문서로 간다.
+        await self._reindex_subtree(page)
         log.info("wiki.page_moved", actor=str(actor.user_id), page=str(page.id), path=page.path)
         return await self.to_view(page)
 
@@ -536,11 +543,14 @@ class PageService:
             self._s, actor, perms.PAGE_DELETE, scope=Scope.space(page.space_id), subject=page
         )
         now = utcnow()
-        for node in await self._pages.subtree(page.space_id, page.path):
+        subtree = await self._pages.subtree(page.space_id, page.path)
+        for node in subtree:
             if node.archived_at is None:
                 node.archived_at = now
         page.version += 1
         await self._s.flush()
+        # 휴지통으로 간 문서는 검색에서 빠진다. 후손도 함께 갔으므로 함께.
+        await search.remove_documents(self._s, kind=search.PAGE, entity_ids=[n.id for n in subtree])
         return await self.to_view(page)
 
     # ── 제한 ────────────────────────────────────────────────────
@@ -573,6 +583,8 @@ class PageService:
                 )
             )
         await self._s.flush()
+        # 제한은 아래로 상속된다. 이 문서만 고치면 자식들이 계속 검색에 뜬다.
+        await self._reindex_subtree(page)
         return await self._restrictions.for_page(page.id)
 
     async def restrictions(self, actor: Actor, page_id: UUID) -> list[PageRestriction]:
@@ -717,6 +729,68 @@ class PageService:
                 )
             )
         return write_archive(files)
+
+    # ── 검색 색인 ───────────────────────────────────────────────
+
+    async def _reindex(self, page: Page, *, space: Space | None = None) -> None:
+        """문서 하나를 검색 색인에 반영한다. 원본과 **같은 트랜잭션**이다.
+
+        제한이 걸린 가지의 문서는 볼 수 있는 주체를 함께 넣는다. 스코프만
+        보면 검색이 제한을 우회하는 통로가 된다.
+        """
+        if page.is_archived or page.status != "published":
+            # 초안은 아직 아무에게도 보일 것이 아니다.
+            await search.remove_document(self._s, kind=search.PAGE, entity_id=page.id)
+            return
+
+        version = await self._current_version(page)
+        space = space or await self._spaces.get(page.space_id)
+        labels = await self._labels.for_page(page.id)
+        body = to_plaintext(version.body) if version else ""
+        if labels:
+            body = f"{body}\n\n{' '.join(labels)}"
+
+        await search.index_document(
+            self._s,
+            kind=search.PAGE,
+            entity_id=page.id,
+            scope_kind="space",
+            scope_id=page.space_id,
+            ref=f"{space.key}/{page.path}" if space else page.path,
+            title=page.title,
+            body=body,
+            restricted_to=await self._effective_viewers(page),
+            updated_at=page.updated_at,
+        )
+
+    async def _reindex_subtree(self, page: Page) -> None:
+        """가지 전체를 다시 색인한다.
+
+        경로가 바뀌거나 제한이 바뀌면 **후손까지** 달라진다. 제한은 아래로
+        상속되므로, 조상 하나만 고치고 말면 자식들이 계속 검색에 뜬다.
+        """
+        for node in await self._pages.subtree(page.space_id, page.path):
+            await self._reindex(node)
+
+    async def _effective_viewers(self, page: Page) -> list[UUID] | None:
+        """이 문서를 볼 수 있는 주체. 제한이 없으면 None.
+
+        제한은 가장 가까운 조상에서 물려받는다 (`_visible` 과 같은 규칙).
+        """
+        # 자기 자신도 본다. `_ancestor_paths` 는 조상만 준다.
+        paths = [*_ancestor_paths(page.path), page.path]
+        candidates = await self._pages.by_paths(page.space_id, paths)
+        by_path = {p.path: p for p in candidates}
+        rules = await self._restrictions.for_pages([p.id for p in candidates])
+        # 자기 자신부터 위로 올라가며 처음 만나는 view 제한을 쓴다.
+        for path in reversed(paths):
+            node = by_path.get(path)
+            if node is None:
+                continue
+            view_rules = [r for r in rules.get(node.id, []) if r.mode == "view"]
+            if view_rules:
+                return [r.principal_id for r in view_rules]
+        return None
 
     # ── 내부 ────────────────────────────────────────────────────
 

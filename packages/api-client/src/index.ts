@@ -53,6 +53,9 @@ export {
   type IqlValidation,
   type SavedFilter,
   type SearchApi,
+  type SearchHit,
+  type SearchKind,
+  type UnifiedSearchPage,
 } from './search'
 export {
   createBoardsApi,

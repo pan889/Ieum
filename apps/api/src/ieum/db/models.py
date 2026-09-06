@@ -55,6 +55,7 @@ from ieum.modules.org.models import (
     RoleAssignment,
     Workspace,
 )
+from ieum.modules.search.models import SearchDocument
 from ieum.modules.wiki.models import (
     Page,
     PageComment,
@@ -98,6 +99,7 @@ __all__ = [
     "Role",
     "RoleAssignment",
     "SavedFilter",
+    "SearchDocument",
     "SecurityLevel",
     "Space",
     "User",
