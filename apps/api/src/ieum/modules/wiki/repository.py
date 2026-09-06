@@ -14,6 +14,7 @@ from ieum.core.permissions import Acl
 from ieum.modules.wiki.models import (
     Page,
     PageComment,
+    PageDraft,
     PageLabel,
     PageRestriction,
     PageTemplate,
@@ -311,3 +312,25 @@ class PageTemplateRepository:
 
     async def delete(self, template: PageTemplate) -> None:
         await self._s.delete(template)
+
+
+class PageDraftRepository:
+    """저장하지 않은 편집. 사람마다 문서마다 하나."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get(self, page_id: UUID, author_id: UUID) -> PageDraft | None:
+        stmt = select(PageDraft).where(
+            PageDraft.page_id == page_id, PageDraft.author_id == author_id
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    def add(self, draft: PageDraft) -> PageDraft:
+        self._s.add(draft)
+        return draft
+
+    async def clear(self, page_id: UUID, author_id: UUID) -> None:
+        await self._s.execute(
+            delete(PageDraft).where(PageDraft.page_id == page_id, PageDraft.author_id == author_id)
+        )

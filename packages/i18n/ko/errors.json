@@ -128,5 +128,6 @@
   "wiki.comment_anchor_empty": "코멘트를 달 글을 선택한다.",
   "wiki.comment_parent_not_found": "그 코멘트가 사라졌다. 새로고침하고 다시 시도한다.",
   "wiki.comment_nesting_too_deep": "답글에는 답글을 달 수 없다. 원래 코멘트에 답글을 단다.",
-  "wiki.template_name_required": "템플릿 이름이 필요하다."
+  "wiki.template_name_required": "템플릿 이름이 필요하다.",
+  "wiki.copy_into_descendant": "자기 하위 문서 아래로 복사할 수 없다."
 }

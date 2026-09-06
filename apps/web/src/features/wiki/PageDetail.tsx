@@ -1,11 +1,11 @@
 /** 문서 한 편. 보기·편집·이력. */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PageNode, WikiPage } from '@ieum/api-client'
+import type { PageDraft, PageNode, WikiPage } from '@ieum/api-client'
 import { formatDateTime } from '@/features/issues/format'
 import { useUserNames } from '@/features/issues/hooks'
 import { wikiApi } from '@/shared/api'
@@ -19,6 +19,9 @@ import { Comments } from './Comments'
 import { VersionDiff } from './VersionDiff'
 import { ancestorsOf } from './tree'
 import { usePageHistory } from './hooks'
+
+/** 손을 멈추고 이만큼 지나면 저장한다. */
+const AUTOSAVE_DELAY_MS = 2000
 
 export interface PageDetailProps {
   page: WikiPage
@@ -39,6 +42,15 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
 
   const archive = useMutation({
     mutationFn: () => wikiApi.pages.archive(page.id),
+    onSuccess: onChanged,
+  })
+
+  const copy = useMutation({
+    mutationFn: () =>
+      wikiApi.pages.copy(page.id, {
+        new_parent_id: page.parent_id,
+        title: t('wiki:page.copySuffix', { title: page.title }),
+      }),
     onSuccess: onChanged,
   })
 
@@ -102,6 +114,7 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
 
       {archive.isError ? <Alert>{describeError(archive.error)}</Alert> : null}
       {exportMd.isError ? <Alert>{describeError(exportMd.error)}</Alert> : null}
+      {copy.isError ? <Alert>{describeError(copy.error)}</Alert> : null}
 
       {editing ? (
         <PageEditor
@@ -146,14 +159,24 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
       ) : null}
 
       {!page.archived_at && !editing ? (
-        <Button
-          variant="ghost"
-          className="self-start text-xs"
-          loading={archive.isPending}
-          onClick={() => { archive.mutate() }}
-        >
-          {t('wiki:page.archive')}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            className="text-xs"
+            loading={copy.isPending}
+            onClick={() => { copy.mutate() }}
+          >
+            {t('wiki:page.copy')}
+          </Button>
+          <Button
+            variant="ghost"
+            className="text-xs"
+            loading={archive.isPending}
+            onClick={() => { archive.mutate() }}
+          >
+            {t('wiki:page.archive')}
+          </Button>
+        </div>
       ) : null}
     </article>
   )
@@ -169,10 +192,69 @@ function PageEditor({
   onCancel: () => void
 }) {
   const { t } = useTranslation(['wiki', 'common'])
-  const [title, setTitle] = useState(page.title)
-  const [body, setBody] = useState(page.body)
+  const draft = useQuery({
+    queryKey: ['wiki', 'draft', page.id],
+    queryFn: () => wikiApi.pages.draft.get(page.id),
+    // 열 때 한 번만 본다. 자동 저장이 계속 덮어쓰므로 다시 받을 이유가 없다.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  })
+
+  // 초안을 먼저 물어보고 그 답으로 초기값을 정한다. 나중에 setState 로
+  // 덮으면 사용자가 이미 친 글자를 지운다.
+  if (draft.isPending) return <Card>{t('common:state.loading')}</Card>
+  return (
+    <PageEditorForm
+      key={page.id}
+      page={page}
+      draft={draft.data ?? null}
+      onSaved={onSaved}
+      onCancel={onCancel}
+    />
+  )
+}
+
+function PageEditorForm({
+  page,
+  draft,
+  onSaved,
+  onCancel,
+}: {
+  page: WikiPage
+  draft: PageDraft | null
+  onSaved: () => void
+  onCancel: () => void
+}) {
+  const { t } = useTranslation(['wiki', 'common'])
+  const queryClient = useQueryClient()
+  // 저장 안 한 편집이 있으면 그걸로 연다. 사람은 마지막으로 친 글을 기대한다.
+  const restored = draft !== null && draft.body !== page.body
+  const [title, setTitle] = useState(restored ? draft.title || page.title : page.title)
+  const [body, setBody] = useState(restored ? draft.body : page.body)
   const [message, setMessage] = useState('')
   const [labels, setLabels] = useState(page.labels.join(', '))
+  const [savedAt, setSavedAt] = useState<string | null>(restored ? draft.updated_at : null)
+
+  const autosave = useMutation({
+    mutationFn: () =>
+      wikiApi.pages.draft.save(page.id, {
+        title,
+        body,
+        base_version: page.version_number,
+      }),
+    onSuccess: (saved) => { setSavedAt(saved.updated_at) },
+  })
+
+  // 손을 멈추면 저장한다. 매 글자마다 보내면 요청이 폭주하고, 시간 간격만
+  // 두면 마지막 몇 글자를 잃는다.
+  const dirty = title !== page.title || body !== page.body
+  useEffect(() => {
+    if (!dirty) return
+    const timer = setTimeout(() => { autosave.mutate() }, AUTOSAVE_DELAY_MS)
+    return () => { clearTimeout(timer) }
+    // autosave 는 매 렌더 새 객체다. 의존에 넣으면 타이머가 끝없이 다시 선다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, body, dirty])
 
   const save = useMutation({
     mutationFn: () =>
@@ -188,7 +270,20 @@ function PageEditor({
         },
         page.version,
       ),
-    onSuccess: onSaved,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['wiki', 'draft', page.id] })
+      onSaved()
+    },
+  })
+
+  const discard = useMutation({
+    mutationFn: () => wikiApi.pages.draft.discard(page.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['wiki', 'draft', page.id] })
+      setTitle(page.title)
+      setBody(page.body)
+      setSavedAt(null)
+    },
   })
 
   return (
@@ -198,6 +293,19 @@ function PageEditor({
         onSubmit={(event) => { event.preventDefault(); save.mutate() }}
       >
         {save.isError ? <Alert>{describeError(save.error)}</Alert> : null}
+        {restored ? (
+          <p className="flex items-baseline gap-2 text-xs text-muted">
+            {t('wiki:draft.restored', { when: formatDateTime(draft.updated_at) })}
+            <Button
+              variant="ghost"
+              className="text-xs"
+              loading={discard.isPending}
+              onClick={() => { discard.mutate() }}
+            >
+              {t('wiki:draft.discard')}
+            </Button>
+          </p>
+        ) : null}
         <Field
           label={t('wiki:page.title')}
           required
@@ -217,13 +325,22 @@ function PageEditor({
           value={message}
           onChange={(e) => { setMessage(e.target.value) }}
         />
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Button type="submit" loading={save.isPending}>
             {t('common:action.save')}
           </Button>
           <Button variant="ghost" onClick={onCancel}>
             {t('common:action.cancel')}
           </Button>
+          {/* 자동 저장은 조용해야 한다. 다만 저장됐다는 사실은 보여야
+              사람이 창을 닫을 수 있다. */}
+          <span className="text-xs text-muted">
+            {autosave.isPending
+              ? t('wiki:draft.saving')
+              : savedAt
+                ? t('wiki:draft.savedAt', { when: formatDateTime(savedAt) })
+                : ''}
+          </span>
         </div>
       </form>
     </Card>

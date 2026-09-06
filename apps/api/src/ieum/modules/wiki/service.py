@@ -43,6 +43,7 @@ from ieum.modules.wiki.models import (
     SPACE_KINDS,
     Page,
     PageComment,
+    PageDraft,
     PageRestriction,
     PageTemplate,
     PageVersion,
@@ -57,6 +58,7 @@ from ieum.modules.wiki.portable import (
 )
 from ieum.modules.wiki.repository import (
     PageCommentRepository,
+    PageDraftRepository,
     PageLabelRepository,
     PageRepository,
     PageRestrictionRepository,
@@ -268,6 +270,7 @@ class PageService:
         self._versions = PageVersionRepository(session)
         self._labels = PageLabelRepository(session)
         self._restrictions = PageRestrictionRepository(session)
+        self._drafts = PageDraftRepository(session)
 
     # ── 조회 ────────────────────────────────────────────────────
 
@@ -450,6 +453,9 @@ class PageService:
             await self._s.flush()
             await self._reindex(page)
             await self._relink(page)
+            # 저장했으면 초안은 할 일을 다했다. 남기면 다음에 열 때
+            # "저장 안 한 편집이 있다" 고 거짓말을 한다.
+            await self._drafts.clear(page.id, actor.user_id)
         return await self.to_view(page)
 
     async def restore(self, actor: Actor, page_id: UUID, number: int) -> PageView:
@@ -757,6 +763,130 @@ class PageService:
         if old is None or new is None:
             raise NotFoundError("그 판을 찾을 수 없다.")
         return old, new, diff_lines(old.body, new.body)
+
+    # ── 초안(자동 저장) ─────────────────────────────────────────
+
+    async def save_draft(
+        self, actor: Actor, page_id: UUID, *, title: str, body: str, base_version: int | None
+    ) -> PageDraft:
+        """저장하지 않은 편집을 남긴다. 사람마다 문서마다 하나.
+
+        판을 만들지 않는다. 30초마다 판이 하나씩 쌓이면 "무엇이 언제
+        바뀌었나" 를 볼 수 없게 된다 — 이력이 오염되면 되돌리기도 못 쓴다.
+        """
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_EDIT, scope=Scope.space(page.space_id), subject=page
+        )
+        self._validate_body(body)
+
+        existing = await self._drafts.get(page.id, actor.user_id)
+        if existing is not None:
+            existing.title = title[:500]
+            existing.body = body
+            existing.base_version = base_version
+            return existing
+        return self._drafts.add(
+            PageDraft(
+                page_id=page.id,
+                author_id=actor.user_id,
+                title=title[:500],
+                body=body,
+                base_version=base_version,
+            )
+        )
+
+    async def get_draft(self, actor: Actor, page_id: UUID) -> PageDraft | None:
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
+        )
+        return await self._drafts.get(page.id, actor.user_id)
+
+    async def discard_draft(self, actor: Actor, page_id: UUID) -> None:
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
+        )
+        await self._drafts.clear(page.id, actor.user_id)
+
+    # ── 복사 ────────────────────────────────────────────────────
+
+    async def copy(
+        self, actor: Actor, page_id: UUID, *, new_parent_id: UUID | None, title: str | None = None
+    ) -> PageView:
+        """문서를 가지째 복사한다.
+
+        이력은 따라가지 않는다. 복사본은 새 문서고, 원본의 판 번호를 물려받으면
+        "v7 로 되돌리기" 가 원본의 v7 을 뜻하는지 복사본의 v7 을 뜻하는지
+        알 수 없어진다. 지금 본문 하나가 복사본의 v1 이다.
+        """
+        source = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_MOVE, scope=Scope.space(source.space_id), subject=source
+        )
+        await self._perms.require(
+            self._s, actor, perms.PAGE_CREATE, scope=Scope.space(source.space_id)
+        )
+
+        parent = await self._resolve_parent(source.space_id, new_parent_id)
+        if parent is not None and (
+            parent.id == source.id or parent.path.startswith(f"{source.path}/")
+        ):
+            raise ValidationError(
+                "자기 하위 문서 아래로 복사할 수 없다.", code="wiki.copy_into_descendant"
+            )
+
+        subtree = sorted(
+            await self._pages.subtree(source.space_id, source.path), key=lambda p: p.path
+        )
+        #: 원본 경로 → 복사본. 자식이 부모를 찾을 때 쓴다.
+        copies: dict[str, Page] = {}
+        root: PageView | None = None
+        for node in subtree:
+            if node.is_archived:
+                continue
+            target_parent = (
+                parent if node.id == source.id else copies.get(node.path.rsplit("/", 1)[0])
+            )
+            # 부모가 안 만들어졌으면(휴지통에 있었으면) 자식도 건너뛴다.
+            if node.id != source.id and target_parent is None:
+                continue
+            view = await self._copy_one(
+                actor,
+                node,
+                parent=target_parent,
+                title=title if node.id == source.id else None,
+            )
+            copies[node.path] = view.page
+            if node.id == source.id:
+                root = view
+        if root is None:
+            raise NotFoundError("복사할 문서를 찾을 수 없다.")
+        log.info(
+            "wiki.page_copied",
+            actor=str(actor.user_id),
+            source=str(source.id),
+            created=len(copies),
+        )
+        return root
+
+    async def _copy_one(
+        self, actor: Actor, node: Page, *, parent: Page | None, title: str | None
+    ) -> PageView:
+        version = await self._current_version(node)
+        return await self.create(
+            actor,
+            NewPage(
+                space_id=node.space_id,
+                title=title or node.title,
+                parent_id=parent.id if parent else None,
+                body=version.body if version else "",
+                front_matter=dict(version.front_matter) if version else {},
+                labels=await self._labels.for_page(node.id),
+                publish=node.status == "published",
+            ),
+        )
 
     # ── 이슈 링크 ───────────────────────────────────────────────
 

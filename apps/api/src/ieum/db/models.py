@@ -59,6 +59,7 @@ from ieum.modules.search.models import SearchDocument
 from ieum.modules.wiki.models import (
     Page,
     PageComment,
+    PageDraft,
     PageLabel,
     PageRestriction,
     PageTemplate,
@@ -90,6 +91,7 @@ __all__ = [
     "OutboxEvent",
     "Page",
     "PageComment",
+    "PageDraft",
     "PageLabel",
     "PageRestriction",
     "PageTemplate",

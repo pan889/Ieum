@@ -72,5 +72,11 @@
   "diff.hide": "Hide diff",
   "diff.between": "v{before, number} → v{after, number}",
   "diff.same": "No text changes.",
-  "diff.truncated": "Long document — showing the first part only."
+  "diff.truncated": "Long document — showing the first part only.",
+  "draft.restored": "Restored your unsaved edit from {when}.",
+  "draft.discard": "Discard it",
+  "draft.saving": "Saving…",
+  "draft.savedAt": "Draft saved {when}",
+  "page.copy": "Duplicate",
+  "page.copySuffix": "{title} (copy)"
 }

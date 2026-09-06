@@ -202,6 +202,34 @@ class PageComment(Entity):
     )
 
 
+class PageDraft(Entity):
+    """저장하지 않은 편집. 사람마다 문서마다 하나.
+
+    자동 저장을 `page_version` 으로 하지 않는 이유는 이력이 오염되기
+    때문이다. 30초마다 판이 하나씩 쌓이면 "무엇이 언제 바뀌었나" 를 볼 수
+    없게 된다. 초안은 따로 두고, 게시할 때만 판을 만든다.
+
+    브라우저 저장소에 두지 않는 이유는 기기를 옮기면 사라지기 때문이다.
+    긴 문서를 쓰다 노트북을 닫은 사람이 사무실 PC 에서 이어 쓸 수 있어야 한다.
+    """
+
+    __tablename__ = "page_draft"
+
+    page_id: Mapped[UUID] = mapped_column(ForeignKey("page.id", ondelete="CASCADE"), nullable=False)
+    author_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 초안을 뜨기 시작한 판. 그 사이 남이 고쳤으면 화면이 알려 준다.
+    base_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("page_id", "author_id", name="uq_page_draft_page_id_author_id"),
+        Index("ix_page_draft_page_id", "page_id"),
+    )
+
+
 class PageTemplate(Entity):
     __tablename__ = "page_template"
 

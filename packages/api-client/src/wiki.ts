@@ -190,6 +190,16 @@ export interface VersionDiff {
   truncated: boolean
 }
 
+
+export interface PageDraft {
+  page_id: string
+  title: string
+  body: string
+  /** 초안을 뜨기 시작한 판. 그 사이 남이 고쳤는지 화면이 판단한다. */
+  base_version: number | null
+  updated_at: string
+}
+
 const SPACES = '/api/v1/spaces'
 const PAGES = '/api/v1/pages'
 
@@ -246,7 +256,19 @@ export function createWikiApi(client: ApiClient) {
         client.patch<WikiPage>(`${PAGES}/${id}`, body, ifMatch(version)),
       move: (id: string, body: { new_parent_id: string | null; position?: number }) =>
         client.post<WikiPage>(`${PAGES}/${id}/move`, body),
+      /** 가지째 복사. 이력은 따라가지 않는다 — 복사본은 새 문서다. */
+      copy: (id: string, body: { new_parent_id?: string | null; title?: string } = {}) =>
+        client.post<WikiPage>(`${PAGES}/${id}/copy`, body),
       archive: (id: string) => client.post<WikiPage>(`${PAGES}/${id}/archive`),
+
+      draft: {
+        get: (id: string) => client.get<PageDraft | null>(`${PAGES}/${id}/draft`),
+        save: (
+          id: string,
+          body: { title: string; body: string; base_version?: number | null },
+        ) => client.put<PageDraft>(`${PAGES}/${id}/draft`, body),
+        discard: (id: string) => client.delete<void>(`${PAGES}/${id}/draft`),
+      },
 
       versions: (id: string) => client.get<PageVersionSummary[]>(`${PAGES}/${id}/versions`),
       version: (id: string, number: number) =>

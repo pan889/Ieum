@@ -27,11 +27,16 @@ export function Button({
   disabled,
   className,
   children,
+  // 폼 안의 button 은 기본이 submit 이다. 그래서 폼 안에 놓은 보조 버튼이
+  // 자기 일도 하고 저장도 해 버린다 — 초안 "버리기" 가 버리면서 저장했다.
+  // 제출하려는 버튼은 그렇다고 말하게 한다.
+  type = 'button',
   ...rest
 }: ButtonProps) {
   return (
     <button
       // 네이티브 button 을 쓴다. div+onClick 은 키보드로 못 쓴다.
+      type={type}
       className={clsx(
         'inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2',
         'text-sm font-medium transition-opacity',

@@ -82,6 +82,7 @@ export {
   type NewSpace,
   type NewWikiPage,
   type PageComment,
+  type PageDraft,
   type PageNode,
   type PageTemplate,
   type PageRestriction,

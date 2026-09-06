@@ -177,3 +177,84 @@ test('판 사이 차이를 줄 단위로 본다', async ({ page, consoleErrors }
 
   expect(consoleErrors).toEqual([])
 })
+
+test('저장하지 않고 떠나도 편집이 남는다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await page.goto(`/wiki/${key}`)
+  await createPage(page, 'Long doc')
+
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('한참 쓰다 만 글이다.')
+  // 손을 멈추면 저장한다.
+  await expect(page.getByText(/draft saved/i)).toBeVisible()
+
+  // 창을 닫았다 다시 연 셈이다.
+  await page.reload()
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await expect(page.getByText(/restored your unsaved edit/i)).toBeVisible()
+  await expect(page.getByLabel(/^body$/i)).toHaveValue('한참 쓰다 만 글이다.')
+
+  await page.getByRole('button', { name: /^save$/i }).click()
+  await expect(page.getByText('한참 쓰다 만 글이다.')).toBeVisible()
+
+  // 저장했으면 초안은 할 일을 다했다. 남기면 다음에 열 때 거짓말을 한다.
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await expect(page.getByText(/restored your unsaved edit/i)).toHaveCount(0)
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('초안을 버리면 저장된 본문으로 돌아간다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await page.goto(`/wiki/${key}`)
+  await createPage(page, 'Discardable')
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('저장된 본문')
+  await page.getByRole('button', { name: /^save$/i }).click()
+  await expect(page.getByText('저장된 본문')).toBeVisible()
+
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('버릴 편집')
+  await expect(page.getByText(/draft saved/i)).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByRole('button', { name: /discard it/i }).click()
+
+  await expect(page.getByLabel(/^body$/i)).toHaveValue('저장된 본문')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('문서를 가지째 복사한다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await page.goto(`/wiki/${key}`)
+  await createPage(page, 'Original')
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await page.getByLabel(/^body$/i).fill('원본 본문이다.')
+  await page.getByRole('button', { name: /^save$/i }).click()
+  await expect(page.getByText('원본 본문이다.')).toBeVisible()
+
+  await page.getByRole('link', { name: 'Original', exact: true }).first().hover()
+  await page.getByRole('button', { name: /new page under original/i }).click()
+  await page.getByLabel(/^title$/i).fill('Child')
+  await page.getByRole('button', { name: /^create$/i }).click()
+  await expect(page.getByRole('heading', { name: 'Child' })).toBeVisible()
+
+  await page.goto(`/wiki/${key}/original`)
+  await page.getByRole('button', { name: /^duplicate$/i }).click()
+
+  const copy = page.getByRole('link', { name: /Original \(copy\)/ })
+  await expect(copy).toBeVisible()
+  await copy.click()
+  // 본문과 하위 문서가 함께 따라온다.
+  await expect(page.getByText('원본 본문이다.')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Child' })).toHaveCount(2)
+
+  expect(consoleErrors).toEqual([])
+})

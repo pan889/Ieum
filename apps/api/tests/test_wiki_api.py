@@ -726,3 +726,160 @@ class TestVersionDiff:
             f"{BASE}/pages/{page['id']}/diff?before=0&after=1", headers=headers
         )
         assert r.status_code == 422
+
+
+class TestDrafts:
+    """자동 저장. 판을 만들지 않는다 — 30초마다 판이 쌓이면 이력을 못 읽는다."""
+
+    async def test_saving_a_draft_does_not_make_a_version(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+
+        before = await app_client.get(f"{BASE}/pages/{page['id']}/versions", headers=headers)
+        r = await app_client.put(
+            f"{BASE}/pages/{page['id']}/draft",
+            json={"title": "Runbook", "body": "쓰는 중", "base_version": 1},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        after = await app_client.get(f"{BASE}/pages/{page['id']}/versions", headers=headers)
+        assert len(after.json()) == len(before.json())
+
+    async def test_the_draft_comes_back(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+        await app_client.put(
+            f"{BASE}/pages/{page['id']}/draft",
+            json={"title": "T", "body": "쓰다 만 글"},
+            headers=headers,
+        )
+
+        r = await app_client.get(f"{BASE}/pages/{page['id']}/draft", headers=headers)
+        assert r.json()["body"] == "쓰다 만 글"
+
+    async def test_saving_twice_keeps_one_draft(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+        for text in ("하나", "둘", "셋"):
+            await app_client.put(
+                f"{BASE}/pages/{page['id']}/draft", json={"body": text}, headers=headers
+            )
+        r = await app_client.get(f"{BASE}/pages/{page['id']}/draft", headers=headers)
+        assert r.json()["body"] == "셋"
+
+    async def test_publishing_clears_the_draft(self, app_client: httpx.AsyncClient) -> None:
+        """남기면 다음에 열 때 "저장 안 한 편집이 있다" 고 거짓말을 한다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+        await app_client.put(
+            f"{BASE}/pages/{page['id']}/draft", json={"body": "쓰는 중"}, headers=headers
+        )
+
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}", json={"body": "다 썼다"}, headers=headers
+        )
+
+        r = await app_client.get(f"{BASE}/pages/{page['id']}/draft", headers=headers)
+        assert r.json() is None
+
+    async def test_discarding_removes_it(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+        await app_client.put(
+            f"{BASE}/pages/{page['id']}/draft", json={"body": "버릴 것"}, headers=headers
+        )
+        gone = await app_client.delete(f"{BASE}/pages/{page['id']}/draft", headers=headers)
+        assert gone.status_code == 204
+        r = await app_client.get(f"{BASE}/pages/{page['id']}/draft", headers=headers)
+        assert r.json() is None
+
+    async def test_no_draft_is_null_not_an_error(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+        r = await app_client.get(f"{BASE}/pages/{page['id']}/draft", headers=headers)
+        assert r.status_code == 200
+        assert r.json() is None
+
+
+class TestCopy:
+    async def test_copies_a_page_with_its_body(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "복사될 본문")
+
+        r = await app_client.post(
+            f"{BASE}/pages/{page['id']}/copy", json={"title": "Runbook (copy)"}, headers=headers
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["body"] == "복사될 본문"
+        assert r.json()["id"] != page["id"]
+
+    async def test_copies_the_whole_branch(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        parent = await _page(app_client, headers, space["id"], "부모")
+        child = await app_client.post(
+            f"{BASE}/pages",
+            json={
+                "space_id": space["id"],
+                "title": "Child",
+                "parent_id": parent["id"],
+                "body": "자식",
+                "publish": True,
+            },
+            headers=headers,
+        )
+        assert child.status_code == 201, child.text
+
+        copied = await app_client.post(
+            f"{BASE}/pages/{parent['id']}/copy", json={"title": "Copied"}, headers=headers
+        )
+        assert copied.status_code == 201, copied.text
+
+        tree = await app_client.get(f"{BASE}/spaces/{space['id']}/tree", headers=headers)
+        paths = {node["path"] for node in tree.json()}
+        assert "copied" in paths
+        assert "copied/child" in paths
+
+    async def test_the_copy_starts_its_own_history(self, app_client: httpx.AsyncClient) -> None:
+        """원본의 판 번호를 물려받으면 "v7 로 되돌리기" 가 어느 v7 인지 모른다."""
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        page = await _page(app_client, headers, space["id"], "처음")
+        await app_client.patch(
+            f"{BASE}/pages/{page['id']}", json={"body": "두 번째"}, headers=headers
+        )
+
+        copied = await app_client.post(
+            f"{BASE}/pages/{page['id']}/copy", json={"title": "Fresh"}, headers=headers
+        )
+        history = await app_client.get(
+            f"{BASE}/pages/{copied.json()['id']}/versions", headers=headers
+        )
+        assert [v["number"] for v in history.json()] == [1]
+
+    async def test_cannot_copy_into_its_own_descendant(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        parent = await _page(app_client, headers, space["id"], "부모")
+        child = await app_client.post(
+            f"{BASE}/pages",
+            json={"space_id": space["id"], "title": "Child", "parent_id": parent["id"]},
+            headers=headers,
+        )
+
+        r = await app_client.post(
+            f"{BASE}/pages/{parent['id']}/copy",
+            json={"new_parent_id": child.json()["id"]},
+            headers=headers,
+        )
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "wiki.copy_into_descendant"

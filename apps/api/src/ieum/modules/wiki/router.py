@@ -880,4 +880,82 @@ async def compare_versions(
     )
 
 
+# ── 초안(자동 저장)과 복사 ──────────────────────────────────────
+
+
+class DraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(default="", max_length=500)
+    body: str = Field(default="", max_length=MAX_BODY_LENGTH)
+    #: 초안을 뜨기 시작한 판. 그 사이 남이 고쳤는지 화면이 판단한다.
+    base_version: int | None = None
+
+
+class DraftResponse(BaseModel):
+    page_id: UUID
+    title: str
+    body: str
+    base_version: int | None
+    updated_at: datetime
+
+
+class CopyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_parent_id: UUID | None = None
+    #: 없으면 원본 제목 그대로. 같은 부모 밑이면 slug 에 번호가 붙는다.
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+@pages_router.get("/{page_id}/draft", response_model=DraftResponse | None)
+async def get_draft(
+    page_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> DraftResponse | None:
+    """저장하지 않은 내 편집. 없으면 null."""
+    draft = await PageService(session, permissions).get_draft(actor, page_id)
+    return DraftResponse.model_validate(draft, from_attributes=True) if draft else None
+
+
+@pages_router.put("/{page_id}/draft", response_model=DraftResponse)
+async def save_draft(
+    page_id: UUID,
+    body: DraftRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> DraftResponse:
+    draft = await PageService(session, permissions).save_draft(
+        actor, page_id, title=body.title, body=body.body, base_version=body.base_version
+    )
+    await session.commit()
+    return DraftResponse.model_validate(draft, from_attributes=True)
+
+
+@pages_router.delete("/{page_id}/draft", status_code=status.HTTP_204_NO_CONTENT)
+async def discard_draft(
+    page_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> None:
+    await PageService(session, permissions).discard_draft(actor, page_id)
+    await session.commit()
+
+
+@pages_router.post(
+    "/{page_id}/copy", response_model=PageResponse, status_code=status.HTTP_201_CREATED
+)
+async def copy_page(
+    page_id: UUID,
+    body: CopyRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> PageResponse:
+    """가지째 복사한다. 이력은 따라가지 않는다 — 복사본은 새 문서다."""
+    view = await PageService(session, permissions).copy(
+        actor, page_id, new_parent_id=body.new_parent_id, title=body.title
+    )
+    await session.commit()
+    return _page(view)
+
+
 __all__ = ["pages_router", "spaces_router"]

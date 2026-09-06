@@ -72,5 +72,11 @@
   "diff.hide": "비교 닫기",
   "diff.between": "v{before, number} → v{after, number}",
   "diff.same": "본문이 같다.",
-  "diff.truncated": "문서가 길어 앞부분만 보여 준다."
+  "diff.truncated": "문서가 길어 앞부분만 보여 준다.",
+  "draft.restored": "{when} 에 저장해 둔 편집을 불러왔다.",
+  "draft.discard": "버리기",
+  "draft.saving": "저장 중…",
+  "draft.savedAt": "초안 저장 {when}",
+  "page.copy": "복사",
+  "page.copySuffix": "{title} (복사본)"
 }
