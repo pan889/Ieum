@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { BulkEditResult } from '@ieum/api-client'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { searchApi } from '@/shared/api'
@@ -13,6 +14,8 @@ import { FilterBar } from './FilterBar'
 import { SavedFilters } from './SavedFilters'
 import { formatDate, formatRelative, priorityLabel, categoryTone } from './format'
 import { useUserNames } from './hooks'
+import type { GroupField, IssueGroup } from './grouping'
+import { GROUP_FIELDS, groupRows } from './grouping'
 import { toIql } from './iql'
 import type { IssuesSearch } from './urlState'
 import { isIqlMode, toFilters, toIqlSearch, toSearch } from './urlState'
@@ -54,6 +57,8 @@ export function IssuesScreen() {
    * 쌓이고 아직 실행하지도 않은 질의가 링크에 실린다. 실행할 때 URL 로 간다.
    */
   const [typing, setTyping] = useState<string | null>(null)
+  //: 그룹화는 URL 에 싣지 않는다. 질의가 아니라 보는 방식이다 — 컬럼 선택과 같다.
+  const [groupBy, setGroupBy] = useState<GroupField>('none')
 
   const filters = toFilters(search)
   const iqlMode = isIqlMode(search)
@@ -158,6 +163,19 @@ export function IssuesScreen() {
             {t(`issues:list.column.${id}`)}
           </Chip>
         ))}
+
+        <span className="ml-4 shrink-0 text-xs font-medium text-muted">
+          {t('issues:list.groupBy')}
+        </span>
+        {GROUP_FIELDS.map((field) => (
+          <Chip
+            key={field}
+            pressed={groupBy === field}
+            onClick={() => { setGroupBy(field) }}
+          >
+            {t(`issues:list.group.${field}`)}
+          </Chip>
+        ))}
       </div>
 
       {selected.length > 0 ? (
@@ -240,7 +258,23 @@ export function IssuesScreen() {
                 </tr>
               </thead>
               <tbody>
-                {results.data.items.map((issue) => {
+                {groupRows(results.data.items, groupBy).map((group) => (
+                  <Fragment key={group.key || '__all__'}>
+                    {groupBy === 'none' ? null : (
+                      <tr className="border-b border-border bg-surface-raised">
+                        <th
+                          scope="colgroup"
+                          colSpan={columns.length + 1}
+                          className="px-3 py-1.5 text-left text-xs font-medium"
+                        >
+                          {groupLabel(group, groupBy, t, names.data)}
+                          {/* 이 페이지에 이만큼. 전체 개수가 아니다 — 서버가
+                              그룹별로 세어 주지 않는다. */}
+                          <span className="ml-2 font-normal text-muted">{group.rows.length}</span>
+                        </th>
+                      </tr>
+                    )}
+                    {group.rows.map((issue) => {
                   const key = issue.key
                   return (
                     <tr key={issue.id} className="border-b border-border last:border-0">
@@ -298,6 +332,8 @@ export function IssuesScreen() {
                     </tr>
                   )
                 })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>
@@ -327,4 +363,24 @@ export function IssuesScreen() {
       )}
     </section>
   )
+}
+
+/**
+ * 그룹 머리글 문구.
+ *
+ * 서버가 이름을 주는 건 상태뿐이다. 담당자는 id 만 오므로 목록이 이미
+ * 조회해 둔 이름 맵을 쓰고, 우선순위는 번역이 필요하다.
+ */
+function groupLabel(
+  group: IssueGroup,
+  field: GroupField,
+  t: TFunction<['issues', 'common']>,
+  names: Map<string, string> | undefined,
+): string {
+  if (field === 'priority') return priorityLabel(Number(group.key))
+  if (field === 'assignee') {
+    if (group.key === '') return t('issues:detail.unassigned')
+    return names?.get(group.key) ?? '…'
+  }
+  return group.label || group.key
 }

@@ -31,5 +31,11 @@
   "settings.baseIqlHint": "AND-ed with every column.",
   "settings.save": "Save board",
   "settings.delete": "Delete board",
-  "settings.maxColumns": "A board can have up to {max} columns."
+  "settings.maxColumns": "A board can have up to {max} columns.",
+  "swimlane.label": "Swimlanes",
+  "swimlane.none": "None",
+  "swimlane.assignee": "Assignee",
+  "swimlane.priority": "Priority",
+  "swimlane.type": "Type",
+  "swimlane.truncatedHint": "Some lanes may be short — the column cap applies before splitting."
 }

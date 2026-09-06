@@ -31,10 +31,16 @@ export async function createProject(page: Page, key: string, name = 'E2E'): Prom
   await page.getByLabel(/find a project/i).fill('')
 }
 
-export async function createIssue(page: Page, key: string, summary: string): Promise<string> {
+export async function createIssue(
+  page: Page,
+  key: string,
+  summary: string,
+  options: { priority?: '1' | '2' | '3' | '4' | '5' } = {},
+): Promise<string> {
   await page.goto('/issues/new')
   await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
   await page.getByLabel(/^summary$/i).fill(summary)
+  if (options.priority) await page.getByLabel(/^priority$/i).selectOption(options.priority)
   await page.getByRole('button', { name: /create issue/i }).click()
   await page.waitForURL(new RegExp(`/issues/${key}-`))
   return page.url().split('/').pop() as string

@@ -83,6 +83,7 @@
   "iql.unsupported": "{feature} 는 아직 지원하지 않습니다 ({milestone} 예정).",
   "issues.filter_name_taken": "같은 이름의 필터가 이미 있습니다.",
   "issues.invalid_board_column": "보드 컬럼 정의가 올바르지 않습니다.",
+  "issues.invalid_swimlane": "지원하지 않는 스윔레인 기준입니다.",
   "issues.board_no_columns": "보드에는 컬럼이 하나 이상 필요합니다.",
   "issues.board_too_many_columns": "보드 컬럼은 {max}개까지 만들 수 있습니다.",
   "issues.board_duplicate_column": "컬럼 이름이 서로 겹칩니다.",

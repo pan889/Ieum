@@ -43,23 +43,35 @@ export interface BoardColumnContent {
   over_wip: boolean
 }
 
-export interface BoardContent {
-  board: Board
+/** 보드의 가로 줄. 스윔레인이 없으면 `key` 가 빈 레인 하나만 온다. */
+export interface BoardSwimlane {
+  key: string
+  /** priority 는 키("1"~"5")가 그대로 온다 — 번역은 화면이 한다. */
+  label: string
   columns: BoardColumnContent[]
 }
+
+export interface BoardContent {
+  board: Board
+  lanes: BoardSwimlane[]
+}
+
+/** 서버가 나눌 수 있는 기준. 다른 값은 요청 단계에서 거절된다. */
+export const SWIMLANE_FIELDS = ['assignee', 'priority', 'type'] as const
+export type SwimlaneField = (typeof SWIMLANE_FIELDS)[number]
 
 export interface NewBoard {
   project_id: string
   name: string
   columns: { name: string; iql: string; wip_limit?: number | null }[]
-  swimlane_by?: string | null
+  swimlane_by?: SwimlaneField | null
   base_iql?: string | null
 }
 
 export interface BoardPatch {
   name?: string
   columns?: { name: string; iql: string; wip_limit?: number | null }[]
-  swimlane_by?: string | null
+  swimlane_by?: SwimlaneField | null
   base_iql?: string | null
   clear_swimlane?: boolean
   clear_base_iql?: boolean

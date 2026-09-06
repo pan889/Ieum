@@ -160,5 +160,11 @@
   "filters.delete": "Delete {name}",
   "filters.needsQuery": "Pick a filter or write a query first.",
   "filters.copyLink": "Copy link",
-  "filters.linkCopied": "Link copied."
+  "filters.linkCopied": "Link copied.",
+  "list.groupBy": "Group",
+  "list.group.none": "None",
+  "list.group.status": "Status",
+  "list.group.assignee": "Assignee",
+  "list.group.priority": "Priority",
+  "list.group.project": "Project"
 }

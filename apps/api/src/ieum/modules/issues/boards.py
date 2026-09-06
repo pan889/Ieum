@@ -21,6 +21,7 @@ from ieum.core.context import Actor
 from ieum.core.exceptions import ConflictError, NotFoundError, ValidationError
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
+from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.iql.parser import parse
 from ieum.modules.issues.models import Board, Issue
@@ -35,6 +36,12 @@ COLUMN_PAGE_SIZE = 50
 #: IQL 에 프로젝트 키를 그대로 끼워 넣기 전에 확인한다. org 의 검증을
 #: 신뢰해서 생략하면, 키 형식이 언젠가 느슨해질 때 조용히 질의 주입이 된다.
 _SAFE_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,15}$")
+
+#: 스윔레인 기준. 카드에 이미 실려 있는 값만 쓴다 — 추가 조회 없이 나눈다.
+SWIMLANE_FIELDS = ("assignee", "priority", "type")
+
+#: 담당자 없음 레인의 키. 빈 문자열은 "스윔레인 없음" 이라 쓸 수 없다.
+NO_ASSIGNEE = "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +93,15 @@ class ColumnResult:
     over_wip: bool = False
 
 
+@dataclass(slots=True)
+class Swimlane:
+    """보드의 가로 줄. 스윔레인이 없으면 `key` 가 빈 문자열인 레인 하나뿐이다."""
+
+    key: str
+    label: str
+    columns: list[ColumnResult] = field(default_factory=list)
+
+
 class BoardService:
     def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
         self._s = session
@@ -105,6 +121,7 @@ class BoardService:
             self._s, actor, perms.BOARD_MANAGE, scope=Scope.project(project_id)
         )
         parsed = self._validate_columns(columns)
+        self._validate_swimlane(swimlane_by)
         if base_iql:
             parse(base_iql)
         await self._require_unique_name(project_id, name)
@@ -149,6 +166,7 @@ class BoardService:
         if clear_swimlane:
             board.swimlane_by = None
         elif swimlane_by is not None:
+            self._validate_swimlane(swimlane_by)
             board.swimlane_by = swimlane_by
         await self._s.flush()
         return board
@@ -174,14 +192,26 @@ class BoardService:
         )
         return list((await self._s.execute(stmt)).scalars().all())
 
-    async def load(self, actor: Actor, board_id: UUID) -> list[ColumnResult]:
-        """컬럼마다 IQL 을 돌려 이슈를 담는다.
+    async def load(self, actor: Actor, board_id: UUID) -> list[Swimlane]:
+        """컬럼마다 IQL 을 돌려 이슈를 담고, 스윔레인이 있으면 나눈다.
 
         컬럼 수만큼 질의가 나간다. 컬럼은 12개로 제한되고 각 질의가 인덱스를
         타므로 감당할 수 있다 — 한 번에 다 긁어와 메모리에서 나누면 페이지네이션과
         WIP 계산이 어긋난다.
+
+        스윔레인은 **여기서 더 조회하지 않고** 이미 받은 카드를 나눈다.
+        레인마다 컬럼 질의를 내면 12 곱하기 레인 수가 되고, 레인 수는 담당자
+        수만큼 늘어난다. 대신 컬럼 상한(`COLUMN_PAGE_SIZE`)이 나누기 **전에**
+        걸리므로, 잘린 컬럼에서는 레인 하나가 비어 보일 수 있다 — 그래서
+        `truncated` 를 레인마다 그대로 물려준다.
         """
         board = await self.get(actor, board_id)
+        columns = await self._load_columns(actor, board)
+        if not board.swimlane_by:
+            return [Swimlane(key="", label="", columns=columns)]
+        return await self._split(columns, board.swimlane_by)
+
+    async def _load_columns(self, actor: Actor, board: Board) -> list[ColumnResult]:
         scope_iql = await self._project_scope(board.project_id)
         search = SearchService(self._s, self._perms)
         issues = IssueService(self._s, self._perms)
@@ -209,6 +239,87 @@ class BoardService:
                 )
             )
         return results
+
+    async def _split(self, columns: list[ColumnResult], field_name: str) -> list[Swimlane]:
+        """받아 온 카드를 레인으로 나눈다."""
+        every = [view for column in columns for view in column.issues]
+        labels = await self._lane_labels(every, field_name)
+
+        # 카드가 한 장도 없는 레인은 만들지 않는다. 빈 줄만 늘어선 보드는
+        # 훑어보기 더 어렵다.
+        keys = {self._lane_key(view, field_name) for view in every}
+        lanes: list[Swimlane] = []
+        for key in self._order_keys(keys, field_name, labels):
+            lanes.append(
+                Swimlane(
+                    key=key,
+                    label=labels.get(key, key),
+                    columns=[
+                        ColumnResult(
+                            name=column.name,
+                            iql=column.iql,
+                            wip_limit=column.wip_limit,
+                            issues=[
+                                v for v in column.issues if self._lane_key(v, field_name) == key
+                            ],
+                            # WIP 은 **컬럼 전체** 기준이다. 레인별로 다시 세면
+                            # 나눠 놓은 것만으로 제한을 넘지 않은 것처럼 보인다.
+                            loaded=column.loaded,
+                            truncated=column.truncated,
+                            over_wip=column.over_wip,
+                        )
+                        for column in columns
+                    ],
+                )
+            )
+        return lanes
+
+    @staticmethod
+    def _lane_key(view: IssueView, field_name: str) -> str:
+        if field_name == "assignee":
+            return str(view.issue.assignee_id) if view.issue.assignee_id else NO_ASSIGNEE
+        if field_name == "priority":
+            return str(view.issue.priority)
+        return str(view.issue.type_id)
+
+    async def _lane_labels(self, views: list[IssueView], field_name: str) -> dict[str, str]:
+        if field_name == "assignee":
+            ids = [v.issue.assignee_id for v in views if v.issue.assignee_id]
+            users = await identity.get_users(self._s, ids)
+            labels = {str(uid): ref.display_name for uid, ref in users.items()}
+            labels[NO_ASSIGNEE] = ""
+            return labels
+        if field_name == "type":
+            return {str(v.issue.type_id): v.type_name for v in views}
+        # 우선순위 이름("가장 높음" 등)은 번역 대상이라 서버가 정할 게 아니다.
+        # 비워 두면 `_split` 이 키를 레이블로 쓴다 — 화면이 못 알아봐도
+        # 레인이 이름 없이 뜨지는 않는다.
+        return {}
+
+    @staticmethod
+    def _order_keys(keys: set[str], field_name: str, labels: dict[str, str]) -> list[str]:
+        if field_name == "priority":
+            # 1 이 가장 높다. 급한 것이 위로 온다.
+            return sorted(keys, key=int)
+
+        def sort_key(key: str) -> str:
+            label = labels.get(key)
+            # 이름이 없으면(레이블을 못 찾으면) 키로라도 안정적으로 정렬한다.
+            return (label or key).lower()
+
+        named = sorted((k for k in keys if k != NO_ASSIGNEE), key=sort_key)
+        # 담당자 없음은 맨 아래. 보통 아직 아무도 안 본 일이다.
+        return [*named, *(k for k in (NO_ASSIGNEE,) if k in keys)]
+
+    @staticmethod
+    def _validate_swimlane(field_name: str | None) -> None:
+        if field_name is None or field_name in SWIMLANE_FIELDS:
+            return
+        raise ValidationError(
+            "지원하지 않는 스윔레인 기준이다.",
+            code="issues.invalid_swimlane",
+            details={"field": field_name, "supported": list(SWIMLANE_FIELDS)},
+        )
 
     async def move(
         self,

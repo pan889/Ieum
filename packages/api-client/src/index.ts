@@ -63,7 +63,10 @@ export {
   type BoardContent,
   type BoardPatch,
   type BoardsApi,
+  type BoardSwimlane,
   type NewBoard,
+  type SwimlaneField,
+  SWIMLANE_FIELDS,
 } from './boards'
 export {
   createAttachmentsApi,

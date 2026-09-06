@@ -153,3 +153,33 @@ test('읽을 수 없는 기간은 저장을 막는다', async ({ page, consoleEr
 
   expect(consoleErrors).toEqual([])
 })
+
+test('목록을 우선순위로 묶는다', async ({ page, consoleErrors }) => {
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  await createIssue(page, key, 'grouped urgent', { priority: '1' })
+  await createIssue(page, key, 'grouped lazy', { priority: '5' })
+
+  await page.goto(`/issues?project=${key}`)
+  await expect(page.locator('tbody tr')).toHaveCount(2)
+
+  // "묶기" 줄의 우선순위 칩. 필터 칩에도 같은 이름이 있어 마지막 것을 쓴다.
+  await page.getByRole('button', { name: /^priority$/i }).last().click()
+
+  const headers = page.locator('th[scope="colgroup"]')
+  await expect(headers).toHaveCount(2)
+  // 1 이 가장 높다. 급한 것이 위로 온다.
+  await expect(headers.first()).toContainText('Highest')
+  await expect(headers.last()).toContainText('Lowest')
+
+  // 묶어도 행이 사라지지 않는다.
+  await expect(page.getByRole('cell', { name: 'grouped urgent' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'grouped lazy' })).toBeVisible()
+
+  // 끄면 머리글이 사라진다.
+  await page.getByRole('button', { name: /^none$/i }).last().click()
+  await expect(headers).toHaveCount(0)
+
+  expect(consoleErrors).toEqual([])
+})

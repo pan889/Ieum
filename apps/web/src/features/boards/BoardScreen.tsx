@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
-import type { BoardCard, BoardColumnContent } from '@ieum/api-client'
+import type { Board, BoardCard, BoardColumnContent, BoardSwimlane } from '@ieum/api-client'
+import { SWIMLANE_FIELDS } from '@ieum/api-client'
 import clsx from 'clsx'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -9,7 +10,7 @@ import { priorityLabel } from '@/features/issues/format'
 import { useUserNames, useWorkflowStates } from '@/features/issues/hooks'
 import { boardsApi, issuesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Select } from '@/shared/ui/primitives'
 
 import { columnTarget, stateFitsColumn } from './columnTarget'
 
@@ -19,6 +20,8 @@ interface PendingMove {
    * 어느 컬럼으로 떨어뜨렸는지. null 이면 카드의 "상태 변경" 버튼으로 열린
    * 것이다 — 그때는 목적지가 없으니 **가능한 전이 전부**를 보여야 한다.
    * 카드가 지금 있는 컬럼을 목적지로 넣으면 제자리 전이만 남는다.
+   *
+   * 스윔레인이 있어도 컬럼 순서는 레인마다 같으므로 인덱스 하나면 된다.
    */
   columnIndex: number | null
 }
@@ -83,22 +86,24 @@ export function BoardScreen() {
           {t('boards:list.title')}
         </Link>
         <h1 className="text-xl font-semibold">{board.name}</h1>
+        <SwimlanePicker board={board} className="ml-auto" />
       </header>
 
       {moveError ? <Alert>{moveError}</Alert> : null}
 
-      <div className="flex gap-3 overflow-x-auto pb-2">
-        {content.data.columns.map((column, index) => (
-          <Column
-            key={column.name}
-            column={column}
-            isDropTarget={dragging !== null}
-            onDragStartCard={setDragging}
-            onDrop={() => { if (dragging) drop(index, dragging) }}
-            onPickMove={(card) => { setPending({ card, columnIndex: null }); }}
-          />
-        ))}
-      </div>
+      {content.data.lanes.map((lane) => (
+        <Lane
+          key={lane.key}
+          lane={lane}
+          board={board}
+          // 스윔레인이 없으면 레인이 하나뿐이고 머리글도 필요 없다.
+          showHeader={content.data.lanes.length > 1 || lane.key !== ''}
+          isDropTarget={dragging !== null}
+          onDragStartCard={setDragging}
+          onDropIn={(index) => { if (dragging) drop(index, dragging) }}
+          onPickMove={(card) => { setPending({ card, columnIndex: null }); }}
+        />
+      ))}
 
       {pending ? (
         <MoveDialog
@@ -106,7 +111,8 @@ export function BoardScreen() {
           column={
             pending.columnIndex === null
               ? null
-              : (content.data.columns[pending.columnIndex] as BoardColumnContent)
+              : // 컬럼 정의는 레인마다 같으니 첫 레인에서 꺼내면 된다.
+                (content.data.lanes[0]?.columns[pending.columnIndex] ?? null)
           }
           stateById={stateById}
           pending={move.isPending}
@@ -115,6 +121,112 @@ export function BoardScreen() {
         />
       ) : null}
     </section>
+  )
+}
+
+/**
+ * 스윔레인 기준 선택.
+ *
+ * 보드 설정이라 바꾸면 그 보드를 보는 **모두**에게 적용된다(`board.swimlane_by`).
+ * 보드 관리 권한이 필요하므로 없는 사람에게는 서버가 거절하고, 그 사실을
+ * 그대로 보여 준다 — 조용히 되돌아가면 눌린 게 안 눌린 줄 안다.
+ */
+function SwimlanePicker({ board, className }: { board: Board; className?: string }) {
+  const { t } = useTranslation(['boards'])
+  const queryClient = useQueryClient()
+
+  const change = useMutation({
+    mutationFn: (field: string) =>
+      boardsApi.update(
+        board.id,
+        field === ''
+          ? { clear_swimlane: true }
+          : { swimlane_by: field as (typeof SWIMLANE_FIELDS)[number] },
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['boards', 'content', board.id] }),
+  })
+
+  return (
+    <div className={clsx('flex flex-col items-end gap-1', className)}>
+      <Select
+        label={t('boards:swimlane.label')}
+        className="py-1 text-xs"
+        value={board.swimlane_by ?? ''}
+        onChange={(e) => { change.mutate(e.target.value) }}
+      >
+        <option value="">{t('boards:swimlane.none')}</option>
+        {SWIMLANE_FIELDS.map((field) => (
+          <option key={field} value={field}>{t(`boards:swimlane.${field}`)}</option>
+        ))}
+      </Select>
+      {change.isError ? <Alert>{describeError(change.error)}</Alert> : null}
+    </div>
+  )
+}
+
+/** 스윔레인 한 줄. 컬럼은 레인마다 같은 순서로 반복된다. */
+function Lane({
+  lane,
+  board,
+  showHeader,
+  isDropTarget,
+  onDragStartCard,
+  onDropIn,
+  onPickMove,
+}: {
+  lane: BoardSwimlane
+  board: Board
+  showHeader: boolean
+  isDropTarget: boolean
+  onDragStartCard: (card: BoardCard) => void
+  onDropIn: (columnIndex: number) => void
+  onPickMove: (card: BoardCard) => void
+}) {
+  const count = lane.columns.reduce((sum, column) => sum + column.issues.length, 0)
+
+  return (
+    <div className="flex flex-col gap-2">
+      {showHeader ? <LaneHeader lane={lane} field={board.swimlane_by} count={count} /> : null}
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {lane.columns.map((column, index) => (
+          <Column
+            key={column.name}
+            column={column}
+            isDropTarget={isDropTarget}
+            onDragStartCard={onDragStartCard}
+            onDrop={() => { onDropIn(index) }}
+            onPickMove={onPickMove}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function LaneHeader({
+  lane,
+  field,
+  count,
+}: {
+  lane: BoardSwimlane
+  field: string | null
+  count: number
+}) {
+  const { t } = useTranslation(['boards', 'issues'])
+  // 우선순위 이름은 서버가 번역하지 않는다. 담당자 없음도 여기서 붙인다.
+  const label =
+    field === 'priority'
+      ? priorityLabel(Number(lane.key))
+      : lane.key === 'none'
+        ? t('issues:detail.unassigned')
+        : lane.label
+
+  return (
+    <h2 className="flex items-baseline gap-2 border-b border-border pb-1 text-sm font-medium">
+      {label}
+      <span className="text-xs font-normal text-muted">{count}</span>
+    </h2>
   )
 }
 
@@ -159,9 +271,12 @@ function Column({
           className={clsx('text-xs', column.over_wip ? 'font-medium text-danger' : 'text-muted')}
           title={column.over_wip ? t('boards:column.overWip') : undefined}
         >
+          {/* 눈에 보이는 장수를 센다. 스윔레인이 있으면 `loaded`(컬럼 전체)
+              와 다르고, 1장만 보이는데 "3장" 이라고 하면 틀린 말이다.
+              WIP 판정은 그대로 컬럼 전체 기준이다. */}
           {column.truncated
-            ? t('boards:column.truncated', { count: column.loaded })
-            : t('boards:column.count', { count: column.loaded })}
+            ? t('boards:column.truncated', { count: column.issues.length })
+            : t('boards:column.count', { count: column.issues.length })}
           {column.wip_limit !== null
             ? ` · ${t('boards:column.wip', { limit: column.wip_limit })}`
             : ''}

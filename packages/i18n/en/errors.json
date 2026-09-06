@@ -83,6 +83,7 @@
   "iql.unsupported": "{feature} isn't supported yet — it's planned for {milestone}.",
   "issues.filter_name_taken": "You already have a filter with that name.",
   "issues.invalid_board_column": "That board column isn't valid.",
+  "issues.invalid_swimlane": "That swimlane grouping isn't supported.",
   "issues.board_no_columns": "A board needs at least one column.",
   "issues.board_too_many_columns": "A board can have up to {max} columns.",
   "issues.board_duplicate_column": "Two columns have the same name.",

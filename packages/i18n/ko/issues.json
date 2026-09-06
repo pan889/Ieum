@@ -160,5 +160,11 @@
   "filters.delete": "{name} 삭제",
   "filters.needsQuery": "필터를 고르거나 질의를 먼저 쓰세요.",
   "filters.copyLink": "링크 복사",
-  "filters.linkCopied": "링크를 복사했습니다."
+  "filters.linkCopied": "링크를 복사했습니다.",
+  "list.groupBy": "묶기",
+  "list.group.none": "없음",
+  "list.group.status": "상태",
+  "list.group.assignee": "담당자",
+  "list.group.priority": "우선순위",
+  "list.group.project": "프로젝트"
 }

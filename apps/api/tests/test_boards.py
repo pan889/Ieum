@@ -22,7 +22,12 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import User
 from ieum.modules.issues import permissions as perms
-from ieum.modules.issues.boards import DEFAULT_COLUMNS, MAX_COLUMNS, BoardService
+from ieum.modules.issues.boards import (
+    DEFAULT_COLUMNS,
+    MAX_COLUMNS,
+    BoardService,
+    ColumnResult,
+)
 from ieum.modules.issues.models import (
     IssueType,
     Workflow,
@@ -151,9 +156,19 @@ async def make_issue(
     project: Project,
     issue_type: IssueType,
     summary: str,
+    *,
+    assignee_id: UUID | None = None,
+    priority: int = 3,
 ) -> UUID:
     view = await IssueService(session, permissions).create(
-        actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary=summary)
+        actor,
+        NewIssue(
+            project_id=project.id,
+            type_id=issue_type.id,
+            summary=summary,
+            assignee_id=assignee_id,
+            priority=priority,
+        ),
     )
     return view.issue.id
 
@@ -295,6 +310,18 @@ class TestValidation:
             await service.create(actor, project_id=project.id, name="B", columns=DEFAULT_COLUMNS)
 
 
+async def load_columns(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    board_id: UUID,
+) -> list[ColumnResult]:
+    """스윔레인이 없는 보드의 컬럼. 레인 하나만 오는 게 맞는지도 함께 본다."""
+    lanes = await BoardService(session, permissions).load(actor, board_id)
+    assert [lane.key for lane in lanes] == [""]
+    return lanes[0].columns
+
+
 class TestLoad:
     async def test_splits_issues_by_column(
         self,
@@ -316,7 +343,7 @@ class TestLoad:
         board = await BoardService(session, permissions).create(
             actor, project_id=project.id, name="Main", columns=DEFAULT_COLUMNS
         )
-        columns = await BoardService(session, permissions).load(actor, board.id)
+        columns = await load_columns(session, permissions, actor, board.id)
 
         assert [c.name for c in columns] == ["To Do", "In Progress", "Done"]
         assert [v.issue.id for v in columns[0].issues] == [todo]
@@ -347,7 +374,7 @@ class TestLoad:
             name="Everything",
             columns=[{"name": "All", "iql": ""}],
         )
-        columns = await BoardService(session, permissions).load(actor, board.id)
+        columns = await load_columns(session, permissions, actor, board.id)
         assert [v.issue.id for v in columns[0].issues] == [mine]
 
     async def test_hides_archived_issues(
@@ -367,7 +394,7 @@ class TestLoad:
         board = await BoardService(session, permissions).create(
             actor, project_id=project.id, name="Main", columns=[{"name": "All", "iql": ""}]
         )
-        columns = await BoardService(session, permissions).load(actor, board.id)
+        columns = await load_columns(session, permissions, actor, board.id)
         assert [v.issue.id for v in columns[0].issues] == [alive]
 
     async def test_flags_wip_breach(
@@ -388,11 +415,177 @@ class TestLoad:
             name="Main",
             columns=[{"name": "All", "iql": "", "wip_limit": 2}],
         )
-        column = (await BoardService(session, permissions).load(actor, board.id))[0]
+        column = (await load_columns(session, permissions, actor, board.id))[0]
         assert column.loaded == 3
         assert column.over_wip is True
         assert column.truncated is False
 
+
+class TestSwimlanes:
+    async def test_no_swimlane_gives_one_blank_lane(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        await make_issue(session, permissions, actor, project, issue_type, "one")
+        board = await BoardService(session, permissions).create(
+            actor,
+            project_id=project.id,
+            name="Plain",
+            columns=[{"name": "All", "iql": ""}],
+        )
+        lanes = await BoardService(session, permissions).load(actor, board.id)
+        assert [(lane.key, lane.label) for lane in lanes] == [("", "")]
+
+    async def test_splits_by_assignee_with_unassigned_last(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        await make_issue(
+            session, permissions, actor, project, issue_type, "mine", assignee_id=user.id
+        )
+        await make_issue(session, permissions, actor, project, issue_type, "nobody's")
+
+        board = await BoardService(session, permissions).create(
+            actor,
+            project_id=project.id,
+            name="By assignee",
+            columns=[{"name": "All", "iql": ""}],
+            swimlane_by="assignee",
+        )
+        lanes = await BoardService(session, permissions).load(actor, board.id)
+
+        # 담당자 없음은 맨 아래. 보통 아직 아무도 안 본 일이다.
+        assert [lane.key for lane in lanes] == [str(user.id), "none"]
+        assert lanes[0].label == user.display_name
+        assert [v.issue.summary for v in lanes[0].columns[0].issues] == ["mine"]
+        assert [v.issue.summary for v in lanes[1].columns[0].issues] == ["nobody's"]
+
+    async def test_splits_by_priority_highest_first(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        await make_issue(session, permissions, actor, project, issue_type, "low", priority=5)
+        await make_issue(session, permissions, actor, project, issue_type, "high", priority=1)
+
+        board = await BoardService(session, permissions).create(
+            actor,
+            project_id=project.id,
+            name="By priority",
+            columns=[{"name": "All", "iql": ""}],
+            swimlane_by="priority",
+        )
+        lanes = await BoardService(session, permissions).load(actor, board.id)
+        # 1 이 가장 높다. 급한 것이 위로 온다.
+        assert [lane.key for lane in lanes] == ["1", "5"]
+        # 우선순위 이름("가장 높음" 등)은 번역 대상이라 서버가 정하지 않는다.
+        # 대신 키를 그대로 준다 — 화면이 못 알아봐도 빈 줄로 보이진 않는다.
+        assert [lane.label for lane in lanes] == ["1", "5"]
+
+    async def test_empty_lanes_are_not_created(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """빈 줄만 늘어선 보드는 훑어보기 더 어렵다."""
+        actor = await full_access(session, user, project)
+        await make_issue(session, permissions, actor, project, issue_type, "only one", priority=2)
+        board = await BoardService(session, permissions).create(
+            actor,
+            project_id=project.id,
+            name="Sparse",
+            columns=[{"name": "All", "iql": ""}],
+            swimlane_by="priority",
+        )
+        lanes = await BoardService(session, permissions).load(actor, board.id)
+        assert [lane.key for lane in lanes] == ["2"]
+
+    async def test_wip_stays_column_wide(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """레인별로 다시 세면 나눠 놓은 것만으로 제한을 안 넘은 것처럼 보인다."""
+        actor = await full_access(session, user, project)
+        await make_issue(session, permissions, actor, project, issue_type, "a", priority=1)
+        await make_issue(session, permissions, actor, project, issue_type, "b", priority=2)
+        await make_issue(session, permissions, actor, project, issue_type, "c", priority=3)
+
+        board = await BoardService(session, permissions).create(
+            actor,
+            project_id=project.id,
+            name="WIP",
+            columns=[{"name": "All", "iql": "", "wip_limit": 2}],
+            swimlane_by="priority",
+        )
+        lanes = await BoardService(session, permissions).load(actor, board.id)
+        assert len(lanes) == 3
+        # 레인마다 카드는 하나뿐이지만 컬럼 전체로는 3장이라 제한을 넘었다.
+        for lane in lanes:
+            assert len(lane.columns[0].issues) == 1
+            assert lane.columns[0].loaded == 3
+            assert lane.columns[0].over_wip is True
+
+    async def test_unknown_swimlane_field_rejected(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+    ) -> None:
+        """저장되면 보드를 열 때 터진다. 저장 시점에 막는다."""
+        actor = await full_access(session, user, project)
+        with pytest.raises(ValidationError) as exc:
+            await BoardService(session, permissions).create(
+                actor,
+                project_id=project.id,
+                name="Bad",
+                columns=[{"name": "All", "iql": ""}],
+                swimlane_by="epic",
+            )
+        assert exc.value.code == "issues.invalid_swimlane"
+
+    async def test_swimlane_can_be_cleared(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        service = BoardService(session, permissions)
+        board = await service.create(
+            actor,
+            project_id=project.id,
+            name="Toggle",
+            columns=[{"name": "All", "iql": ""}],
+            swimlane_by="assignee",
+        )
+        cleared = await service.update(actor, board.id, clear_swimlane=True)
+        assert cleared.swimlane_by is None
+
+
+class TestLoadPermissions:
     async def test_viewer_without_issue_view_cannot_open(
         self,
         session: AsyncSession,

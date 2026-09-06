@@ -31,5 +31,11 @@
   "settings.baseIqlHint": "모든 컬럼에 AND 로 붙습니다.",
   "settings.save": "보드 저장",
   "settings.delete": "보드 삭제",
-  "settings.maxColumns": "보드 컬럼은 {max}개까지 만들 수 있습니다."
+  "settings.maxColumns": "보드 컬럼은 {max}개까지 만들 수 있습니다.",
+  "swimlane.label": "스윔레인",
+  "swimlane.none": "없음",
+  "swimlane.assignee": "담당자",
+  "swimlane.priority": "우선순위",
+  "swimlane.type": "유형",
+  "swimlane.truncatedHint": "컬럼 상한이 나누기 전에 걸려서 일부 레인이 짧게 보일 수 있습니다."
 }

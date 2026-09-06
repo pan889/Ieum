@@ -56,3 +56,48 @@ test('WIP 제한을 넘기면 컬럼이 알려준다', async ({ page, consoleErr
 
   expect(consoleErrors).toEqual([])
 })
+
+test('스윔레인으로 나누면 컬럼이 레인마다 반복된다', async ({ page, consoleErrors }) => {
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  await createIssue(page, key, 'urgent one', { priority: '1' })
+  await createIssue(page, key, 'lazy one', { priority: '5' })
+
+  await createBoard(page, key, 'Lanes')
+  // 스윔레인이 없으면 컬럼 머리글 셋뿐이다.
+  await expect(page.locator('h2')).toHaveCount(3)
+
+  await page.getByLabel(/swimlanes/i).selectOption('priority')
+
+  // 레인 둘 × 컬럼 셋 + 레인 머리글 둘.
+  await expect(page.getByRole('heading', { name: /^Highest/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /^Lowest/ })).toBeVisible()
+  await expect(page.locator('h2')).toHaveCount(8)
+
+  // 카드는 자기 레인에만 있다.
+  const highest = page.locator('div').filter({ hasText: /^Highest/ }).first()
+  await expect(highest.getByText('urgent one')).toBeVisible()
+
+  // 다시 끄면 원래대로.
+  await page.getByLabel(/swimlanes/i).selectOption('')
+  await expect(page.locator('h2')).toHaveCount(3)
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('빈 레인은 만들지 않는다', async ({ page, consoleErrors }) => {
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  await createIssue(page, key, 'only medium', { priority: '3' })
+
+  await createBoard(page, key, 'Sparse')
+  await page.getByLabel(/swimlanes/i).selectOption('priority')
+
+  // 우선순위는 다섯 단계지만 쓰인 건 하나다. 빈 줄만 늘어서면 더 못 본다.
+  await expect(page.getByRole('heading', { name: /^Medium/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /^Highest/ })).toBeHidden()
+
+  expect(consoleErrors).toEqual([])
+})

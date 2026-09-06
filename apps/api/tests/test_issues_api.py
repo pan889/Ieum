@@ -130,7 +130,10 @@ class TestBoardRoutes:
 
         content = await app_client.get(f"{BASE}/boards/{board_id}/content", headers=headers)
         assert content.status_code == 200, content.text
-        columns = content.json()["columns"]
+        lanes = content.json()["lanes"]
+        # 스윔레인이 없으면 키가 빈 레인 하나만 온다.
+        assert [lane["key"] for lane in lanes] == [""]
+        columns = lanes[0]["columns"]
         assert [c["loaded"] for c in columns] == [1, 0]
         assert columns[0]["issues"][0]["key"] == issue["key"]
 
@@ -148,8 +151,8 @@ class TestBoardRoutes:
         assert moved.json()["state_category"] == "in_progress"
 
         after = (await app_client.get(f"{BASE}/boards/{board_id}/content", headers=headers)).json()[
-            "columns"
-        ]
+            "lanes"
+        ][0]["columns"]
         assert [c["loaded"] for c in after] == [0, 1]
 
     async def test_move_with_stale_version_conflicts(self, app_client: httpx.AsyncClient) -> None:
