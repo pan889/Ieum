@@ -4,6 +4,7 @@
   "issue.transitioned": "{key} 상태가 {state} 로 바뀜: {summary}",
   "issue.commented": "{key} 에 새 코멘트: {summary}",
   "issue.assigned": "{key} 가 나에게 할당됨: {summary}",
+  "issue.mentioned": "{key} — 회원님이 언급되었습니다: {summary}",
   "list.title": "알림",
   "list.empty": "모두 확인했습니다",
   "list.unreadCount": "읽지 않음 {count}개",

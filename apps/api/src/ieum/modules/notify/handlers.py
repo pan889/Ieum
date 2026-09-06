@@ -29,6 +29,9 @@ from ieum.modules.notify.service import (
 
 log = get_logger(__name__)
 
+#: 멘션 알림 종류. 워처 알림과 따로 두어 사용자가 따로 끌 수 있게 한다.
+MENTION_KIND = "issue.mentioned"
+
 #: 이벤트 타입 → (알림 종류, 제목 키). 여기 없는 이벤트는 알림을 만들지 않는다.
 ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     "issue.created": ("issue.created", "notifications:issue.created"),
@@ -60,29 +63,55 @@ async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> li
     if envelope.event_type == "issue.commented" and envelope.get("is_internal"):
         return []
 
-    recipients = await _recipients(ctx, envelope)
-    if not recipients:
+    watchers = await _recipients(ctx, envelope)
+    # 멘션은 issues 가 이미 볼 권한을 확인해서 실어 보낸다 (notify 는 이슈
+    # ACL 을 못 본다). 본인이 자기를 멘션한 건 알릴 필요가 없다.
+    mentioned = {uid for uid in envelope.uuid_list("mentioned_ids") if uid != actor_id}
+    # 멘션된 사람에게는 멘션 알림 하나만 간다. 워처이기도 하다고 두 번 보내면
+    # 같은 일로 알림이 두 개 쌓인다.
+    watchers -= mentioned
+    if not watchers and not mentioned:
         return []
 
     issue_key = str(envelope.get("issue_key", ""))
+    params = {
+        "key": issue_key,
+        "summary": str(envelope.get("summary", "")),
+        "state": str(envelope.get("to_state", "")),
+    }
     service = NotificationService(ctx.session, ctx.settings)
-    created = await service.fan_out(
-        recipients,
-        NotificationRequest(
-            kind=kind,
-            title_key=title_key,
-            body_key=None,
-            params={
-                "key": issue_key,
-                "summary": str(envelope.get("summary", "")),
-                "state": str(envelope.get("to_state", "")),
-            },
-            link=f"/issues/{issue_key}",
-            target_type="issue",
-            target_id=envelope.aggregate_id,
-            actor_id=actor_id,
-        ),
-    )
+    created = []
+
+    if watchers:
+        created += await service.fan_out(
+            watchers,
+            NotificationRequest(
+                kind=kind,
+                title_key=title_key,
+                body_key=None,
+                params=params,
+                link=f"/issues/{issue_key}",
+                target_type="issue",
+                target_id=envelope.aggregate_id,
+                actor_id=actor_id,
+            ),
+        )
+
+    if mentioned:
+        created += await service.fan_out(
+            mentioned,
+            NotificationRequest(
+                kind=MENTION_KIND,
+                title_key="notifications:issue.mentioned",
+                body_key=None,
+                params=params,
+                link=f"/issues/{issue_key}",
+                target_type="issue",
+                target_id=envelope.aggregate_id,
+                actor_id=actor_id,
+            ),
+        )
+
     return [n.id for n in created]
 
 

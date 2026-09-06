@@ -70,6 +70,22 @@ class EventEnvelope:
         raw = self.payload.get(key)
         return UUID(raw) if isinstance(raw, str) else None
 
+    def uuid_list(self, key: str) -> list[UUID]:
+        """UUID 목록. 깨진 항목은 건너뛴다 — 페이로드 하나가 잘못됐다고
+        이벤트 전체를 못 처리하면 아웃박스가 그 자리에서 멈춘다."""
+        raw = self.payload.get(key)
+        if not isinstance(raw, list):
+            return []
+        out: list[UUID] = []
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            try:
+                out.append(UUID(item))
+            except ValueError:
+                continue
+        return out
+
 
 E = TypeVar("E", bound=DomainEvent)
 Handler = Callable[[EventEnvelope], Awaitable[None]]

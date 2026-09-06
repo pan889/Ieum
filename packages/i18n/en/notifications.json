@@ -4,6 +4,7 @@
   "issue.transitioned": "{key} moved to {state}: {summary}",
   "issue.commented": "New comment on {key}: {summary}",
   "issue.assigned": "{key} assigned to you: {summary}",
+  "issue.mentioned": "{key} — you were mentioned: {summary}",
   "list.title": "Notifications",
   "list.empty": "You're all caught up",
   "list.unreadCount": "{count, plural, one {# unread} other {# unread}}",

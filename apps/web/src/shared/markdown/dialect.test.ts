@@ -58,7 +58,8 @@ describe('새니타이징', () => {
     expect(hrefs(renderMarkdown(source))).toEqual([])
   })
 
-  it.each([...LINK_SCHEMES])('%s 스킴은 링크가 된다', (scheme) => {
+  // user: 는 링크가 아니라 멘션 칩으로 그린다 (아래 '멘션' 블록 참고).
+  it.each(LINK_SCHEMES.filter((s) => s !== 'user'))('%s 스킴은 링크가 된다', (scheme) => {
     const url = scheme === 'mailto' ? 'mailto:a@b.com' : `${scheme}://x/y`
     expect(hrefs(renderMarkdown(`[x](${url})`))).toEqual([url])
   })
@@ -94,5 +95,28 @@ describe('렌더', () => {
     expect(html).toContain('<hr />')
     expect(html).toContain('intro')
     expect(html).toContain('rest')
+  })
+})
+
+describe('멘션', () => {
+  it('user: 링크는 칩이 된다', () => {
+    const html = renderMarkdown('hi [@Alice](user:01a07619-e13a-751c-96f4-079a061f393f)')
+    expect(html).toContain('<span class="ieum-mention">@Alice</span>')
+    // 링크로 두면 눌렀을 때 아무 데도 못 간다.
+    expect(html).not.toContain('href="user:')
+  })
+
+  it('일반 링크는 그대로 링크다', () => {
+    const html = renderMarkdown('[a](https://x.example) [@B](user:01a07619-e13a-751c-96f4-079a061f393e)')
+    expect(html).toContain('href="https://x.example"')
+    expect(html).toContain('ieum-mention')
+  })
+
+  it('멘션이 여러 개여도 태그가 안 엉킨다', () => {
+    const html = renderMarkdown(
+      '[@A](user:01a07619-e13a-751c-96f4-079a061f393f) and [@B](user:01a07619-e13a-751c-96f4-079a061f393e)',
+    )
+    expect(html.match(/ieum-mention/g)).toHaveLength(2)
+    expect(html.match(/<\/span>/g)).toHaveLength(2)
   })
 })

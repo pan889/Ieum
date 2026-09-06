@@ -29,6 +29,9 @@ class IssueCreated(DomainEvent):
     actor_id: UUID
     assignee_id: UUID | None = None
     reporter_id: UUID | None = None
+    #: 본문에서 언급된 사용자. **이미 볼 권한을 확인한 사람만** 담는다
+    #: — notify 는 이슈 ACL 을 못 보므로 여기서 걸러야 한다.
+    mentioned_ids: list[UUID] = field(default_factory=list)
 
 
 @events.register_event
@@ -45,6 +48,9 @@ class IssueUpdated(DomainEvent):
     reporter_id: UUID | None = None
     #: 바뀐 필드 이름만. 값은 issue_history 에 있다.
     changed_fields: list[str] = field(default_factory=list)
+    #: 본문에서 언급된 사용자. **이미 볼 권한을 확인한 사람만** 담는다
+    #: — notify 는 이슈 ACL 을 못 보므로 여기서 걸러야 한다.
+    mentioned_ids: list[UUID] = field(default_factory=list)
 
 
 @events.register_event
@@ -80,6 +86,9 @@ class IssueCommented(DomainEvent):
     is_internal: bool = False
     assignee_id: UUID | None = None
     reporter_id: UUID | None = None
+    #: 본문에서 언급된 사용자. **이미 볼 권한을 확인한 사람만** 담는다
+    #: — notify 는 이슈 ACL 을 못 보므로 여기서 걸러야 한다.
+    mentioned_ids: list[UUID] = field(default_factory=list)
 
 
 @events.register_event

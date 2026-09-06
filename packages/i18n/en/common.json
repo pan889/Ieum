@@ -10,6 +10,7 @@
   "action.search": "Search",
   "editor.write": "Write",
   "editor.mode": "Editor mode",
+  "editor.mentionList": "People to mention",
   "editor.preview": "Preview",
   "editor.previewEmpty": "Nothing to preview yet.",
   "editor.markdownHint": "Markdown supported",

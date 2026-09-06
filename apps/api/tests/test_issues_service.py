@@ -1069,3 +1069,146 @@ class TestListing:
         )
         assert {i.summary for i in everything.items} == {"살아있음", "아카이브"}
         assert live.issue.id in {i.id for i in everything.items}
+
+
+class TestMentions:
+    """멘션은 issues 가 권한을 확인해서 이벤트에 싣는다.
+
+    notify 는 이슈 ACL 을 못 본다. 여기서 안 거르면 아무나 멘션해서 비공개
+    이슈의 제목을 알림으로 흘릴 수 있다.
+    """
+
+    async def _outsider(self, session: AsyncSession) -> User:
+        row = User(email=f"out-{new_id()}@example.com", display_name="Outsider", status="active")
+        session.add(row)
+        await session.flush()
+        return row
+
+    def _mention(self, user: User) -> str:
+        return f"cc [@{user.display_name}](user:{user.id})"
+
+    async def test_mention_of_a_permitted_user_reaches_the_event(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        teammate = await self._outsider(session)
+        await grant(
+            session,
+            principal_id=teammate.id,
+            granted=(perms.ISSUE_VIEW,),
+            scope=Scope.project(project.id),
+        )
+        view = await IssueService(session, permissions).create(
+            actor,
+            NewIssue(project_id=project.id, type_id=issue_type.id, summary="x"),
+        )
+        await CommentService(session, permissions).add(
+            actor, view.issue.id, self._mention(teammate)
+        )
+        await session.flush()
+
+        event = await _latest_outbox(session, "issue.commented")
+        assert event.payload["mentioned_ids"] == [str(teammate.id)]
+
+    async def test_mention_of_an_outsider_is_dropped(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        outsider = await self._outsider(session)
+        view = await IssueService(session, permissions).create(
+            actor,
+            NewIssue(project_id=project.id, type_id=issue_type.id, summary="secret summary"),
+        )
+        await CommentService(session, permissions).add(
+            actor, view.issue.id, self._mention(outsider)
+        )
+        await session.flush()
+
+        event = await _latest_outbox(session, "issue.commented")
+        assert event.payload["mentioned_ids"] == []
+
+    async def test_internal_note_mention_needs_internal_permission(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """내부 노트 알림이 내부 노트를 못 보는 사람에게 가면 안 된다."""
+        actor = await full_access(session, user, project)
+        teammate = await self._outsider(session)
+        await grant(
+            session,
+            principal_id=teammate.id,
+            granted=(perms.ISSUE_VIEW,),  # 내부 노트 권한은 없다
+            scope=Scope.project(project.id),
+        )
+        view = await IssueService(session, permissions).create(
+            actor,
+            NewIssue(project_id=project.id, type_id=issue_type.id, summary="x"),
+        )
+        await CommentService(session, permissions).add(
+            actor, view.issue.id, self._mention(teammate), is_internal=True
+        )
+        await session.flush()
+
+        event = await _latest_outbox(session, "issue.commented")
+        assert event.payload["mentioned_ids"] == []
+
+    async def test_description_mention_only_fires_when_the_body_changes(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """우선순위만 고쳐도 멘션 알림이 다시 나가면 사람들이 알림을 끈다."""
+        actor = await full_access(session, user, project)
+        teammate = await self._outsider(session)
+        await grant(
+            session,
+            principal_id=teammate.id,
+            granted=(perms.ISSUE_VIEW,),
+            scope=Scope.project(project.id),
+        )
+        service = IssueService(session, permissions)
+        view = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="x",
+                description=self._mention(teammate),
+            ),
+        )
+        created = await _latest_outbox(session, "issue.created")
+        assert created.payload["mentioned_ids"] == [str(teammate.id)]
+
+        await service.update(actor, view.issue.id, {"priority": 1})
+        await session.flush()
+        updated = await _latest_outbox(session, "issue.updated")
+        assert updated.payload["mentioned_ids"] == []
+
+
+async def _latest_outbox(session: AsyncSession, event_type: str) -> OutboxEvent:
+    row = (
+        await session.execute(
+            select(OutboxEvent)
+            .where(OutboxEvent.event_type == event_type)
+            .order_by(OutboxEvent.created_at.desc(), OutboxEvent.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    return row

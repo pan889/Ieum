@@ -14,7 +14,7 @@ import taskLists from 'markdown-it-task-lists'
  * `html: false` 가 여기서 제일 중요한 줄이다. 켜는 순간 이슈 설명 한 줄로
  * XSS 가 된다. 이 값을 바꾸려면 새니타이저부터 붙여야 한다.
  */
-export const VERSION = 1
+export const VERSION = 2
 export const PRESET = 'commonmark'
 export const OPTIONS = {
   html: false,
@@ -24,7 +24,16 @@ export const OPTIONS = {
 } as const
 export const CORE_RULES = ['table', 'strikethrough'] as const
 export const PLUGINS = ['front_matter', 'tasklists', 'footnote'] as const
-export const LINK_SCHEMES = ['http', 'https', 'mailto', 'attachment', 'page', 'issue'] as const
+export const LINK_SCHEMES = [
+  'http',
+  'https',
+  'mailto',
+  'attachment',
+  'page',
+  'issue',
+  // 멘션은 `[@Alice](user:<uuid>)` 로 저장한다 — 이름이 바뀌어도 안 깨진다.
+  'user',
+] as const
 
 /** 이 모듈의 설정을 명세 파일과 같은 모양으로. 테스트가 비교한다. */
 export function asSpec() {
@@ -87,6 +96,35 @@ function frontMatterPlugin(md: MarkdownIt): void {
   )
 }
 
+/**
+ * `[@Alice](user:<uuid>)` 를 링크가 아니라 멘션 칩으로 그린다.
+ *
+ * 링크로 두면 눌렀을 때 `user:` 스킴으로 아무 데도 못 간다. 서버의
+ * `to_html` 은 메일용이라 이 규칙이 없다 — 메일에서는 그냥 텍스트로 남는다.
+ */
+function mentionPlugin(md: MarkdownIt): void {
+  const openLink = md.renderer.rules['link_open']
+  const closeLink = md.renderer.rules['link_close']
+  const mentionDepth: boolean[] = []
+
+  md.renderer.rules['link_open'] = (tokens, idx, options, env, self) => {
+    const href = tokens[idx]?.attrGet('href') ?? ''
+    if (href.startsWith('user:')) {
+      mentionDepth.push(true)
+      return '<span class="ieum-mention">'
+    }
+    mentionDepth.push(false)
+    return openLink ? openLink(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options)
+  }
+
+  md.renderer.rules['link_close'] = (tokens, idx, options, env, self) => {
+    if (mentionDepth.pop() === true) return '</span>'
+    return closeLink
+      ? closeLink(tokens, idx, options, env, self)
+      : self.renderToken(tokens, idx, options)
+  }
+}
+
 let cached: MarkdownIt | null = null
 
 /** 방언대로 설정한 파서. 상태가 없으므로 하나를 공유한다. */
@@ -97,6 +135,7 @@ export function parser(): MarkdownIt {
   md.use(frontMatterPlugin)
   md.use(taskLists)
   md.use(footnote)
+  md.use(mentionPlugin)
   md.validateLink = validateLink
   cached = md
   return md

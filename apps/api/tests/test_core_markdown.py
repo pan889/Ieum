@@ -145,3 +145,54 @@ class TestPlaintext:
         assert excerpt("word " * 100, limit=20).endswith("…")
         assert len(excerpt("word " * 100, limit=20)) <= 20
         assert excerpt("short") == "short"
+
+
+class TestMentions:
+    """멘션은 `[@Name](user:<uuid>)` 로 저장한다 — 이름이 바뀌어도 안 깨진다."""
+
+    ALICE = "01a07619-e13a-751c-96f4-079a061f393f"
+    BOB = "01a07619-e13a-751c-96f4-079a061f393e"
+
+    def test_extracts_in_order_without_duplicates(self) -> None:
+        from uuid import UUID
+
+        from ieum.core.markdown import extract_mentions
+
+        found = extract_mentions(
+            f"hi [@Bob](user:{self.BOB}) and [@Alice](user:{self.ALICE}) "
+            f"and [@Bob again](user:{self.BOB})"
+        )
+        assert found == [UUID(self.BOB), UUID(self.ALICE)]
+
+    def test_ignores_code_blocks(self) -> None:
+        """문서에 예시를 적었을 뿐인데 알림이 나가면 안 된다."""
+        from ieum.core.markdown import extract_mentions
+
+        assert extract_mentions(f"```\n[@Alice](user:{self.ALICE})\n```") == []
+        assert extract_mentions(f"`[@Alice](user:{self.ALICE})`") == []
+
+    def test_ignores_non_uuid_targets(self) -> None:
+        from ieum.core.markdown import extract_mentions
+
+        assert extract_mentions("[@bob](user:bob)") == []
+
+    def test_caps_the_count(self) -> None:
+        """수신자마다 권한 검사가 돈다. 상한이 없으면 코멘트 하나가 DB 를 잡는다."""
+        from ieum.core.ids import new_id
+        from ieum.core.markdown import MAX_MENTIONS, extract_mentions
+
+        body = " ".join(f"[@u](user:{new_id()})" for _ in range(MAX_MENTIONS + 10))
+        assert len(extract_mentions(body)) == MAX_MENTIONS
+
+    def test_survives_normalization(self) -> None:
+        """정규화가 멘션 링크를 망가뜨리면 저장하는 순간 사라진다."""
+        from ieum.core.markdown import extract_mentions, normalize
+
+        body = f"cc [@Alice](user:{self.ALICE})"
+        assert extract_mentions(normalize(body)) == extract_mentions(body)
+
+    def test_user_scheme_renders_as_a_link_server_side(self) -> None:
+        """서버 렌더는 메일용이다. 칩으로 바꾸는 건 클라이언트가 한다."""
+        from ieum.core.markdown import to_html
+
+        assert f'href="user:{self.ALICE}"' in to_html(f"[@Alice](user:{self.ALICE})")

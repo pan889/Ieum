@@ -513,6 +513,107 @@ class TestHandlers:
             payload=dict(payload),
         )
 
+    async def test_mention_gets_its_own_kind(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """멘션은 워처 알림과 종류가 달라야 사용자가 따로 끌 수 있다."""
+        ctx = HandlerContext(session=session, settings=settings)
+        created = await handle_issue_event(
+            ctx,
+            self._envelope(
+                "issue.commented",
+                issue_key="X-1",
+                summary="제목",
+                actor_id=str(people["actor"].id),
+                mentioned_ids=[str(people["english"].id)],
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        assert [(n.user_id, n.kind) for n in rows] == [(people["english"].id, "issue.mentioned")]
+
+    async def test_mentioned_watcher_gets_one_notification(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """같은 일로 알림이 두 개 쌓이면 사람들이 알림을 끈다."""
+        issue_id = new_id()
+        await WatchService(session).watch(
+            Actor(
+                user_id=people["english"].id,
+                email=people["english"].email,
+                is_active=True,
+            ),
+            "issue",
+            issue_id,
+        )
+        await session.flush()
+
+        ctx = HandlerContext(session=session, settings=settings)
+        created = await handle_issue_event(
+            ctx,
+            self._envelope(
+                "issue.commented",
+                aggregate_id=issue_id,
+                issue_key="X-1",
+                summary="제목",
+                actor_id=str(people["actor"].id),
+                mentioned_ids=[str(people["english"].id)],
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        mine = [n for n in rows if n.user_id == people["english"].id]
+        assert len(mine) == 1
+        assert mine[0].kind == "issue.mentioned"
+
+    async def test_self_mention_is_not_notified(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        ctx = HandlerContext(session=session, settings=settings)
+        created = await handle_issue_event(
+            ctx,
+            self._envelope(
+                "issue.commented",
+                issue_key="X-1",
+                summary="제목",
+                actor_id=str(people["actor"].id),
+                mentioned_ids=[str(people["actor"].id)],
+            ),
+        )
+        assert created == []
+
+    async def test_broken_mention_id_does_not_stop_the_event(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """페이로드 하나가 잘못됐다고 아웃박스가 그 자리에서 멈추면 안 된다."""
+        ctx = HandlerContext(session=session, settings=settings)
+        created = await handle_issue_event(
+            ctx,
+            self._envelope(
+                "issue.commented",
+                issue_key="X-1",
+                summary="제목",
+                actor_id=str(people["actor"].id),
+                assignee_id=str(people["korean"].id),
+                mentioned_ids=["not-a-uuid", str(people["english"].id)],
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        assert {n.user_id for n in rows} == {people["korean"].id, people["english"].id}
+
     async def test_recipients_include_watchers_and_assignee(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:

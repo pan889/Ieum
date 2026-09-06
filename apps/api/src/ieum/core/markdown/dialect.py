@@ -21,7 +21,7 @@ from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.front_matter import front_matter_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 
-VERSION = 1
+VERSION = 2
 PRESET = "commonmark"
 OPTIONS: dict[str, Any] = {
     # 원시 HTML 금지. 유일한 XSS 방어선이다.
@@ -33,8 +33,9 @@ OPTIONS: dict[str, Any] = {
 #: 프리셋에 없어서 따로 켜는 규칙 (GFM).
 CORE_RULES = ("table", "strikethrough")
 PLUGINS = ("front_matter", "tasklists", "footnote")
-#: 링크로 만들어 줄 스킴. attachment/page/issue 는 내부 URI 다 (4·5절).
-LINK_SCHEMES = ("http", "https", "mailto", "attachment", "page", "issue")
+#: 링크로 만들어 줄 스킴. attachment/page/issue/user 는 내부 URI 다 (4·5절).
+#: 멘션은 `[@Alice](user:<uuid>)` 로 저장한다 — 이름이 바뀌어도 안 깨진다.
+LINK_SCHEMES = ("http", "https", "mailto", "attachment", "page", "issue", "user")
 
 _PLUGIN_FNS = {
     "front_matter": front_matter_plugin,

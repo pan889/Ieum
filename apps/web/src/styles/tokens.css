@@ -92,3 +92,10 @@
 
   .ieum-markdown img { @apply max-w-full rounded; }
 }
+
+@layer components {
+  /* 멘션 칩. 링크가 아니라 사람을 가리키는 표시다. */
+  .ieum-mention {
+    @apply rounded bg-accent/15 px-1 py-0.5 font-medium text-accent;
+  }
+}

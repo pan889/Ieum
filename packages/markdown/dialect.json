@@ -1,6 +1,6 @@
 {
-  "$comment": "IFM(ieum Flavored Markdown) 방언의 단일 정본. 서버(markdown-it-py)와 클라이언트(markdown-it)가 이 파일을 읽고, 양쪽 테스트가 실제 활성 기능이 이 목록과 같은지 확인한다. 한쪽만 고치면 CI 가 실패한다 (docs/architecture/wiki-markdown.md 1절).",
-  "version": 1,
+  "$comment": "IFM(ieum Flavored Markdown) 방언의 단일 정본. 서버(markdown-it-py)와 클라이언트(markdown-it)가 이 파일을 읽고, 양쪽 테스트가 실제 활성 기능이 이 목록과 같은지 확인한다. 한쪽만 고치면 CI 가 실패한다 (docs/architecture/wiki-markdown.md 1절). v2: 멘션용 user: 스킴 추가.",
+  "version": 2,
   "preset": "commonmark",
   "options": {
     "html": false,
@@ -8,7 +8,22 @@
     "typographer": false,
     "breaks": false
   },
-  "core": ["table", "strikethrough"],
-  "plugins": ["front_matter", "tasklists", "footnote"],
-  "linkSchemes": ["http", "https", "mailto", "attachment", "page", "issue"]
+  "core": [
+    "table",
+    "strikethrough"
+  ],
+  "plugins": [
+    "front_matter",
+    "tasklists",
+    "footnote"
+  ],
+  "linkSchemes": [
+    "http",
+    "https",
+    "mailto",
+    "attachment",
+    "page",
+    "issue",
+    "user"
+  ]
 }

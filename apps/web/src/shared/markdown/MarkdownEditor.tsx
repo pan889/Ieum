@@ -1,8 +1,11 @@
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import clsx from 'clsx'
 
+import { useUserSearch } from '@/features/issues/hooks'
+
 import { Markdown } from './Markdown'
+import { applyMention, findMentionQuery, type MentionQuery } from './mention'
 
 /**
  * 마크다운 입력 + 미리보기 탭.
@@ -27,6 +30,33 @@ export function MarkdownEditor({
   const { t } = useTranslation(['common'])
   const [tab, setTab] = useState<'write' | 'preview'>('write')
   const id = useId()
+  const textarea = useRef<HTMLTextAreaElement>(null)
+  const [mention, setMention] = useState<MentionQuery | null>(null)
+  const [highlight, setHighlight] = useState(0)
+
+  // 멘션 후보. 진행 중인 멘션이 없으면 조회하지 않는다.
+  const candidates = useUserSearch(mention?.term ?? '')
+  const options = mention === null ? [] : (candidates.data?.items ?? []).slice(0, 6)
+
+  const syncMention = (element: HTMLTextAreaElement) => {
+    const found = findMentionQuery(element.value, element.selectionStart)
+    setMention(found)
+    setHighlight(0)
+  }
+
+  const choose = (user: { id: string; display_name: string }) => {
+    const element = textarea.current
+    if (element === null || mention === null) return
+    const result = applyMention(element.value, mention, element.selectionStart, user)
+    onChange(result.text)
+    setMention(null)
+    // 값이 바뀐 뒤에 커서를 놓아야 한다. React 가 다시 그리기 전에 옮기면
+    // 렌더가 커서를 끝으로 되돌린다.
+    requestAnimationFrame(() => {
+      element.setSelectionRange(result.caret, result.caret)
+      element.focus()
+    })
+  }
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -63,14 +93,67 @@ export function MarkdownEditor({
 
       <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-tab-${tab}`}>
         {tab === 'write' ? (
-          <textarea
-            id={id}
-            rows={rows}
-            placeholder={placeholder}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg placeholder:text-muted"
-            value={value}
-            onChange={(event) => { onChange(event.target.value); }}
-          />
+          <div className="relative">
+            <textarea
+              ref={textarea}
+              id={id}
+              rows={rows}
+              placeholder={placeholder}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-fg placeholder:text-muted"
+              value={value}
+              onChange={(event) => {
+                onChange(event.target.value)
+                syncMention(event.target)
+              }}
+              onClick={(event) => { syncMention(event.currentTarget); }}
+              onBlur={() => {
+                // 목록의 버튼을 누르는 동안 blur 가 먼저 온다. 바로 닫으면
+                // 클릭이 사라지므로 한 프레임 미룬다.
+                requestAnimationFrame(() => { setMention(null); })
+              }}
+              onKeyDown={(event) => {
+                if (options.length === 0) return
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  setHighlight((h) => (h + 1) % options.length)
+                } else if (event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  setHighlight((h) => (h - 1 + options.length) % options.length)
+                } else if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault()
+                  choose(options[highlight] as { id: string; display_name: string })
+                } else if (event.key === 'Escape') {
+                  setMention(null)
+                }
+              }}
+            />
+            {options.length > 0 ? (
+              <ul
+                role="listbox"
+                aria-label={t('common:editor.mentionList')}
+                className="absolute left-2 top-full z-10 mt-1 w-64 overflow-hidden rounded-md border border-border bg-surface shadow-lg"
+              >
+                {options.map((user, index) => (
+                  <li key={user.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={index === highlight}
+                      className={clsx(
+                        'w-full px-3 py-1.5 text-left text-sm',
+                        index === highlight ? 'bg-surface-raised text-fg' : 'text-muted',
+                      )}
+                      onMouseDown={(event) => { event.preventDefault(); }}
+                      onClick={() => { choose(user); }}
+                    >
+                      {user.display_name}
+                      <span className="ml-2 text-xs text-muted">{user.email}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         ) : (
           <div className="min-h-24 rounded-md border border-border bg-surface px-3 py-2">
             {value.trim() ? (

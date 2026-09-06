@@ -22,11 +22,13 @@ from ieum.core.exceptions import (
     ValidationError,
 )
 from ieum.core.logging import get_logger
+from ieum.core.markdown import extract_mentions
 from ieum.core.markdown import normalize as normalize_markdown
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
+from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import events as issue_events
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.fields import validate_value
@@ -222,6 +224,40 @@ class SecurityLevelGuard:
         return bool(actor.principal_ids & allowed_ids)
 
 
+async def resolve_mentions(
+    session: AsyncSession,
+    permissions: PermissionService,
+    issue: Issue,
+    text: str | None,
+    *,
+    require_internal: bool = False,
+) -> list[UUID]:
+    """본문의 멘션 중 **이 이슈를 볼 수 있는 사람만** 남긴다.
+
+    권한 검사를 여기서 하는 이유는 notify 가 이슈 ACL 을 못 보기 때문이다.
+    거르지 않으면 아무나 멘션해서 비공개 이슈의 제목을 알림으로 흘릴 수 있다.
+    내부 노트는 내부 노트를 볼 수 있는 사람에게만 간다.
+    """
+    if not text:
+        return []
+    scope = Scope.project(issue.project_id)
+    allowed: list[UUID] = []
+    for user_id in extract_mentions(text):
+        mentioned = await identity.load_actor(session, user_id)
+        if mentioned is None or not mentioned.is_active:
+            continue
+        if not await permissions.has(
+            session, mentioned, perms.ISSUE_VIEW, scope=scope, subject=issue
+        ):
+            continue
+        if require_internal and not await permissions.has(
+            session, mentioned, perms.COMMENT_VIEW_INTERNAL, scope=scope, subject=issue
+        ):
+            continue
+        allowed.append(user_id)
+    return allowed
+
+
 class IssueService:
     def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
         self._s = session
@@ -409,6 +445,9 @@ class IssueService:
                 actor_id=actor.user_id,
                 assignee_id=issue.assignee_id,
                 reporter_id=issue.reporter_id,
+                mentioned_ids=await resolve_mentions(
+                    self._s, self._perms, issue, issue.description
+                ),
             ),
         )
         log.info("issue.created", issue_key=issue_key, actor=str(actor.user_id))
@@ -496,6 +535,13 @@ class IssueService:
                     assignee_id=issue.assignee_id,
                     reporter_id=issue.reporter_id,
                     changed_fields=[c["field"] for c in diff],
+                    # 설명이 바뀐 경우에만 본다. 우선순위만 고쳐도 멘션 알림이
+                    # 다시 나가면 사람들이 알림을 끈다.
+                    mentioned_ids=(
+                        await resolve_mentions(self._s, self._perms, issue, issue.description)
+                        if any(c["field"] == "description" for c in diff)
+                        else []
+                    ),
                 ),
             )
             await self._s.flush()
@@ -940,6 +986,9 @@ class CommentService:
                 is_internal=is_internal,
                 assignee_id=issue.assignee_id,
                 reporter_id=issue.reporter_id,
+                mentioned_ids=await resolve_mentions(
+                    self._s, self._perms, issue, text, require_internal=is_internal
+                ),
             ),
         )
         return comment
