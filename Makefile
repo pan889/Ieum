@@ -82,6 +82,16 @@ test-api: ## 백엔드 테스트. 예) make test-api k=identity
 test-web: ## 프론트 테스트
 	pnpm -r --if-present test
 
+.PHONY: e2e
+e2e: ## 브라우저 E2E. api(:8000) 와 web(:5173) 이 이미 떠 있어야 한다
+	@curl -sf http://127.0.0.1:8000/healthz > /dev/null \
+		|| (echo "api 가 :8000 에 없다. 'make dev' 로 띄우고 다시 실행한다." && exit 1)
+	pnpm --filter @ieum/web run e2e
+
+.PHONY: e2e-install
+e2e-install: ## E2E 용 브라우저 내려받기 (최초 1회)
+	pnpm --filter @ieum/web exec playwright install chromium
+
 .PHONY: cov
 cov: ## 서비스 레이어 커버리지 (M0 완료 조건 70%+)
 	$(UV) pytest $(API)/tests --cov=ieum --cov-report=term-missing

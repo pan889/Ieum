@@ -15,7 +15,12 @@ import { columnTarget, stateFitsColumn } from './columnTarget'
 
 interface PendingMove {
   card: BoardCard
-  columnIndex: number
+  /**
+   * 어느 컬럼으로 떨어뜨렸는지. null 이면 카드의 "상태 변경" 버튼으로 열린
+   * 것이다 — 그때는 목적지가 없으니 **가능한 전이 전부**를 보여야 한다.
+   * 카드가 지금 있는 컬럼을 목적지로 넣으면 제자리 전이만 남는다.
+   */
+  columnIndex: number | null
 }
 
 export function BoardScreen() {
@@ -90,7 +95,7 @@ export function BoardScreen() {
             isDropTarget={dragging !== null}
             onDragStartCard={setDragging}
             onDrop={() => { if (dragging) drop(index, dragging) }}
-            onPickMove={(card) => { setPending({ card, columnIndex: index }); }}
+            onPickMove={(card) => { setPending({ card, columnIndex: null }); }}
           />
         ))}
       </div>
@@ -98,7 +103,11 @@ export function BoardScreen() {
       {pending ? (
         <MoveDialog
           card={pending.card}
-          column={content.data.columns[pending.columnIndex] as BoardColumnContent}
+          column={
+            pending.columnIndex === null
+              ? null
+              : (content.data.columns[pending.columnIndex] as BoardColumnContent)
+          }
           stateById={stateById}
           pending={move.isPending}
           onCancel={() => { setPending(null); }}
@@ -222,7 +231,8 @@ function MoveDialog({
   onPick,
 }: {
   card: BoardCard
-  column: BoardColumnContent
+  /** 떨어뜨린 컬럼. null 이면 목적지가 정해지지 않은 호출이다. */
+  column: BoardColumnContent | null
   stateById: Map<string, { id: string; name: string; category: string }>
   pending: boolean
   onCancel: () => void
@@ -234,10 +244,10 @@ function MoveDialog({
     queryFn: () => issuesApi.transitions(card.id),
   })
 
-  const target = columnTarget(column.iql)
+  const target = column === null ? null : columnTarget(column.iql)
   const available = (transitions.data ?? []).filter((tr) => tr.blocked_by.length === 0)
   const fitting = available.filter((tr) => stateFitsColumn(target, stateById.get(tr.to_state_id)))
-  // 딱 하나면 그게 답이다. 여러 개거나 판단 불가면 사용자가 고른다.
+  // 목적지가 있고 그리로 가는 전이를 알아냈으면 그것만 보여준다. 아니면 전부.
   const choices = fitting.length > 0 ? fitting : available
 
   return (
@@ -249,7 +259,7 @@ function MoveDialog({
         className="w-full max-w-sm"
       >
         <h2 className="text-sm font-medium">
-          {card.key} → {column.name}
+          {column === null ? card.key : `${card.key} → ${column.name}`}
         </h2>
 
         {transitions.isPending ? (

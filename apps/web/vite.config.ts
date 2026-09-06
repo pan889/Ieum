@@ -20,5 +20,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
+    // e2e/ 는 playwright 가 돈다. 여기서 같이 잡으면 두 러너가 충돌한다.
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 })

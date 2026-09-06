@@ -31,4 +31,9 @@ export default tseslint.config(
     files: ['**/*.test.{ts,tsx}', 'src/test-setup.ts'],
     rules: { '@typescript-eslint/no-unsafe-assignment': 'off' },
   },
+  {
+    // Playwright 픽스처는 `use()` 로 값을 넘긴다. React 의 use 훅이 아니다.
+    files: ['e2e/**/*.ts'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
+  },
 )
