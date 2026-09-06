@@ -28,7 +28,6 @@ def configure_logging(*, debug: bool = False, json_output: bool = True) -> None:
     shared: list[structlog.typing.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
         _add_trace_id,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
@@ -54,5 +53,11 @@ def configure_logging(*, debug: bool = False, json_output: bool = True) -> None:
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+    """모듈 로거. 이름을 직접 바인딩한다.
+
+    structlog.stdlib.add_logger_name 은 stdlib 로거의 `.name` 을 읽으므로
+    PrintLoggerFactory 와 함께 쓸 수 없다. 여기서 바인딩하면 팩토리와 무관하게
+    모든 레코드에 logger 필드가 붙는다.
+    """
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name).bind(logger=name)
     return logger

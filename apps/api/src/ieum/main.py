@@ -1,0 +1,99 @@
+"""FastAPI 애플리케이션 조립.
+
+여기서 하는 일은 배선뿐이다. 비즈니스 로직은 모듈의 service 에 있다.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from sqlalchemy import text
+from starlette.responses import Response
+
+from ieum.config import Settings, get_settings
+from ieum.core.errors import install_exception_handlers
+from ieum.core.logging import configure_logging, get_logger
+from ieum.core.middleware import TraceMiddleware
+from ieum.db.session import dispose_engine, get_session_factory, init_engine
+
+log = get_logger(__name__)
+
+API_PREFIX = "/api/v1"
+
+
+def _build_ops_router() -> APIRouter:
+    """운영 엔드포인트. API 버전 접두사를 붙이지 않는다."""
+    router = APIRouter(include_in_schema=False)
+
+    @router.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        """liveness. 의존 서비스를 확인하지 않는다."""
+        return {"status": "ok"}
+
+    @router.get("/readyz")
+    async def readyz() -> dict[str, Any]:
+        """readiness. DB 를 실제로 찔러본다."""
+        checks: dict[str, str] = {}
+        try:
+            async with get_session_factory()() as session:
+                await session.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = f"error: {type(exc).__name__}"
+
+        ready = all(v == "ok" for v in checks.values())
+        return {"status": "ready" if ready else "degraded", "checks": checks}
+
+    @router.get("/metrics")
+    async def metrics() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    return router
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    configure_logging(debug=settings.debug, json_output=settings.is_production)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        init_engine(settings)
+        log.info("api.startup", env=settings.env)
+        try:
+            yield
+        finally:
+            await dispose_engine()
+            log.info("api.shutdown")
+
+    app = FastAPI(
+        title="Ieum API",
+        version="0.1.0",
+        description="셀프호스팅 팀 협업 플랫폼 — 이슈·위키·서비스데스크",
+        docs_url="/docs" if not settings.is_production else None,
+        redoc_url=None,
+        openapi_url="/openapi.json",
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(TraceMiddleware, slow_request_ms=settings.slow_query_ms * 5)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_origins),
+        allow_credentials=True,  # 세션 쿠키를 쓴다
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Trace-Id"],
+    )
+
+    install_exception_handlers(app)
+    app.include_router(_build_ops_router())
+
+    return app
+
+
+app = create_app()
