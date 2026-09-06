@@ -81,10 +81,17 @@ class ProjectService:
         return project
 
     async def list_for(
-        self, actor: Actor, request: PageRequest, *, include_archived: bool = False
+        self,
+        actor: Actor,
+        request: PageRequest,
+        *,
+        include_archived: bool = False,
+        query: str | None = None,
     ) -> Page[Project]:
         acl = await self._perms.acl_for(self._s, actor, perms.PROJECT_VIEW)
-        return await self._projects.list_page(request, acl=acl, include_archived=include_archived)
+        return await self._projects.list_page(
+            request, acl=acl, include_archived=include_archived, query=query
+        )
 
     async def archive(self, actor: Actor, project_id: UUID) -> Project:
         project = await self._projects.get(project_id)

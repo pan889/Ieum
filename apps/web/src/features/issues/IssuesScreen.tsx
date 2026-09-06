@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { BulkEditResult } from '@ieum/api-client'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -10,10 +10,12 @@ import { Alert, Badge, Button, Card, Chip } from '@/shared/ui/primitives'
 
 import { BulkBar } from './BulkBar'
 import { FilterBar } from './FilterBar'
+import { SavedFilters } from './SavedFilters'
 import { formatDate, formatRelative, priorityLabel, categoryTone } from './format'
 import { useUserNames } from './hooks'
-import type { IssueFilters } from './iql'
-import { EMPTY_FILTERS, toIql } from './iql'
+import { toIql } from './iql'
+import type { IssuesSearch } from './urlState'
+import { isIqlMode, toFilters, toIqlSearch, toSearch } from './urlState'
 
 const COLUMNS = ['key', 'summary', 'status', 'assignee', 'priority', 'due', 'updated'] as const
 type ColumnId = (typeof COLUMNS)[number]
@@ -39,17 +41,35 @@ function loadColumns(): ColumnId[] {
 
 export function IssuesScreen() {
   const { t } = useTranslation(['issues', 'common'])
-  const [filters, setFilters] = useState<IssueFilters>(EMPTY_FILTERS)
-  const [iqlDraft, setIqlDraft] = useState<string | null>(null)
-  const [ranIql, setRanIql] = useState<string | null>(null)
+  const navigate = useNavigate()
+  // 필터의 주인은 URL 이다 — 새로고침·뒤로가기·링크 공유가 같은 경로를 탄다.
+  const search = useSearch({ from: '/issues' })
+
   const [columns, setColumns] = useState<ColumnId[]>(loadColumns)
   const [cursors, setCursors] = useState<string[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [bulkResult, setBulkResult] = useState<BulkEditResult | null>(null)
+  /**
+   * IQL 상자에 타이핑 중인 내용. URL 에 넣지 않는다 — 글자마다 히스토리가
+   * 쌓이고 아직 실행하지도 않은 질의가 링크에 실린다. 실행할 때 URL 로 간다.
+   */
+  const [typing, setTyping] = useState<string | null>(null)
 
-  // 칩 모드면 칩이 진실이고, IQL 모드면 마지막으로 "실행" 한 질의가 진실이다.
-  const activeIql = iqlDraft === null ? toIql(filters) : (ranIql ?? toIql(filters))
+  const filters = toFilters(search)
+  const iqlMode = isIqlMode(search)
+  // 칩 모드면 칩이 진실이고, IQL 모드면 URL 의 `iql` 이 진실이다.
+  const activeIql = iqlMode ? (search.iql ?? '') : toIql(filters)
+  // 상자에 보이는 값: 타이핑 중이면 그것, 아니면 URL 의 질의.
+  const iqlDraft = typing ?? (iqlMode ? activeIql : null)
   const cursor = cursors.at(-1)
+
+  const go = (next: IssuesSearch) => {
+    setCursors([])
+    setSelected([])
+    setBulkResult(null)
+    // replace 다. 칩 하나 누를 때마다 히스토리가 쌓이면 뒤로가기가 못 쓴다.
+    void navigate({ to: '/issues', search: next, replace: true })
+  }
 
   const results = useQuery({
     queryKey: ['issues', 'search', activeIql, cursor],
@@ -88,8 +108,6 @@ export function IssuesScreen() {
     }
   }
 
-  const resetPaging = () => { setCursors([]); setSelected([]); setBulkResult(null) }
-
   return (
     <section className="mx-auto flex max-w-6xl flex-col gap-5">
       <header className="flex items-center justify-between">
@@ -115,14 +133,20 @@ export function IssuesScreen() {
 
       <FilterBar
         filters={filters}
-        onFiltersChange={(next) => { setFilters(next); resetPaging(); }}
+        onFiltersChange={(next) => { setTyping(null); go(toSearch(next)) }}
         iqlDraft={iqlDraft}
         onIqlDraftChange={(next) => {
-          setIqlDraft(next)
-          if (next === null) { setRanIql(null); resetPaging(); }
+          setTyping(next)
+          // 칩으로 돌아가면 URL 도 칩 모드로 되돌린다.
+          if (next === null) go(toSearch(filters))
         }}
-        onRun={(iql) => { setRanIql(iql); resetPaging(); }}
+        onRun={(iql) => { setTyping(null); go(toIqlSearch(iql, filters)) }}
         invalid={results.isError ? describeError(results.error) : undefined}
+      />
+
+      <SavedFilters
+        activeIql={activeIql}
+        onLoad={(iql) => { setTyping(null); go(toIqlSearch(iql)) }}
       />
 
       <div className="flex flex-wrap items-center gap-1.5">

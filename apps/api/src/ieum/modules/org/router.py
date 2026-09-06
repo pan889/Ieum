@@ -53,10 +53,14 @@ async def list_projects(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: str | None = None,
     include_archived: bool = False,
+    q: Annotated[str | None, Query(max_length=200)] = None,
 ) -> ProjectPageResponse:
     """보이는 것만 돌려준다. 권한 없는 프로젝트는 SQL 단계에서 걸러진다."""
     page = await ProjectService(session, permissions).list_for(
-        actor, PageRequest(limit=limit, cursor=cursor), include_archived=include_archived
+        actor,
+        PageRequest(limit=limit, cursor=cursor),
+        include_archived=include_archived,
+        query=q,
     )
     return ProjectPageResponse(
         items=[ProjectResponse.model_validate(p) for p in page.items],

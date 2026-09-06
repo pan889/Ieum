@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
@@ -80,7 +80,12 @@ class ProjectRepository:
         return list((await self._s.execute(select(base.c.id))).scalars().all())
 
     async def list_page(
-        self, request: PageRequest, *, acl: Acl, include_archived: bool = False
+        self,
+        request: PageRequest,
+        *,
+        acl: Acl,
+        include_archived: bool = False,
+        query: str | None = None,
     ) -> Page[Project]:
         """목록은 검사하지 않고 필터링한다 (auth.md 5절)."""
         if acl.is_empty:
@@ -91,6 +96,12 @@ class ProjectRepository:
             stmt = stmt.where(Project.id.in_(acl.project_ids))
         if not include_archived:
             stmt = stmt.where(Project.archived_at.is_(None))
+        if query:
+            # 키로도 이름으로도 찾는다. 사람은 둘 중 기억나는 쪽을 친다.
+            like = f"%{query.strip().lower()}%"
+            stmt = stmt.where(
+                func.lower(Project.key).like(like) | func.lower(Project.name).like(like)
+            )
 
         payload = request.cursor_payload
         if payload:

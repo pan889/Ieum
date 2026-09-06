@@ -23,5 +23,7 @@
   "roles.scope.space": "이 스페이스",
   "roles.scope.queue": "이 큐",
   "roles.builtin": "내장",
-  "roles.grantCount": "권한 {count}개"
+  "roles.grantCount": "권한 {count}개",
+  "list.search": "프로젝트 찾기",
+  "list.noMatch": "일치하는 프로젝트가 없습니다."
 }

@@ -144,6 +144,61 @@ function walk(dir, acc = []) {
   return acc
 }
 
+/**
+ * 주석을 지운다. 줄 번호는 유지한다(개행만 남긴다).
+ *
+ * 주석은 사용자에게 안 보이므로 번역 대상이 아니다. 줄 단위로 `//` 만 걸러
+ * 내면 여러 줄 블록 주석의 가운데 줄이 걸린다 — 그러면 UI 문구를 인용하는
+ * 주석을 못 쓰게 되고, 결국 주석이 나빠진다.
+ *
+ * 문자열·템플릿 리터럴 안의 `/*` 를 주석으로 오해하지 않도록 상태를 따라간다.
+ */
+function stripComments(source) {
+  let out = ''
+  let i = 0
+  const keepNewlines = (text) => text.replace(/[^\n]/g, ' ')
+
+  while (i < source.length) {
+    const two = source.slice(i, i + 2)
+
+    if (two === '//') {
+      const end = source.indexOf('\n', i)
+      const stop = end === -1 ? source.length : end
+      out += keepNewlines(source.slice(i, stop))
+      i = stop
+      continue
+    }
+
+    if (two === '/*') {
+      const end = source.indexOf('*/', i + 2)
+      const stop = end === -1 ? source.length : end + 2
+      out += keepNewlines(source.slice(i, stop))
+      i = stop
+      continue
+    }
+
+    const ch = source[i]
+    if (ch === '"' || ch === "'" || ch === '`') {
+      // 리터럴은 그대로 둔다. 탐지 대상이 바로 이것이다.
+      let j = i + 1
+      while (j < source.length) {
+        if (source[j] === '\\') { j += 2; continue }
+        if (source[j] === ch) { j += 1; break }
+        // 따옴표 문자열은 줄을 넘지 않는다. 안 끊으면 뒤가 통째로 먹힌다.
+        if (source[j] === '\n' && ch !== '`') break
+        j += 1
+      }
+      out += source.slice(i, j)
+      i = j
+      continue
+    }
+
+    out += ch
+    i += 1
+  }
+  return out
+}
+
 function checkHardcoded() {
   const files = SOURCE_ROOTS.flatMap((r) => walk(r))
   if (files.length === 0) {
@@ -155,9 +210,9 @@ function checkHardcoded() {
     // 카탈로그 자체와 i18n 설정은 문자열을 직접 다룬다.
     if (rel.includes('/i18n/') || rel.endsWith('i18n.ts')) continue
 
-    readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    stripComments(readFileSync(file, 'utf8')).split('\n').forEach((line, i) => {
       const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*')) return
+      if (!trimmed) return
       if (TRANSLATED.test(line) || ALLOWED_ATTRS.test(line)) return
       if (/\bi18n-exempt\b/.test(line)) return
 

@@ -384,6 +384,56 @@ class TestProjectListing:
 
         assert collected == ["P0", "P1", "P2", "P3", "P4"]
 
+    async def test_search_matches_key_or_name(
+        self, session: AsyncSession, user: User, permissions: PermissionService
+    ) -> None:
+        """사람은 키나 이름 중 기억나는 쪽을 친다."""
+        session.add_all(
+            [
+                Project(key="ENG", name="Engineering"),
+                Project(key="MKT", name="Marketing"),
+                Project(key="OPS", name="Operations"),
+            ]
+        )
+        await session.flush()
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.PROJECT_VIEW,),
+            scope=Scope.global_(),
+            scope_kind="global",
+        )
+        actor = actor_for(user)
+        service = ProjectService(session, permissions)
+
+        by_key = await service.list_for(actor, PageRequest(), query="eng")
+        assert {p.key for p in by_key.items} == {"ENG"}
+
+        # 이름에만 있는 조각. 키로는 안 걸린다.
+        by_name = await service.list_for(actor, PageRequest(), query="market")
+        assert {p.key for p in by_name.items} == {"MKT"}
+
+        assert (await service.list_for(actor, PageRequest(), query="없는것")).items == []
+
+    async def test_search_still_filters_by_permission(
+        self, session: AsyncSession, user: User, permissions: PermissionService
+    ) -> None:
+        """검색은 필터일 뿐이다. 권한 없는 프로젝트를 찾아 주면 안 된다."""
+        seen = Project(key="FINDME", name="Findable")
+        hidden = Project(key="FINDNOT", name="Findable too")
+        session.add_all([seen, hidden])
+        await session.flush()
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.PROJECT_VIEW,),
+            scope=Scope.project(seen.id),
+        )
+        page = await ProjectService(session, permissions).list_for(
+            actor_for(user), PageRequest(), query="findable"
+        )
+        assert [p.key for p in page.items] == ["FINDME"]
+
 
 class TestProjectArchive:
     async def test_requires_permission(

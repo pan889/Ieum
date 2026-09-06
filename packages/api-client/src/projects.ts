@@ -30,11 +30,14 @@ const BASE = '/api/v1/projects'
 
 export function createProjectsApi(client: ApiClient) {
   return {
-    list: (params: { cursor?: string; limit?: number; includeArchived?: boolean } = {}) => {
+    list: (
+      params: { cursor?: string; limit?: number; includeArchived?: boolean; q?: string } = {},
+    ) => {
       const query = new URLSearchParams()
       if (params.cursor) query.set('cursor', params.cursor)
       if (params.limit) query.set('limit', String(params.limit))
       if (params.includeArchived) query.set('include_archived', 'true')
+      if (params.q) query.set('q', params.q)
       const suffix = query.size > 0 ? `?${query}` : ''
       return client.get<ProjectPage>(`${BASE}${suffix}`)
     },

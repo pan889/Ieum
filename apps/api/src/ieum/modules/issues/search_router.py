@@ -49,6 +49,17 @@ class SavedFilterCreateRequest(BaseModel):
     is_shared: bool = False
 
 
+class SavedFilterUpdateRequest(BaseModel):
+    """부분 수정. 미포함이면 건드리지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    iql: str | None = Field(default=None, min_length=1, max_length=4000)
+    description: str | None = Field(default=None, max_length=1000)
+    is_shared: bool | None = None
+
+
 class SavedFilterResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -144,6 +155,27 @@ async def run_filter(
         items=await summary_rows(IssueService(session, permissions), page.items),
         next_cursor=page.next_cursor,
     )
+
+
+@filters_router.patch("/{filter_id}", response_model=SavedFilterResponse)
+async def update_filter(
+    filter_id: UUID,
+    body: SavedFilterUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> SavedFilterResponse:
+    """질의를 다듬어도 필터 id 는 그대로다 — 공유 링크가 안 끊긴다."""
+    row = await SavedFilterService(session, permissions).update(
+        actor,
+        filter_id,
+        name=body.name,
+        iql=body.iql,
+        description=body.description,
+        is_shared=body.is_shared,
+    )
+    await session.commit()
+    return SavedFilterResponse.model_validate(row)
 
 
 @filters_router.delete("/{filter_id}", status_code=status.HTTP_204_NO_CONTENT)

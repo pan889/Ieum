@@ -166,6 +166,52 @@ class SavedFilterService:
         )
         return list((await self._s.execute(stmt)).scalars().all())
 
+    async def update(
+        self,
+        actor: Actor,
+        filter_id: UUID,
+        *,
+        name: str | None = None,
+        iql: str | None = None,
+        description: str | None = None,
+        is_shared: bool | None = None,
+    ) -> SavedFilter:
+        """저장 필터 수정. 소유자만.
+
+        지우고 다시 만들게 하면 공유 링크(필터 id)가 끊긴다.
+        """
+        row = await self.get(actor, filter_id)
+        if row.owner_id != actor.user_id:
+            raise PermissionDeniedError("남의 필터는 고칠 수 없다.")
+
+        if iql is not None:
+            # 저장 전에 파싱한다. 깨진 필터를 저장하면 실행할 때 터진다.
+            parse(iql)
+            row.iql = iql
+
+        if name is not None and name != row.name:
+            taken = (
+                await self._s.execute(
+                    select(SavedFilter)
+                    .where(SavedFilter.owner_id == actor.user_id)
+                    .where(SavedFilter.name == name)
+                    .where(SavedFilter.id != filter_id)
+                )
+            ).scalar_one_or_none()
+            if taken is not None:
+                raise ConflictError(
+                    "같은 이름의 필터가 이미 있다.", code="issues.filter_name_taken"
+                )
+            row.name = name
+
+        if description is not None:
+            row.description = description
+        if is_shared is not None:
+            row.is_shared = is_shared
+
+        await self._s.flush()
+        return row
+
     async def delete(self, actor: Actor, filter_id: UUID) -> None:
         row = await self.get(actor, filter_id)
         if row.owner_id != actor.user_id:

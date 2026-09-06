@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -10,10 +10,23 @@ export function ProjectsScreen() {
   const { t } = useTranslation(['projects', 'common'])
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
+  const [search, setSearch] = useState('')
 
-  const projects = useQuery({
-    queryKey: ['projects', 'list'],
-    queryFn: () => projectsApi.list(),
+  /**
+   * 커서 페이지네이션. 한 페이지만 받고 말면 프로젝트가 페이지 크기를 넘는
+   * 순간 나머지가 화면에서 **사라진다** — 있는데 갈 수가 없다.
+   */
+  const projects = useInfiniteQuery({
+    queryKey: ['projects', 'list', search],
+    queryFn: ({ pageParam }) =>
+      projectsApi.list({
+        ...(pageParam ? { cursor: pageParam } : {}),
+        ...(search.trim() ? { q: search.trim() } : {}),
+      }),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    // 검색어를 고칠 때마다 목록이 사라졌다 나타나면 눈이 아프다.
+    placeholderData: (previous) => previous,
   })
 
   if (projects.isPending) {
@@ -23,12 +36,23 @@ export function ProjectsScreen() {
     return <Alert>{describeError(projects.error)}</Alert>
   }
 
+  const items = projects.data.pages.flatMap((page) => page.items)
+
   return (
     <section className="mx-auto max-w-3xl">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t('projects:list.title')}</h1>
         <Button onClick={() => { setCreating((v) => !v); }}>{t('projects:create.title')}</Button>
       </header>
+
+      {/* 페이지를 넘겨 가며 찾게 하지 않는다. 프로젝트가 수십 개만 돼도
+          "더 보기" 를 몇 번씩 누르는 건 검색이 아니다. */}
+      <Field
+        label={t('projects:list.search')}
+        className="mt-4"
+        value={search}
+        onChange={(e) => { setSearch(e.target.value); }}
+      />
 
       {creating ? (
         <CreateProjectForm
@@ -39,14 +63,20 @@ export function ProjectsScreen() {
         />
       ) : null}
 
-      {projects.data.items.length === 0 ? (
+      {items.length === 0 ? (
         <Card className="mt-6 text-center">
-          <p className="font-medium">{t('projects:list.empty')}</p>
-          <p className="mt-1 text-sm text-muted">{t('projects:list.emptyHint')}</p>
+          {/* 검색 결과가 없는 것과 프로젝트가 없는 것은 다른 상황이다.
+              "첫 프로젝트를 만드세요" 라고 하면 있는 걸 없다고 말하는 셈이다. */}
+          <p className="font-medium">
+            {search.trim() ? t('projects:list.noMatch') : t('projects:list.empty')}
+          </p>
+          {search.trim() ? null : (
+            <p className="mt-1 text-sm text-muted">{t('projects:list.emptyHint')}</p>
+          )}
         </Card>
       ) : (
         <ul className="mt-6 flex flex-col gap-2">
-          {projects.data.items.map((project) => (
+          {items.map((project) => (
             <li key={project.id}>
               <Card className="flex items-baseline gap-3 py-3">
                 <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-muted">
@@ -63,6 +93,17 @@ export function ProjectsScreen() {
           ))}
         </ul>
       )}
+
+      {projects.hasNextPage ? (
+        <Button
+          variant="secondary"
+          className="mt-3 self-start"
+          loading={projects.isFetchingNextPage}
+          onClick={() => { void projects.fetchNextPage() }}
+        >
+          {t('common:action.loadMore')}
+        </Button>
+      ) : null}
     </section>
   )
 }

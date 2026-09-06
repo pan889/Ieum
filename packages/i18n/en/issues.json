@@ -151,5 +151,14 @@
   "bulk.selectAll": "Select all on this page",
   "bulk.select": "Select issue",
   "export.csv": "Export CSV",
-  "export.needsFilter": "Narrow the query before exporting."
+  "export.needsFilter": "Narrow the query before exporting.",
+  "filters.saved": "Saved",
+  "filters.none": "No saved filters yet.",
+  "filters.save": "Save filter",
+  "filters.name": "Filter name",
+  "filters.share": "Share with the team",
+  "filters.delete": "Delete {name}",
+  "filters.needsQuery": "Pick a filter or write a query first.",
+  "filters.copyLink": "Copy link",
+  "filters.linkCopied": "Link copied."
 }

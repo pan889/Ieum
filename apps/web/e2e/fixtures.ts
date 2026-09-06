@@ -24,7 +24,11 @@ export async function createProject(page: Page, key: string, name = 'E2E'): Prom
   await page.getByLabel(/^key$/i).fill(key)
   await page.getByLabel(/^name$/i).fill(name)
   await page.getByRole('button', { name: /create project/i }).click()
+  // 목록의 첫 페이지에 있으리라 기대하지 않는다. 프로젝트는 키 순이라
+  // 새로 만든 게 몇 페이지 뒤에 있을 수 있다 — 검색으로 확인한다.
+  await page.getByLabel(/find a project/i).fill(key)
   await expect(page.getByText(key).first()).toBeVisible()
+  await page.getByLabel(/find a project/i).fill('')
 }
 
 export async function createIssue(page: Page, key: string, summary: string): Promise<string> {

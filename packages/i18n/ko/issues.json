@@ -151,5 +151,14 @@
   "bulk.selectAll": "이 페이지 전체 선택",
   "bulk.select": "이슈 선택",
   "export.csv": "CSV 내보내기",
-  "export.needsFilter": "내보내기 전에 범위를 좁히세요."
+  "export.needsFilter": "내보내기 전에 범위를 좁히세요.",
+  "filters.saved": "저장 필터",
+  "filters.none": "저장한 필터가 없습니다.",
+  "filters.save": "필터 저장",
+  "filters.name": "필터 이름",
+  "filters.share": "팀과 공유",
+  "filters.delete": "{name} 삭제",
+  "filters.needsQuery": "필터를 고르거나 질의를 먼저 쓰세요.",
+  "filters.copyLink": "링크 복사",
+  "filters.linkCopied": "링크를 복사했습니다."
 }

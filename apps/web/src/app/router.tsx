@@ -9,6 +9,8 @@ import { BoardScreen } from '@/features/boards/BoardScreen'
 import { BoardsScreen } from '@/features/boards/BoardsScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
+import { parseSearch } from '@/features/issues/urlState'
+import type { IssuesSearch } from '@/features/issues/urlState'
 import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
 import { PlaceholderScreen } from '@/features/projects/PlaceholderScreen'
 import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
@@ -38,6 +40,8 @@ const issuesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/issues',
   component: IssuesScreen,
+  // 필터를 URL 이 소유한다. 링크 하나로 같은 목록이 나와야 한다.
+  validateSearch: (search: Record<string, unknown>): IssuesSearch => parseSearch(search),
 })
 
 // `/issues/new` 는 `/issues/$issueKey` 보다 **먼저** 등록해야 한다.

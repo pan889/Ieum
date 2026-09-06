@@ -23,5 +23,7 @@
   "roles.scope.space": "This space",
   "roles.scope.queue": "This queue",
   "roles.builtin": "Built-in",
-  "roles.grantCount": "{count, plural, one {# permission} other {# permissions}}"
+  "roles.grantCount": "{count, plural, one {# permission} other {# permissions}}",
+  "list.search": "Find a project",
+  "list.noMatch": "No project matches that."
 }

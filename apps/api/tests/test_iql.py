@@ -708,6 +708,94 @@ class TestSavedFilters:
         with pytest.raises(ConflictError):
             await service.create(actor, name="같은 이름", iql="priority = 2")  # type: ignore[arg-type]
 
+    async def test_update_keeps_id(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """질의를 다듬어도 id 는 그대로다 — 지우고 다시 만들면 링크가 끊긴다."""
+        actor = fixture_set["actor"]
+        service = SavedFilterService(session, permissions)
+        saved = await service.create(actor, name="다듬기 전", iql="priority = 1")  # type: ignore[arg-type]
+        updated = await service.update(
+            actor,  # type: ignore[arg-type]
+            saved.id,
+            name="다듬은 뒤",
+            iql="priority = 2",
+            is_shared=True,
+        )
+        assert updated.id == saved.id
+        assert (updated.name, updated.iql, updated.is_shared) == ("다듬은 뒤", "priority = 2", True)
+
+    async def test_update_rejects_broken_iql(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        actor = fixture_set["actor"]
+        service = SavedFilterService(session, permissions)
+        saved = await service.create(actor, name="멀쩡", iql="priority = 1")  # type: ignore[arg-type]
+        with pytest.raises(iql_errors.IQLError):
+            await service.update(actor, saved.id, iql="project = ")  # type: ignore[arg-type]
+
+    async def test_update_rejects_duplicate_name(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        from ieum.core.exceptions import ConflictError
+
+        actor = fixture_set["actor"]
+        service = SavedFilterService(session, permissions)
+        await service.create(actor, name="첫째", iql="priority = 1")  # type: ignore[arg-type]
+        second = await service.create(actor, name="둘째", iql="priority = 2")  # type: ignore[arg-type]
+        with pytest.raises(ConflictError):
+            await service.update(actor, second.id, name="첫째")  # type: ignore[arg-type]
+
+    async def test_same_name_on_self_is_not_a_conflict(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """이름은 그대로 두고 질의만 고치는 게 제일 흔한 수정이다."""
+        actor = fixture_set["actor"]
+        service = SavedFilterService(session, permissions)
+        saved = await service.create(actor, name="그대로", iql="priority = 1")  # type: ignore[arg-type]
+        updated = await service.update(actor, saved.id, name="그대로", iql="priority = 3")  # type: ignore[arg-type]
+        assert updated.iql == "priority = 3"
+
+    async def test_cannot_update_shared_filter_of_another_user(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """공유는 읽기다. 남의 필터를 고칠 수 있으면 공유가 곧 편집 권한이 된다."""
+        from ieum.core.exceptions import PermissionDeniedError
+
+        owner_actor = fixture_set["actor"]
+        service = SavedFilterService(session, permissions)
+        shared = await service.create(
+            owner_actor,
+            name="공유 필터",
+            iql="priority = 1",
+            is_shared=True,  # type: ignore[arg-type]
+        )
+
+        other = fixture_set["other"]
+        other_actor = Actor(
+            user_id=other.id,  # type: ignore[union-attr]
+            email=other.email,  # type: ignore[union-attr]
+            is_active=True,
+            mfa_satisfied_at=utcnow(),
+        )
+        with pytest.raises(PermissionDeniedError):
+            await service.update(other_actor, shared.id, iql="priority = 5")
+
 
 @pytest.mark.integration
 class TestValidateApi:
