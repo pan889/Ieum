@@ -36,6 +36,7 @@ from ieum.core.exceptions import (
     RateLimitedError,
     ValidationError,
 )
+from ieum.core.i18n import available_locales
 from ieum.core.ids import new_id, new_token
 from ieum.core.logging import get_logger
 from ieum.core.outbox import publish
@@ -607,6 +608,35 @@ class UserService:
             target_id=user.id,
         )
         publish(self._s, identity_events.UserActivated(aggregate_id=user.id, email=user.email))
+        return user
+
+    async def update_profile(self, *, user_id: UUID, locale: str | None = None) -> User:
+        """본인이 자기 설정을 바꾼다.
+
+        언어는 **서버에 남아야** 한다. 브라우저에만 두면 다른 기기에서 다시
+        영어로 열리고, 무엇보다 알림 메일이 수신자 언어로 안 나간다 — 서버는
+        `user.locale` 로 렌더한다(i18n.md 3절).
+        """
+        user = await self._users.get(user_id)
+        if user is None:  # pragma: no cover - 액터가 있으면 사용자도 있다
+            raise NotFoundError("사용자를 찾을 수 없다.")
+
+        if locale is not None and locale != user.locale:
+            supported = available_locales(str(self._settings.i18n_catalog_dir))
+            if locale not in supported:
+                raise ValidationError(
+                    f"지원하지 않는 언어다: {locale}",
+                    code="identity.unsupported_locale",
+                    details={"supported": list(supported)},
+                )
+            user.locale = locale
+            self._audit.record(
+                action="identity.user.locale_changed",
+                actor_id=user_id,
+                target_type="user",
+                target_id=user_id,
+                metadata={"locale": locale},
+            )
         return user
 
     async def change_password(

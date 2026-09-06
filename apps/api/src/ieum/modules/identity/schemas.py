@@ -48,6 +48,12 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=1, max_length=1024)
 
 
+class ProfileUpdateRequest(BaseModel):
+    """본인 설정 변경. 지금은 언어만."""
+
+    locale: str = Field(min_length=2, max_length=16)
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

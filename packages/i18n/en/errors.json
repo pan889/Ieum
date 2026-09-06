@@ -40,6 +40,7 @@
   "auth.token_expired": "That API token has expired.",
   "auth.step_up_not_available_for_token": "This action can't be done with an API token.",
   "identity.password_too_short": "Use at least {min_length} characters.",
+  "identity.unsupported_locale": "That language isn't available.",
   "identity.invite_invalid": "This invitation link isn't valid.",
   "identity.invite_expired": "This invitation has expired. Ask an administrator for a new one.",
   "org.project_key_taken": "That project key is already in use.",

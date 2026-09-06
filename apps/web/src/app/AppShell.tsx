@@ -1,11 +1,11 @@
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useAuthStore } from '@/features/auth/store'
-import { authApi } from '@/shared/api'
+import { authApi, usersApi } from '@/shared/api'
 import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/shared/i18n'
 import { Button } from '@/shared/ui/primitives'
 
@@ -21,6 +21,8 @@ export function AppShell() {
   const { t, i18n } = useTranslation(['common'])
   const user = useAuthStore((s) => s.user)
   const reset = useAuthStore((s) => s.reset)
+  const setUser = useAuthStore((s) => s.setUser)
+  const queryClient = useQueryClient()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
@@ -28,6 +30,28 @@ export function AppShell() {
   const signOut = useMutation({
     mutationFn: () => authApi.logout(),
     onSettled: () => { reset(); },
+  })
+
+  /**
+   * 언어 선택은 서버에 저장한다.
+   *
+   * 브라우저에만 두면 다른 기기에서 다시 영어로 열리고, 알림 메일도 서버가
+   * `user.locale` 로 렌더하므로 옛 언어로 나간다.
+   *
+   * 저장이 **먼저**다. 화면부터 바꾸면 곧이어 도착하는 `me` 응답이 옛 언어를
+   * 들고 와 되돌려 놓는다. 실패하면 아무것도 안 바뀌고 선택 상자가 제자리로
+   * 돌아온다 — 바뀐 척하다 다음 새로고침에 되돌아가는 것보다 낫다.
+   */
+  const changeLanguage = useMutation({
+    mutationFn: async (locale: Locale) => {
+      const updated = await usersApi.updateMe({ locale })
+      await setLocale(locale)
+      return updated
+    },
+    onSuccess: (updated) => {
+      setUser(updated)
+      void queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
   })
 
   return (
@@ -89,7 +113,8 @@ export function AppShell() {
             <select
               className="rounded border border-border bg-surface px-1.5 py-1 text-xs text-fg"
               value={i18n.language}
-              onChange={(e) => void setLocale(e.target.value as Locale)}
+              disabled={changeLanguage.isPending}
+              onChange={(e) => { changeLanguage.mutate(e.target.value as Locale) }}
             >
               {SUPPORTED_LOCALES.map((locale) => (
                 <option key={locale} value={locale}>

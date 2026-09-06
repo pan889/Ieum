@@ -40,6 +40,7 @@
   "auth.token_expired": "API 토큰이 만료되었습니다.",
   "auth.step_up_not_available_for_token": "이 작업은 API 토큰으로 할 수 없습니다.",
   "identity.password_too_short": "{min_length}자 이상 입력하세요.",
+  "identity.unsupported_locale": "지원하지 않는 언어다.",
   "identity.invite_invalid": "유효하지 않은 초대 링크입니다.",
   "identity.invite_expired": "초대가 만료됐습니다. 관리자에게 새 초대를 요청하세요.",
   "org.project_key_taken": "이미 사용 중인 프로젝트 키입니다.",

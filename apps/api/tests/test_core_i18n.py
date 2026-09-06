@@ -90,3 +90,31 @@ class TestTranslator:
         """카탈로그가 없다고 알림 발송이 죽으면 안 된다."""
         t = Translator(tmp_path, "en")
         assert t.translate("common:action.save") == "common:action.save"
+
+
+class TestAvailableLocales:
+    """고를 수 있는 언어는 카탈로그가 정한다.
+
+    목록을 코드에 따로 적어 두면 언어를 추가할 때 한쪽만 고치고, 카탈로그는
+    있는데 사용자는 못 고르는(또는 그 반대인) 상태가 된다.
+    """
+
+    def test_reads_the_catalog(self) -> None:
+        from ieum.core.i18n import available_locales
+
+        assert available_locales(str(CATALOG)) == ("en", "ko")
+
+    def test_ignores_directories_without_a_catalog(self, tmp_path: Path) -> None:
+        from ieum.core.i18n import available_locales
+
+        (tmp_path / "en").mkdir()
+        (tmp_path / "en" / "common.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "notes").mkdir()  # JSON 이 없으면 언어가 아니다
+
+        assert available_locales(str(tmp_path)) == ("en",)
+
+    def test_falls_back_when_there_is_no_catalog(self, tmp_path: Path) -> None:
+        """설정 화면이 빈 선택 상자를 그리게 두지 않는다."""
+        from ieum.core.i18n import available_locales
+
+        assert available_locales(str(tmp_path / "nope")) == ("en",)

@@ -58,6 +58,12 @@ export function createUsersApi(client: ApiClient) {
       const suffix = query.size > 0 ? `?${query.toString()}` : ''
       return client.get<UserPage>(`${USERS}${suffix}`)
     },
+
+    /**
+     * 본인 설정. 언어는 서버가 기억한다 — 브라우저에만 두면 다른 기기에서
+     * 다시 영어로 열리고, 알림 메일도 옛 언어로 나간다.
+     */
+    updateMe: (body: { locale: string }) => client.patch<CurrentUser>(`${USERS}/me`, body),
   }
 }
 

@@ -48,6 +48,25 @@ def _catalog(catalog_dir: str, locale: str) -> dict[str, str]:
     return merged
 
 
+@lru_cache(maxsize=4)
+def available_locales(catalog_dir: str) -> tuple[str, ...]:
+    """카탈로그가 있는 언어.
+
+    목록을 코드에 따로 적어 두면 언어를 추가할 때 한쪽만 고치고 만다.
+    카탈로그 자체가 정답이다.
+    """
+    base = Path(catalog_dir)
+    if not base.is_dir():  # pragma: no cover - 배포 오류
+        log.warning("i18n.catalog_root_missing", path=str(base))
+        return (DEFAULT_LOCALE,)
+    found = tuple(
+        sorted(
+            child.name for child in base.iterdir() if child.is_dir() and any(child.glob("*.json"))
+        )
+    )
+    return found or (DEFAULT_LOCALE,)
+
+
 class Translator:
     """한 로케일에 묶인 번역기. 수신자마다 하나씩 만든다."""
 

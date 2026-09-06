@@ -364,3 +364,41 @@ class TestApiTokens:
         )
         assert r.status_code == 403, r.text
         assert r.json()["error"]["code"] == "identity.token_requires_mfa"
+
+
+class TestProfile:
+    """언어 설정은 서버가 기억한다.
+
+    브라우저에만 두면 두 가지가 조용히 깨진다: 다른 기기에서 다시 영어로
+    열리고, 알림 메일이 옛 언어로 나간다 — 서버는 `user.locale` 로 렌더한다
+    (i18n.md 3절).
+    """
+
+    async def test_locale_survives_a_new_login(self, app_client: httpx.AsyncClient) -> None:
+        headers = _auth(await _login(app_client))
+        changed = await app_client.patch(f"{BASE}/users/me", json={"locale": "ko"}, headers=headers)
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["locale"] == "ko"
+
+        # 새 세션 — 브라우저가 기억하는 것이 아무것도 없는 상태다.
+        fresh = _auth(await _login(app_client))
+        me = await app_client.get(f"{BASE}/auth/me", headers=fresh)
+        assert me.json()["locale"] == "ko"
+
+        back = await app_client.patch(f"{BASE}/users/me", json={"locale": "en"}, headers=fresh)
+        assert back.json()["locale"] == "en"
+
+    async def test_unknown_locale_is_refused(self, app_client: httpx.AsyncClient) -> None:
+        """카탈로그가 없는 언어를 저장하면 그 사용자는 영어로 폴백된 화면을
+        보면서 설정만 다른 값을 가진다. 거절하는 편이 정직하다."""
+        headers = _auth(await _login(app_client))
+        r = await app_client.patch(f"{BASE}/users/me", json={"locale": "fr"}, headers=headers)
+        assert r.status_code == 422, r.text
+        body = r.json()["error"]
+        assert body["code"] == "identity.unsupported_locale"
+        # 무엇을 고를 수 있는지 함께 말해 준다.
+        assert "en" in body["details"]["supported"]
+
+    async def test_requires_authentication(self, app_client: httpx.AsyncClient) -> None:
+        r = await app_client.patch(f"{BASE}/users/me", json={"locale": "ko"})
+        assert r.status_code == 401

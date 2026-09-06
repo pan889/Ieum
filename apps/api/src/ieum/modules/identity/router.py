@@ -30,6 +30,7 @@ from ieum.modules.identity.schemas import (
     InviteRequest,
     LoginRequest,
     MFAVerifyRequest,
+    ProfileUpdateRequest,
     RefreshRequest,
     SessionResponse,
     TokenResponse,
@@ -273,6 +274,22 @@ async def accept_invite(
     user_id = decode_invite_token(body.token, settings)
     user = await UserService(session, settings).activate_with_password(
         user_id=user_id, password=body.password
+    )
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
+@users_router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    body: ProfileUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> UserResponse:
+    """언어 설정. 브라우저가 아니라 서버가 기억한다 — 다른 기기에서도 같은
+    언어로 열리고, 알림 메일도 이 값으로 렌더된다."""
+    user = await UserService(session, settings).update_profile(
+        user_id=actor.user_id, locale=body.locale
     )
     await session.commit()
     return UserResponse.model_validate(user)

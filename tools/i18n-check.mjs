@@ -18,6 +18,15 @@ import { parse } from '@formatjs/icu-messageformat-parser'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CATALOG_DIR = join(ROOT, 'packages/i18n')
 const SOURCE_ROOTS = [join(ROOT, 'apps/web/src')]
+// 키를 **쓰는** 곳은 화면보다 넓다. `errors:${code}` 는 api-client 안에 있고,
+// 알림 제목은 서버가 같은 카탈로그로 렌더한다(i18n.md 3절). 여기를 빼 두면
+// 멀쩡히 쓰이는 키가 "죽었다" 고 보고된다.
+const USAGE_ROOTS = [
+  ...SOURCE_ROOTS,
+  join(ROOT, 'packages/api-client/src'),
+  join(ROOT, 'apps/api/src'),
+]
+const USAGE_EXTENSIONS = ['.ts', '.tsx', '.py']
 const SOURCE_LOCALE = 'en'
 
 const problems = []
@@ -126,14 +135,14 @@ const TRANSLATED = /\b(?:t|i18n\.t|useTranslation)\s*\(/
 const SENTENCE = /^[^\S\n]*(?:[가-힣][^"'`]*|[A-Z][a-z]+(?:\s+[A-Za-z,'’-]+){1,})[.!?]?[^\S\n]*$/
 const ALLOWED_ATTRS = /\b(?:className|class|key|id|type|name|href|src|role|data-[\w-]+|aria-[\w-]+|to|path|charSet|rel|target|method|autoComplete|inputMode|pattern|placeholder=\{)\s*=/
 
-function walk(dir, acc = []) {
+function walk(dir, acc = [], extensions = ['.ts', '.tsx']) {
   if (!existsSync(dir)) return acc
   for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry.startsWith('.')) continue
+    if (entry === 'node_modules' || entry === '__pycache__' || entry.startsWith('.')) continue
     const full = join(dir, entry)
-    if (statSync(full).isDirectory()) walk(full, acc)
+    if (statSync(full).isDirectory()) walk(full, acc, extensions)
     else if (
-      ['.ts', '.tsx'].includes(extname(entry)) &&
+      extensions.includes(extname(entry)) &&
       !entry.endsWith('.d.ts') &&
       // 테스트 설명문은 사용자에게 보이지 않는다. 번역 대상이 아니다.
       !/\.(test|spec)\.tsx?$/.test(entry)
@@ -229,17 +238,57 @@ function checkHardcoded() {
 }
 
 // ── 5. 미사용 키 (경고) ──────────────────────────────────────────
+
+/**
+ * `t(`errors:${code}`)` 처럼 조립해 쓰는 키를 알아본다.
+ *
+ * 정적 문자열만 찾으면 이런 키가 전부 미사용으로 잡힌다. 한때 271개가
+ * 떴는데, 그만큼 뜨는 경고는 아무도 읽지 않는다 — 경고가 곧 죽은 키를
+ * 뜻해야 쓸모가 있다.
+ */
+function dynamicKeyMatchers(sources) {
+  const out = []
+  for (const source of sources) {
+    for (const [, template] of source.matchAll(/`([^`\\]*\$\{[^`]*)`/g)) {
+      // i18n 키는 리터럴 네임스페이스로 시작한다(`errors:${code}`). 이걸
+      // 요구하지 않으면 `${a}:${b}` 같은 React key 하나가 모든 키를
+      // "쓰이는 중" 으로 만들어 경고를 통째로 없앤다(실제로 그랬다).
+      if (!/^[A-Za-z][A-Za-z0-9_-]*:/.test(template)) continue
+      const literals = template.split(/\$\{[^}]*\}/g)
+      const pattern = literals
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[A-Za-z0-9_.-]+')
+      out.push(new RegExp(`^${pattern}$`))
+    }
+  }
+  return out
+}
+
 function checkUnused(catalogs) {
-  const files = SOURCE_ROOTS.flatMap((r) => walk(r))
+  const files = USAGE_ROOTS.flatMap((r) => walk(r, [], USAGE_EXTENSIONS))
   if (files.length === 0) return
-  const haystack = files.map((f) => readFileSync(f, 'utf8')).join('\n')
+  const sources = files.map((f) => readFileSync(f, 'utf8'))
+  const haystack = sources.join('\n')
+  const matchers = dynamicKeyMatchers(sources)
+
   const unused = [...catalogs.get(SOURCE_LOCALE).keys()].filter((full) => {
     const [, key] = full.split(':')
-    return !haystack.includes(key)
+    if (haystack.includes(key)) return false
+    return !matchers.some((re) => re.test(full))
   })
-  if (unused.length) {
-    warn(`미사용으로 보이는 키 ${unused.length}개 (실패 아님): ${unused.slice(0, 8).join(', ')}${unused.length > 8 ? ' …' : ''}`)
+  if (unused.length === 0) return
+
+  // 네임스페이스로 묶어 보여 준다. 한 줄에 80개를 늘어놓으면 아무도 안 읽고,
+  // 안 읽히는 경고는 없는 것과 같다.
+  const byNamespace = new Map()
+  for (const full of unused) {
+    const [ns, key] = full.split(':')
+    byNamespace.set(ns, [...(byNamespace.get(ns) ?? []), key])
   }
+  const lines = [...byNamespace]
+    .map(([ns, keys]) => `      ${ns} (${keys.length}): ${keys.join(', ')}`)
+    .join('\n')
+  warn(`아직 화면이 안 쓰는 키 ${unused.length}개 — 기능보다 카탈로그가 먼저 온 것들이다\n${lines}`)
 }
 
 // ── 실행 ─────────────────────────────────────────────────────────
