@@ -68,6 +68,11 @@ export class ApiClient {
     return this.request<T>(path, { ...options, method: 'PATCH', body })
   }
 
+  /** 통째로 바꾸는 자원에. 부분 수정은 PATCH 를 쓴다. */
+  put<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method'>): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'PUT', body })
+  }
+
   /**
    * JSON 이 아니라 파일을 받는 POST. CSV 내보내기처럼 스트리밍 응답에 쓴다.
    *

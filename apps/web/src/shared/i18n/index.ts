@@ -9,6 +9,7 @@ import errorsEn from '@ieum/i18n/en/errors.json'
 import issuesEn from '@ieum/i18n/en/issues.json'
 import notificationsEn from '@ieum/i18n/en/notifications.json'
 import projectsEn from '@ieum/i18n/en/projects.json'
+import wikiEn from '@ieum/i18n/en/wiki.json'
 import authKo from '@ieum/i18n/ko/auth.json'
 import boardsKo from '@ieum/i18n/ko/boards.json'
 import commonKo from '@ieum/i18n/ko/common.json'
@@ -16,6 +17,7 @@ import errorsKo from '@ieum/i18n/ko/errors.json'
 import issuesKo from '@ieum/i18n/ko/issues.json'
 import notificationsKo from '@ieum/i18n/ko/notifications.json'
 import projectsKo from '@ieum/i18n/ko/projects.json'
+import wikiKo from '@ieum/i18n/ko/wiki.json'
 
 export const SUPPORTED_LOCALES = ['en', 'ko'] as const
 export type Locale = (typeof SUPPORTED_LOCALES)[number]
@@ -29,6 +31,7 @@ const resources = {
     issues: issuesEn,
     boards: boardsEn,
     notifications: notificationsEn,
+    wiki: wikiEn,
   },
   ko: {
     common: commonKo,
@@ -38,6 +41,7 @@ const resources = {
     issues: issuesKo,
     boards: boardsKo,
     notifications: notificationsKo,
+    wiki: wikiKo,
   },
 } as const
 
@@ -89,7 +93,7 @@ export async function initI18n(locale: Locale = detectLocale()): Promise<typeof 
       // 새 언어를 추가했는데 키를 못 채웠으면 en 으로 떨어진다 (i18n.md 5절).
       fallbackLng: 'en',
       defaultNS: 'common',
-      ns: ['common', 'auth', 'errors', 'projects', 'issues', 'boards', 'notifications'],
+      ns: ['common', 'auth', 'errors', 'projects', 'issues', 'boards', 'notifications', 'wiki'],
       interpolation: { escapeValue: false },
       returnNull: false,
     })

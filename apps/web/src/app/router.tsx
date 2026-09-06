@@ -9,10 +9,11 @@ import { BoardScreen } from '@/features/boards/BoardScreen'
 import { BoardsScreen } from '@/features/boards/BoardsScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
+import { SpaceScreen } from '@/features/wiki/SpaceScreen'
+import { SpacesScreen } from '@/features/wiki/SpacesScreen'
 import { parseSearch } from '@/features/issues/urlState'
 import type { IssuesSearch } from '@/features/issues/urlState'
 import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
-import { PlaceholderScreen } from '@/features/projects/PlaceholderScreen'
 import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 
@@ -82,7 +83,21 @@ const tokensRoute = createRoute({
 const wikiRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/wiki',
-  component: () => <PlaceholderScreen titleKey="common:nav.wiki" />,
+  component: SpacesScreen,
+})
+
+// 문서 경로는 깊이가 정해져 있지 않다(`/wiki/ENG/deploy/rollback`).
+// splat 라우트로 나머지를 통째로 받는다.
+const spaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/wiki/$spaceKey',
+  component: SpaceScreen,
+})
+
+const wikiPageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/wiki/$spaceKey/$',
+  component: SpaceScreen,
 })
 
 const routeTree = rootRoute.addChildren([
@@ -95,6 +110,8 @@ const routeTree = rootRoute.addChildren([
   boardRoute,
   tokensRoute,
   wikiRoute,
+  spaceRoute,
+  wikiPageRoute,
 ])
 
 export const router = createRouter({ routeTree })

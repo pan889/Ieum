@@ -32,5 +32,6 @@
   "theme.system": "시스템 설정",
   "pagination.loadMore": "더 보기",
   "pagination.itemCount": "{count}개",
-  "action.loadMore": "더 보기"
+  "action.loadMore": "더 보기",
+  "action.create": "만들기"
 }

@@ -9,6 +9,7 @@ import {
   createRolesApi,
   createSearchApi,
   createUsersApi,
+  createWikiApi,
 } from '@ieum/api-client'
 
 import { useAuthStore } from '@/features/auth/store'
@@ -28,5 +29,6 @@ export const searchApi = createSearchApi(apiClient)
 export const boardsApi = createBoardsApi(apiClient)
 export const usersApi = createUsersApi(apiClient)
 export const attachmentsApi = createAttachmentsApi(apiClient)
+export const wikiApi = createWikiApi(apiClient)
 export const apiTokensApi = createApiTokensApi(apiClient)
 export const rolesApi = createRolesApi(apiClient)

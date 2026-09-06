@@ -32,5 +32,6 @@
   "theme.system": "System",
   "pagination.loadMore": "Load more",
   "pagination.itemCount": "{count, plural, one {# item} other {# items}}",
-  "action.loadMore": "Load more"
+  "action.loadMore": "Load more",
+  "action.create": "Create"
 }

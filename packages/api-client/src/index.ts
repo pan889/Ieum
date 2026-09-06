@@ -69,6 +69,20 @@ export {
   SWIMLANE_FIELDS,
 } from './boards'
 export {
+  createWikiApi,
+  type NewSpace,
+  type NewWikiPage,
+  type PageNode,
+  type PageRestriction,
+  type PageVersionDetail,
+  type PageVersionSummary,
+  type Space,
+  type SpacePage,
+  type WikiApi,
+  type WikiPage,
+  type WikiPagePatch,
+} from './wiki'
+export {
   createAttachmentsApi,
   type Attachment,
   type AttachmentsApi,
