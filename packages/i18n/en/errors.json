@@ -53,5 +53,13 @@
   "issues.unknown_custom_field": "That custom field doesn't apply to this issue type.",
   "issues.unknown_field_kind": "Unknown field type.",
   "issues.invalid_field_value": "That value isn't valid for this field.",
-  "issues.required_custom_field_missing": "Fill in the required fields first."
+  "issues.required_custom_field_missing": "Fill in the required fields first.",
+  "iql.invalid": "That query isn't valid.",
+  "iql.syntax_error": "There's a syntax error in your query.",
+  "iql.unknown_field": "Unknown field {field}.",
+  "iql.unknown_function": "Unknown function {function}.",
+  "iql.operator_not_allowed": "The {operator} operator can't be used with {field}.",
+  "iql.invalid_value": "That value isn't valid for {field}.",
+  "iql.unsupported": "{feature} isn't supported yet — it's planned for {milestone}.",
+  "issues.filter_name_taken": "You already have a filter with that name."
 }

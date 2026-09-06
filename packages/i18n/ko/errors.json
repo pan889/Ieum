@@ -53,5 +53,13 @@
   "issues.unknown_custom_field": "이 이슈 유형에 없는 커스텀 필드입니다.",
   "issues.unknown_field_kind": "알 수 없는 필드 종류입니다.",
   "issues.invalid_field_value": "이 필드에 맞지 않는 값입니다.",
-  "issues.required_custom_field_missing": "필수 필드를 먼저 채우세요."
+  "issues.required_custom_field_missing": "필수 필드를 먼저 채우세요.",
+  "iql.invalid": "올바르지 않은 질의입니다.",
+  "iql.syntax_error": "질의에 문법 오류가 있습니다.",
+  "iql.unknown_field": "알 수 없는 필드 {field} 입니다.",
+  "iql.unknown_function": "알 수 없는 함수 {function} 입니다.",
+  "iql.operator_not_allowed": "{field} 에는 {operator} 연산자를 쓸 수 없습니다.",
+  "iql.invalid_value": "{field} 에 맞지 않는 값입니다.",
+  "iql.unsupported": "{feature} 는 아직 지원하지 않습니다 ({milestone} 예정).",
+  "issues.filter_name_taken": "같은 이름의 필터가 이미 있습니다."
 }

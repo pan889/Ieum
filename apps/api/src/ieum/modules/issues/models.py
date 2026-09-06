@@ -410,3 +410,27 @@ class IssueFieldValue(Base):
         Index("ix_issue_field_value_key", "field_key"),
         Index("ix_issue_field_value_gin", "value", postgresql_using="gin"),
     )
+
+
+class SavedFilter(Entity):
+    """저장된 IQL 필터.
+
+    **원문 문자열을 저장한다. AST 를 저장하지 않는다** — 문법이 진화하기
+    때문이다 (query-language.md 6절). 실행은 항상 실행자 권한으로 한다.
+    필터 소유자의 권한을 승계하면 공유가 곧 권한 상승이 된다.
+    """
+
+    __tablename__ = "saved_filter"
+
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    iql: Mapped[str] = mapped_column(Text, nullable=False)
+    is_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_saved_filter_owner_id_name"),
+        Index("ix_saved_filter_shared", "is_shared", postgresql_where=text("is_shared")),
+    )

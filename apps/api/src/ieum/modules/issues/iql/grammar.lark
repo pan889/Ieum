@@ -1,0 +1,79 @@
+// IQL 문법 (docs/architecture/query-language.md 2절).
+// JQL 사용자가 배우지 않고 쓸 수 있는 수준을 목표로 한다.
+// LALR 로 파싱하므로 모호성이 없어야 한다.
+
+?start: query
+
+query: [expr] [order_clause]
+
+?expr: or_expr
+?or_expr: and_expr (OR and_expr)*        -> or_chain
+?and_expr: unary (AND unary)*            -> and_chain
+?unary: NOT unary                        -> negation
+      | "(" expr ")"                     -> group
+      | condition
+
+condition: FIELD_NAME comparison_op value    -> compare
+         | FIELD_NAME IS NOT_KW? emptiness   -> emptiness_check
+         | custom_field comparison_op value  -> compare_custom
+         | custom_field IS NOT_KW? emptiness -> emptiness_check_custom
+
+custom_field: CF "[" STRING "]"
+
+!comparison_op: "=" | "!=" | ">=" | "<=" | ">" | "<" | "~" | "!~"
+              | IN | NOT_KW IN
+
+// 이력 연산자(WAS/CHANGED)는 M5 다. 문법에 넣으면 LALR 충돌이 생기고
+// 부분 지원처럼 보이므로, 파서 진입 전에 원문에서 찾아 명확히 거절한다.
+
+!emptiness: EMPTY | NULL
+
+?value: literal
+      | list
+      | function
+
+?literal: STRING     -> string_value
+        | DATE       -> date_value
+        | NUMBER     -> number_value
+        | TRUE       -> true_value
+        | FALSE      -> false_value
+        | BAREWORD   -> bareword_value
+
+list: "(" value ("," value)* ")"
+
+function: FUNC_NAME "(" [func_args] ")"
+func_args: value ("," value)*
+
+order_clause: ORDER BY sort_item ("," sort_item)*
+sort_item: (FIELD_NAME | custom_field) direction?
+!direction: ASC | DESC
+
+// ── 터미널 ──────────────────────────────────────────────────────
+// 키워드는 대소문자를 무시한다. 필드명보다 우선순위를 높게 둬야
+// "status" 같은 이름이 키워드로 잘못 먹히지 않는다.
+AND.10: /AND/i
+OR.10: /OR/i
+NOT_KW.10: /NOT/i
+NOT.10: /NOT/i
+IS.10: /IS/i
+IN.10: /IN/i
+EMPTY.10: /EMPTY/i
+NULL.10: /NULL/i
+TRUE.10: /TRUE/i
+FALSE.10: /FALSE/i
+ORDER.10: /ORDER/i
+BY.10: /BY/i
+ASC.10: /ASC/i
+DESC.10: /DESC/i
+
+CF.6: /cf(?=\s*\[)/
+FUNC_NAME.5: /[a-zA-Z][a-zA-Z0-9_]*(?=\s*\()/
+FIELD_NAME.2: /[a-zA-Z][a-zA-Z0-9_.]*/
+BAREWORD.1: /[^\s(),=!<>~"']+/
+
+STRING.4: /"([^"\\]|\\.)*"/ | /'([^'\\]|\\.)*'/
+DATE.5: /\d{4}-\d{2}-\d{2}(T[\d:.+\-Z]+)?/
+NUMBER.3: /-?\d+(\.\d+)?/
+
+%import common.WS
+%ignore WS
