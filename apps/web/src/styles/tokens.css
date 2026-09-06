@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 디자인 토큰. 값은 여기서만 정의하고 컴포넌트는 토큰 이름만 쓴다. */
+@layer base {
+  :root {
+    --ieum-bg: 250 250 250;
+    --ieum-surface: 255 255 255;
+    --ieum-surface-raised: 255 255 255;
+    --ieum-border: 226 228 232;
+    --ieum-fg: 24 27 32;
+    --ieum-muted: 106 112 124;
+    --ieum-accent: 43 96 214;
+    --ieum-accent-fg: 255 255 255;
+    --ieum-danger: 197 48 48;
+    --ieum-success: 32 128 80;
+  }
+
+  [data-theme='dark'] {
+    --ieum-bg: 17 19 23;
+    --ieum-surface: 24 27 32;
+    --ieum-surface-raised: 32 36 43;
+    --ieum-border: 48 53 62;
+    --ieum-fg: 233 235 239;
+    --ieum-muted: 148 155 167;
+    --ieum-accent: 106 152 255;
+    --ieum-accent-fg: 12 16 24;
+    --ieum-danger: 248 113 113;
+    --ieum-success: 74 190 132;
+  }
+
+  html { color-scheme: light; }
+  [data-theme='dark'] { color-scheme: dark; }
+
+  body {
+    @apply bg-bg text-fg antialiased;
+  }
+
+  /* 포커스 링을 제거하지 않는다 (ux-principles 접근성). */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+}
