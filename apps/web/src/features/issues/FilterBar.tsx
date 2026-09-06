@@ -31,7 +31,7 @@ export function FilterBar({
   const { t } = useTranslation(['issues', 'common'])
   const projects = useProjects()
 
-  const project = projects.data?.items.find((p) => p.key === filters.projectKey) ?? null
+  const project = projects.data?.find((p) => p.key === filters.projectKey) ?? null
   const types = useIssueTypes(project?.id ?? null)
 
   const patch = (next: Partial<IssueFilters>) => {
@@ -89,7 +89,7 @@ export function FilterBar({
           }}
         >
           <option value="">{t('issues:list.projectAll')}</option>
-          {projects.data?.items.map((p) => (
+          {projects.data?.map((p) => (
             <option key={p.id} value={p.key}>
               {p.key} · {p.name}
             </option>

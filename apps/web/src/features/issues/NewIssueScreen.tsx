@@ -94,7 +94,7 @@ export function NewIssueScreen() {
             <option value="" disabled>
               {t('issues:list.projectAll')}
             </option>
-            {projects.data?.items.map((p) => (
+            {projects.data?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.key} · {p.name}
               </option>

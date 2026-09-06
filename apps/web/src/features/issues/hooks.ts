@@ -2,11 +2,18 @@ import { useQuery } from '@tanstack/react-query'
 
 import { issuesApi, projectsApi, usersApi } from '@/shared/api'
 
-/** 프로젝트 목록. 필터·생성 폼이 공유한다. */
+import { fetchAllProjects } from './allProjects'
+
+/**
+ * 프로젝트 목록. 필터·생성 폼이 공유한다.
+ *
+ * 한 페이지만 받지 않는다 — 잘린 목록은 "그 프로젝트가 없다" 와 구별되지
+ * 않는다 (allProjects.ts 참고).
+ */
 export function useProjects() {
   return useQuery({
-    queryKey: ['projects', 'list'],
-    queryFn: () => projectsApi.list({ limit: 100 }),
+    queryKey: ['projects', 'all'],
+    queryFn: () => fetchAllProjects(projectsApi),
     staleTime: 60_000,
   })
 }

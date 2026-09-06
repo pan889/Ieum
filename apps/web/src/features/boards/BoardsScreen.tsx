@@ -61,7 +61,7 @@ export function BoardsScreen() {
         onChange={(e) => { setProjectId(e.target.value || null); }}
       >
         <option value="">{t('issues:list.projectAll')}</option>
-        {projects.data?.items.map((p) => (
+        {projects.data?.map((p) => (
           <option key={p.id} value={p.id}>{p.key} · {p.name}</option>
         ))}
       </Select>
