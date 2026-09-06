@@ -5,7 +5,8 @@ import { useTranslation } from 'react-i18next'
 
 import { issuesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Field, Select, Textarea } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 
 import { priorityLabel } from './format'
 import { useFieldDefinitions, useIssueTypes, useProjects } from './hooks'
@@ -99,10 +100,10 @@ export function NewIssueScreen() {
             onChange={(e) => { setSummary(e.target.value); }}
           />
 
-          <Textarea
+          <MarkdownEditor
             label={t('issues:create.description')}
             value={description}
-            onChange={(e) => { setDescription(e.target.value); }}
+            onChange={setDescription}
           />
 
           <Select

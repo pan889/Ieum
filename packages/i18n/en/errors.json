@@ -6,6 +6,8 @@
   "common.rate_limited": "Too many attempts. Try again in {retry_after_seconds, plural, one {# second} other {# seconds}}.",
   "common.version_conflict": "Someone else edited this first. Reload to see their changes.",
   "common.invalid_cursor": "This page link is no longer valid.",
+  "common.invalid_markdown": "That text isn't valid Markdown.",
+  "common.payload_too_large": "That's too long — keep it under {max} characters.",
   "common.invalid_limit": "Request at most {max} items at a time.",
   "common.method_not_allowed": "That action isn't allowed here.",
   "common.http_error": "The request could not be completed.",

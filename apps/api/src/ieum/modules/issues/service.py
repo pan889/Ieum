@@ -22,6 +22,7 @@ from ieum.core.exceptions import (
     ValidationError,
 )
 from ieum.core.logging import get_logger
+from ieum.core.markdown import normalize as normalize_markdown
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
@@ -128,9 +129,21 @@ def _coerce_change(field: str, value: Any) -> Any:
         if isinstance(value, bool) or not isinstance(value, int):
             raise _bad_change(field, "정수")
         return value
-    if field in _TEXT_CHANGES and not isinstance(value, str):
-        raise _bad_change(field, "문자열")
+    if field in _TEXT_CHANGES:
+        if not isinstance(value, str):
+            raise _bad_change(field, "문자열")
+        # 설명은 마크다운 정본이다. 저장 전에 반드시 정규화를 지난다
+        # (wiki-markdown.md 7절) — 안 그러면 에디터 왕복마다 diff 가 오염된다.
+        if field == "description":
+            return _normalized_body(value)
     return value
+
+
+def _normalized_body(text: str | None) -> str | None:
+    """마크다운 본문을 저장 형태로. None 과 빈 문자열은 그대로 둔다."""
+    if text is None:
+        return None
+    return normalize_markdown(text) or None
 
 
 @dataclass(slots=True)
@@ -368,7 +381,7 @@ class IssueService:
             type_id=issue_type.id,
             state_id=initial.id,
             summary=summary,
-            description=payload.description,
+            description=_normalized_body(payload.description),
             reporter_id=actor.user_id,
             assignee_id=payload.assignee_id,
             priority=payload.priority,
@@ -900,7 +913,7 @@ class CommentService:
                 self._s, actor, perms.COMMENT_VIEW_INTERNAL, scope=scope, subject=issue
             )
 
-        text = body.strip()
+        text = normalize_markdown(body)
         if not text:
             raise ValidationError("내용을 비울 수 없다.", code="issues.comment_empty")
 
@@ -961,7 +974,7 @@ class CommentService:
                 self._s, actor, perms.COMMENT_EDIT_OWN, scope=scope, subject=issue
             )
 
-        text = body.strip()
+        text = normalize_markdown(body)
         if not text:
             raise ValidationError("내용을 비울 수 없다.", code="issues.comment_empty")
         comment.body = text

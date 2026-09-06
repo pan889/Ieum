@@ -5,7 +5,9 @@ import { useTranslation } from 'react-i18next'
 
 import { issuesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field, Select, Textarea } from '@/shared/ui/primitives'
+import { Markdown } from '@/shared/markdown/Markdown'
+import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
+import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 import { categoryTone, formatDate, formatDateTime, priorityLabel } from './format'
 import { useUserNames, useUserSearch } from './hooks'
@@ -85,7 +87,7 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
           </Button>
         </div>
         {issue.description ? (
-          <p className="whitespace-pre-wrap text-sm">{issue.description}</p>
+          <Markdown source={issue.description} className="text-sm" />
         ) : (
           <p className="text-sm text-muted">{t('issues:detail.descriptionEmpty')}</p>
         )}
@@ -106,10 +108,10 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
           value={summary}
           onChange={(e) => { setSummary(e.target.value); }}
         />
-        <Textarea
+        <MarkdownEditor
           label={t('issues:detail.description')}
           value={description}
-          onChange={(e) => { setDescription(e.target.value); }}
+          onChange={setDescription}
         />
         <div className="flex gap-2">
           <Button type="submit" loading={save.isPending}>{t('issues:detail.save')}</Button>
@@ -348,7 +350,7 @@ function Comments({ issueId }: { issueId: string }) {
                   <Badge tone="in_progress">{t('issues:comment.internalBadge')}</Badge>
                 ) : null}
               </div>
-              <p className="whitespace-pre-wrap text-sm">{comment.body}</p>
+              <Markdown source={comment.body} className="text-sm" />
             </li>
           ))}
         </ul>
@@ -359,11 +361,12 @@ function Comments({ issueId }: { issueId: string }) {
         onSubmit={(event) => { event.preventDefault(); add.mutate() }}
       >
         {add.isError ? <Alert>{describeError(add.error)}</Alert> : null}
-        <Textarea
-          aria-label={t('issues:comment.placeholder')}
+        <MarkdownEditor
+          label={t('issues:comment.title')}
           placeholder={t('issues:comment.placeholder')}
+          rows={4}
           value={body}
-          onChange={(e) => { setBody(e.target.value); }}
+          onChange={setBody}
         />
         <div className="flex items-center gap-3">
           <Button type="submit" loading={add.isPending} disabled={body.trim() === ''}>

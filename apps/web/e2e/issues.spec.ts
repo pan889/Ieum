@@ -18,7 +18,7 @@ test('이슈를 만들고 전이·코멘트·담당자를 다룬다', async ({ p
   await expect(page.getByRole('button', { name: /^unassigned$/i })).toBeVisible()
 
   // 코멘트
-  await page.getByPlaceholder(/leave a comment/i).fill('first comment')
+  await page.getByLabel(/^comments$/i).fill('first comment')
   await page.getByRole('button', { name: /^comment$/i }).click()
   await expect(page.getByText('first comment')).toBeVisible()
 

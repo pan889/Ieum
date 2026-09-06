@@ -42,3 +42,53 @@
     @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
   }
 }
+
+/* 마크다운 본문. Tailwind 의 preflight 가 지워 버린 기본 서식을 되살린다.
+   @tailwindcss/typography 를 쓰지 않는 이유는 색을 토큰으로 다시 다 덮어야
+   해서 결국 이만큼 쓰게 되기 때문이다. */
+@layer components {
+  .ieum-markdown > :first-child { margin-top: 0; }
+  .ieum-markdown > :last-child { margin-bottom: 0; }
+
+  .ieum-markdown h1,
+  .ieum-markdown h2,
+  .ieum-markdown h3,
+  .ieum-markdown h4 {
+    @apply mb-2 mt-4 font-semibold text-fg;
+  }
+  .ieum-markdown h1 { @apply text-lg; }
+  .ieum-markdown h2 { @apply text-base; }
+  .ieum-markdown h3,
+  .ieum-markdown h4 { @apply text-sm; }
+
+  .ieum-markdown p { @apply my-2 leading-relaxed; }
+  .ieum-markdown a { @apply text-accent underline underline-offset-2; }
+
+  .ieum-markdown ul { @apply my-2 list-disc pl-5; }
+  .ieum-markdown ol { @apply my-2 list-decimal pl-5; }
+  .ieum-markdown li { @apply my-0.5; }
+  /* 체크박스 목록은 마커를 지운다 — 점과 네모가 같이 나오면 지저분하다. */
+  .ieum-markdown ul.contains-task-list { @apply list-none pl-0; }
+  .ieum-markdown li.task-list-item { @apply flex items-baseline gap-2; }
+
+  .ieum-markdown code {
+    @apply rounded bg-surface-raised px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .ieum-markdown pre {
+    @apply my-2 overflow-x-auto rounded-md bg-surface-raised p-3;
+  }
+  .ieum-markdown pre code { @apply bg-transparent p-0; }
+
+  .ieum-markdown blockquote {
+    @apply my-2 border-l-2 border-border pl-3 text-muted;
+  }
+  .ieum-markdown hr { @apply my-4 border-border; }
+
+  /* 표는 자기 안에서 가로 스크롤한다. 페이지 전체가 넘치면 안 된다. */
+  .ieum-markdown table { @apply my-2 block w-full overflow-x-auto border-collapse text-sm; }
+  .ieum-markdown th,
+  .ieum-markdown td { @apply border border-border px-2 py-1 text-left; }
+  .ieum-markdown th { @apply bg-surface-raised font-medium; }
+
+  .ieum-markdown img { @apply max-w-full rounded; }
+}

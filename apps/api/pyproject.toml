@@ -26,6 +26,15 @@ dependencies = [
     "cryptography>=46.0",        # AES-GCM 애플리케이션 레벨 암호화
     # 질의 언어 (IQL). EBNF/LALR 파서.
     "lark>=1.3",
+    # 마크다운 정본 (ADR-0008). 클라이언트도 markdown-it 계열을 써서
+    # 방언이 갈라지지 않게 한다 (wiki-markdown.md 1절).
+    "markdown-it-py>=3.0,<5",
+    "mdit-py-plugins>=0.4,<0.6",
+    # 정규화기(md → md). 직접 만들면 표·중첩 목록에서 틀린다.
+    "mdformat>=0.7.22,<0.8",
+    "mdformat-gfm>=0.4,<0.5",
+    "mdformat-frontmatter>=2.0,<3",
+    "mdformat-footnote>=0.1.1,<0.2",
     # 캐시·큐
     "redis[hiredis]>=5.2,<6",   # arq 0.28 이 redis<6 을 요구한다
     "arq>=0.26",
