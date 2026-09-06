@@ -17,7 +17,12 @@ from ieum.db.session import init_engine, session_scope
 from ieum.modules.identity import permissions as identity_perms
 from ieum.modules.identity.models import User
 from ieum.modules.identity.repository import UserRepository, normalize_email
+from ieum.modules.issues import permissions as issue_perms
+from ieum.modules.issues.models import IssueType, Workflow, WorkflowState, WorkflowTransition
+from ieum.modules.issues.repository import IssueTypeRepository, WorkflowRepository
+from ieum.modules.issues.workflow import DEFAULT_TRANSITIONS, DEFAULT_WORKFLOW_STATES
 from ieum.modules.org import permissions as org_perms
+from ieum.modules.org.models import Role
 from ieum.modules.org.repository import RoleRepository
 from ieum.modules.org.service import WorkspaceService
 
@@ -27,7 +32,7 @@ log = get_logger(__name__)
 BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "Administrator": (
         "global",
-        (*identity_perms.ALL, *org_perms.ALL),
+        (*identity_perms.ALL, *org_perms.ALL, *issue_perms.ALL),
     ),
     "Member": (
         "global",
@@ -41,23 +46,143 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             org_perms.PROJECT_ARCHIVE,
             org_perms.PROJECT_ADMIN,
             org_perms.ROLE_ASSIGN,
+            # 프로젝트 관리자는 이슈를 전부 다룰 수 있다.
+            issue_perms.ISSUE_VIEW,
+            issue_perms.ISSUE_CREATE,
+            issue_perms.ISSUE_EDIT,
+            issue_perms.ISSUE_TRANSITION,
+            issue_perms.ISSUE_ASSIGN,
+            issue_perms.ISSUE_DELETE,
+            issue_perms.ISSUE_LINK,
+            issue_perms.COMMENT_ADD,
+            issue_perms.COMMENT_EDIT_ANY,
+            issue_perms.COMMENT_VIEW_INTERNAL,
+            issue_perms.WORKLOG_ADD,
+            issue_perms.WORKLOG_EDIT_ANY,
+            issue_perms.SECURITY_LEVEL_SET,
         ),
     ),
-    "Project Member": ("project", (org_perms.PROJECT_VIEW,)),
+    "Project Member": (
+        "project",
+        (org_perms.PROJECT_VIEW, *issue_perms.MEMBER_DEFAULTS),
+    ),
+    # 고객 포털이 아니라 내부 열람 전용. 데스크 고객 계정은 M4 에서 따로 만든다.
+    "Project Viewer": (
+        "project",
+        (org_perms.PROJECT_VIEW, issue_perms.ISSUE_VIEW),
+    ),
 }
 
+DEFAULT_WORKFLOW_NAME = "Default"
 
-async def seed(session: AsyncSession, settings: Settings) -> None:
-    workspace = await WorkspaceService(session).ensure(name="Ieum")
-    log.info("seed.workspace", id=str(workspace.id))
+#: (이름, 아이콘, 하위작업 여부)
+DEFAULT_ISSUE_TYPES: tuple[tuple[str, str, bool], ...] = (
+    ("Task", "task", False),
+    ("Bug", "bug", False),
+    ("Story", "story", False),
+    ("Sub-task", "subtask", True),
+)
+
+
+async def _seed_workflow(session: AsyncSession) -> Workflow:
+    """기본 워크플로우와 전이. 멱등하다."""
+    repo = WorkflowRepository(session)
+    workflow = await repo.get_by_name(DEFAULT_WORKFLOW_NAME)
+    if workflow is not None:
+        return workflow
+
+    workflow = Workflow(
+        name=DEFAULT_WORKFLOW_NAME,
+        description="Open → In Progress → Resolved → Closed (내장)",
+        is_builtin=True,
+    )
+    repo.add(workflow)
+    await session.flush()
+
+    states: dict[str, WorkflowState] = {}
+    for position, (name, category, is_initial) in enumerate(DEFAULT_WORKFLOW_STATES):
+        state = WorkflowState(
+            workflow_id=workflow.id,
+            name=name,
+            category=category,
+            position=position,
+            is_initial=is_initial,
+        )
+        session.add(state)
+        states[name] = state
+    await session.flush()
+
+    for position, (name, from_name, to_name, post) in enumerate(DEFAULT_TRANSITIONS):
+        session.add(
+            WorkflowTransition(
+                workflow_id=workflow.id,
+                name=name,
+                from_state_id=states[from_name].id if from_name else None,
+                to_state_id=states[to_name].id,
+                conditions=[],
+                post_functions=post,
+                position=position,
+            )
+        )
+    await session.flush()
+    log.info(
+        "seed.workflow_created",
+        name=DEFAULT_WORKFLOW_NAME,
+        states=len(states),
+        transitions=len(DEFAULT_TRANSITIONS),
+    )
+    return workflow
+
+
+async def _seed_issue_types(session: AsyncSession, workflow: Workflow) -> None:
+    """전역 이슈 유형. project_id 가 NULL 이라 모든 프로젝트에서 쓴다."""
+    repo = IssueTypeRepository(session)
+    from sqlalchemy import select as _select
+
+    existing = {
+        t.name
+        for t in (
+            await session.execute(_select(IssueType).where(IssueType.project_id.is_(None)))
+        ).scalars()
+    }
+    created = 0
+    for position, (name, icon, is_subtask) in enumerate(DEFAULT_ISSUE_TYPES):
+        if name in existing:
+            continue
+        repo.add(
+            IssueType(
+                project_id=None,
+                name=name,
+                icon=icon,
+                is_subtask=is_subtask,
+                workflow_id=workflow.id,
+                position=position,
+            )
+        )
+        created += 1
+    if created:
+        await session.flush()
+        log.info("seed.issue_types_created", count=created)
+
+
+async def _seed_builtin_roles(session: AsyncSession) -> dict[str, Role]:
+    """내장 역할과 권한을 **정의에 맞게 동기화**한다.
+
+    생성만 하고 끝내면 안 된다. 새 모듈이 권한을 추가했을 때 기존 설치의
+    내장 역할이 옛 권한 집합에 머물러, 업그레이드해도 관리자가 새 기능을
+    못 쓰는 상태가 된다. 내장 역할은 시스템 소유이므로 매 시드마다 맞춘다.
+    사용자가 만든 역할은 건드리지 않는다.
+    """
+    from sqlalchemy import select as _select
+
+    from ieum.modules.org.models import PermissionGrant, Role
 
     roles = RoleRepository(session)
-    created_roles = {}
+    result: dict[str, Role] = {}
+
     for name, (scope_kind, grants) in BUILTIN_ROLES.items():
         role = await roles.get_by_name(name, scope_kind)
         if role is None:
-            from ieum.modules.org.models import Role
-
             role = Role(
                 name=name,
                 scope_kind=scope_kind,
@@ -66,10 +191,45 @@ async def seed(session: AsyncSession, settings: Settings) -> None:
             )
             roles.add(role)
             await session.flush()
-            for permission in grants:
-                roles.grant(role.id, permission)
-            log.info("seed.role_created", name=name, grants=len(grants))
-        created_roles[name] = role
+            log.info("seed.role_created", name=name)
+
+        current = {
+            g.permission: g
+            for g in (
+                await session.execute(
+                    _select(PermissionGrant).where(PermissionGrant.role_id == role.id)
+                )
+            ).scalars()
+        }
+        wanted = set(grants)
+
+        added = 0
+        for permission in sorted(wanted - set(current)):
+            roles.grant(role.id, permission)
+            added += 1
+        # 정의에서 빠진 권한은 회수한다. 남겨두면 "왜 아직 되지?"가 생긴다.
+        removed = 0
+        for permission in sorted(set(current) - wanted):
+            await session.delete(current[permission])
+            removed += 1
+
+        if added or removed:
+            await session.flush()
+            log.info("seed.role_synced", name=name, added=added, removed=removed)
+
+        result[name] = role
+
+    return result
+
+
+async def seed(session: AsyncSession, settings: Settings) -> None:
+    workspace = await WorkspaceService(session).ensure(name="Ieum")
+    log.info("seed.workspace", id=str(workspace.id))
+
+    workflow = await _seed_workflow(session)
+    await _seed_issue_types(session, workflow)
+
+    created_roles = await _seed_builtin_roles(session)
 
     email = normalize_email(os.getenv("SEED_ADMIN_EMAIL", "admin@example.com"))
     password = os.getenv("SEED_ADMIN_PASSWORD")
@@ -108,7 +268,7 @@ async def seed(session: AsyncSession, settings: Settings) -> None:
         RoleAssignment.scope_kind == ScopeKind.GLOBAL.value,
     )
     if (await session.execute(stmt)).scalar_one_or_none() is None:
-        roles.assign(
+        RoleRepository(session).assign(
             role_id=admin_role.id,
             scope=Scope.global_(),
             principal_kind="user",

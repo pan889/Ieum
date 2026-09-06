@@ -49,7 +49,11 @@ logs: ## 로그 확인. 예) make logs s=worker
 
 # ── 품질 게이트 ────────────────────────────────────────────────
 .PHONY: check
-check: lint typecheck test i18n-check ## 커밋 전 필수 전체 검사
+check: lint typecheck security test i18n-check ## 커밋 전 필수 전체 검사
+
+.PHONY: security
+security: ## bandit 정적 분석 (medium 이상만 실패)
+	$(UV) bandit -q -ll -r $(API)/src -x '*/tests/*'
 
 .PHONY: lint
 lint: ## ruff + eslint

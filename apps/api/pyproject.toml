@@ -85,6 +85,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]   # 테스트 안의 더미 비밀번호
+# 마이그레이션은 autogenerate 결과물이다. 사람이 검토하되 포맷은 강제하지 않는다.
+"src/ieum/db/migrations/versions/*" = ["E501"]
 
 # CLAUDE.md 절대규칙 1(모듈 경계를 넘는 import 금지)은 ruff 로 표현할 수 없다.
 # banned-api 는 "같은 모듈 안에서는 허용"을 구분하지 못해 자기 내부 import 까지 막는다.
@@ -122,6 +124,14 @@ addopts = "-q --strict-markers"
 markers = [
     "integration: 실제 DB 를 쓰는 API 통합 테스트",
 ]
+
+# ── bandit ──────────────────────────────────────────────────────
+# Low 심각도는 게이트로 삼지 않는다. 현재 걸리는 것은 전부 검토를 마쳤다:
+#   B101 assert — 타입 좁히기용. -O 로 벗겨져도 뒤에서 다른 예외가 난다
+#   B105 "hardcoded password" — 권한 상수 이름과 HKDF 용도 라벨. 비밀정보가 아니다
+# medium 이상이 하나라도 나오면 CI 를 세운다.
+[tool.bandit]
+exclude_dirs = ["tests", "src/ieum/db/migrations"]
 
 [tool.coverage.run]
 source = ["ieum"]

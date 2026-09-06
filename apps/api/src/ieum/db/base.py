@@ -34,6 +34,11 @@ class Base(DeclarativeBase):
     # 관계는 반드시 lazy="raise" 로 선언한다. 그래야 로딩을 깜빡한 접근이
     # 조용한 N+1 이 아니라 즉시 예외로 드러난다 (module-guide 성능 규칙).
 
+    # 서버가 만드는 값(created_at/updated_at)을 INSERT·UPDATE 의 RETURNING 으로
+    # 함께 받아온다. 이게 없으면 onupdate 컬럼이 만료 표시되고, 커밋 뒤 접근할 때
+    # 동기 lazy refresh 가 일어나 async 컨텍스트에서 MissingGreenlet 이 난다.
+    __mapper_args__: dict[str, Any] = {"eager_defaults": True}  # noqa: RUF012
+
     def __repr__(self) -> str:
         pk = getattr(self, "id", None)
         return f"<{type(self).__name__} id={pk}>"

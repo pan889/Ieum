@@ -68,7 +68,9 @@ jobs:
         run: uv run --project apps/api mypy apps/api/src
 
       - name: bandit (보안 정적 분석)
-        run: uv run --project apps/api bandit -q -r apps/api/src -x '*/tests/*'
+        # -ll = medium 이상만 실패. Low 는 assert 와 상수 이름 오탐이라
+        # 게이트로 쓰면 무해한 코드에 CI 가 걸린다 (pyproject 의 [tool.bandit] 참조).
+        run: uv run --project apps/api bandit -q -ll -r apps/api/src -x '*/tests/*'
 
       - name: pytest
         run: uv run --project apps/api pytest apps/api/tests -q --cov=ieum --cov-report=term

@@ -22,6 +22,9 @@ from ieum.core.middleware import TraceMiddleware
 from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
 from ieum.modules.identity.router import auth_router, users_router
+from ieum.modules.issues.contracts import issue_model
+from ieum.modules.issues.router import issues_router
+from ieum.modules.issues.service import SecurityLevelGuard
 from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.router import projects_router, roles_router
 
@@ -98,14 +101,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(_build_ops_router())
 
     # 권한 리졸버 배선. core 는 org 를 import 하지 않으므로 여기서 꽂아 넣는다.
-    set_permission_service(
-        PermissionService(
-            resolver=OrgPermissionResolver(),
-            step_up_window_seconds=settings.step_up_window_seconds,
-        )
+    permissions = PermissionService(
+        resolver=OrgPermissionResolver(),
+        step_up_window_seconds=settings.step_up_window_seconds,
     )
+    # 객체 수준 제한: 이슈 보안 레벨. 스코프 권한을 통과한 뒤 한 번 더 거른다.
+    permissions.register_guard(issue_model(), SecurityLevelGuard())
+    set_permission_service(permissions)
 
-    for router in (auth_router, users_router, projects_router, roles_router):
+    for router in (
+        auth_router,
+        users_router,
+        projects_router,
+        roles_router,
+        issues_router,
+    ):
         app.include_router(router, prefix=API_PREFIX)
 
     return app
