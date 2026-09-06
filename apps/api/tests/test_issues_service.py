@@ -157,7 +157,7 @@ class TestCreate:
     ) -> None:
         with pytest.raises(PermissionDeniedError):
             await IssueService(session, permissions).create(
-                actor_for(user), NewIssue(project_id=project.id, summary="x")
+                actor_for(user), NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
             )
 
     async def test_key_sequence_increments_per_project(
@@ -171,7 +171,11 @@ class TestCreate:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
         keys = [
-            (await service.create(actor, NewIssue(project_id=project.id, summary=f"#{i}"))).key
+            (
+                await service.create(
+                    actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary=f"#{i}")
+                )
+            ).key
             for i in range(3)
         ]
         assert keys == [f"{project.key}-1", f"{project.key}-2", f"{project.key}-3"]
@@ -186,7 +190,7 @@ class TestCreate:
     ) -> None:
         actor = await full_access(session, user, project)
         view = await IssueService(session, permissions).create(
-            actor, NewIssue(project_id=project.id, summary="x")
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
         )
         assert view.state_name == "Open"
         assert view.state_category == "todo"
@@ -202,7 +206,12 @@ class TestCreate:
         actor = await full_access(session, user, project)
         view = await IssueService(session, permissions).create(
             actor,
-            NewIssue(project_id=project.id, summary="x", labels=["b", "a", "b", " a "]),
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="x",
+                labels=["b", "a", "b", " a "],
+            ),
         )
         assert view.labels == ["a", "b"]
 
@@ -219,7 +228,7 @@ class TestCreate:
         actor = await full_access(session, user, project)
         with pytest.raises(ValidationError) as exc:
             await IssueService(session, permissions).create(
-                actor, NewIssue(project_id=project.id, summary=summary)
+                actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary=summary)
             )
         assert exc.value.code == "issues.summary_required"
 
@@ -236,7 +245,7 @@ class TestCreate:
         await session.flush()
         with pytest.raises(ConflictError) as exc:
             await IssueService(session, permissions).create(
-                actor, NewIssue(project_id=project.id, summary="x")
+                actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
             )
         assert exc.value.code == "issues.project_archived"
 
@@ -257,7 +266,9 @@ class TestCreate:
         with pytest.raises(PermissionDeniedError):
             await IssueService(session, permissions).create(
                 actor_for(user),
-                NewIssue(project_id=project.id, summary="x", assignee_id=user.id),
+                NewIssue(
+                    project_id=project.id, type_id=issue_type.id, summary="x", assignee_id=user.id
+                ),
             )
 
     async def test_publishes_created_event(
@@ -270,7 +281,7 @@ class TestCreate:
     ) -> None:
         actor = await full_access(session, user, project)
         view = await IssueService(session, permissions).create(
-            actor, NewIssue(project_id=project.id, summary="x")
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
         )
         rows = (
             (
@@ -295,7 +306,9 @@ class TestHierarchy:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        parent = await service.create(actor, NewIssue(project_id=project.id, summary="p"))
+        parent = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="p")
+        )
 
         other = Project(key=f"O{secrets.token_hex(3).upper()}", name="Other")
         session.add(other)
@@ -309,7 +322,12 @@ class TestHierarchy:
         with pytest.raises(ValidationError) as exc:
             await service.create(
                 actor,
-                NewIssue(project_id=other.id, summary="c", parent_id=parent.issue.id),
+                NewIssue(
+                    project_id=other.id,
+                    type_id=issue_type.id,
+                    summary="c",
+                    parent_id=parent.issue.id,
+                ),
             )
         assert exc.value.code == "issues.parent_in_other_project"
 
@@ -327,12 +345,23 @@ class TestHierarchy:
         for depth in range(3):
             created = await service.create(
                 actor,
-                NewIssue(project_id=project.id, summary=f"L{depth}", parent_id=parent_id),
+                NewIssue(
+                    project_id=project.id,
+                    type_id=issue_type.id,
+                    summary=f"L{depth}",
+                    parent_id=parent_id,
+                ),
             )
             parent_id = created.issue.id
         with pytest.raises(ValidationError) as exc:
             await service.create(
-                actor, NewIssue(project_id=project.id, summary="deep", parent_id=parent_id)
+                actor,
+                NewIssue(
+                    project_id=project.id,
+                    type_id=issue_type.id,
+                    summary="deep",
+                    parent_id=parent_id,
+                ),
             )
         assert exc.value.code == "issues.subtask_too_deep"
 
@@ -347,9 +376,14 @@ class TestHierarchy:
         """A→B 인데 A 의 부모를 B 로 만들면 롤업 계산이 무한 루프에 빠진다."""
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        a = await service.create(actor, NewIssue(project_id=project.id, summary="a"))
+        a = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="a")
+        )
         b = await service.create(
-            actor, NewIssue(project_id=project.id, summary="b", parent_id=a.issue.id)
+            actor,
+            NewIssue(
+                project_id=project.id, type_id=issue_type.id, summary="b", parent_id=a.issue.id
+            ),
         )
         with pytest.raises(ValidationError) as exc:
             await service.update(actor, a.issue.id, {"parent_id": b.issue.id})
@@ -365,9 +399,14 @@ class TestHierarchy:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        parent = await service.create(actor, NewIssue(project_id=project.id, summary="p"))
+        parent = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="p")
+        )
         await service.create(
-            actor, NewIssue(project_id=project.id, summary="c", parent_id=parent.issue.id)
+            actor,
+            NewIssue(
+                project_id=project.id, type_id=issue_type.id, summary="c", parent_id=parent.issue.id
+            ),
         )
         with pytest.raises(ConflictError) as exc:
             await service.archive(actor, parent.issue.id)
@@ -392,7 +431,9 @@ class TestUpdate:
         )
         actor = actor_for(user)
         service = IssueService(session, permissions)
-        mine = await service.create(actor, NewIssue(project_id=project.id, summary="mine"))
+        mine = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="mine")
+        )
         await service.update(actor, mine.issue.id, {"summary": "고침"})
 
         stranger = User(email=f"s-{new_id()}@example.com", display_name="S", status="active")
@@ -414,7 +455,9 @@ class TestUpdate:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         stale = view.issue.version
 
         await service.update(actor, view.issue.id, {"summary": "먼저"})
@@ -433,7 +476,9 @@ class TestUpdate:
         """같은 값으로 저장했을 때 버전이 올라가면 남의 편집을 헛되게 막는다."""
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         again = await service.update(actor, view.issue.id, {"summary": "x"})
         assert again.issue.version == view.issue.version
 
@@ -447,7 +492,9 @@ class TestUpdate:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         with pytest.raises(ValidationError) as exc:
             await service.update(actor, view.issue.id, {"key_seq": 99})
         assert exc.value.code == "issues.field_not_editable"
@@ -462,7 +509,9 @@ class TestUpdate:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="처음"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="처음")
+        )
         await service.update(actor, view.issue.id, {"summary": "나중", "priority": 1})
 
         entries = await HistoryRepository(session).for_issue(view.issue.id)
@@ -483,7 +532,9 @@ class TestTransitions:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         names = {t.name for t in await service.available_transitions(actor, view.issue.id)}
         # Open 에서 나가는 전이 + from_state 가 NULL 인 전역 전이(Reopen)
         assert names == {"Start progress", "Reopen"}
@@ -498,7 +549,9 @@ class TestTransitions:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         assert view.issue.assignee_id is None
 
         start = next(
@@ -521,7 +574,9 @@ class TestTransitions:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
 
         start = next(
             t
@@ -550,7 +605,9 @@ class TestTransitions:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         for name in ("Start progress", "Resolve", "Reopen"):
             found = next(
                 t
@@ -572,7 +629,9 @@ class TestTransitions:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         resolve_row = (
             await session.execute(
                 select(WorkflowTransition)
@@ -595,7 +654,9 @@ class TestTransitions:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
 
         row = (
             await session.execute(
@@ -623,7 +684,9 @@ class TestTransitions:
         """다른 워크플로우의 전이 ID 로 상태를 갈아치울 수 없어야 한다."""
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
 
         other = Workflow(name=f"WF2-{secrets.token_hex(4)}")
         session.add(other)
@@ -654,7 +717,12 @@ class TestCustomFields:
         with pytest.raises(ValidationError) as exc:
             await IssueService(session, permissions).create(
                 actor,
-                NewIssue(project_id=project.id, summary="x", custom_fields={"nope": 1}),
+                NewIssue(
+                    project_id=project.id,
+                    type_id=issue_type.id,
+                    summary="x",
+                    custom_fields={"nope": 1},
+                ),
             )
         assert exc.value.code == "issues.unknown_custom_field"
 
@@ -680,7 +748,12 @@ class TestCustomFields:
         with pytest.raises(ValidationError) as exc:
             await IssueService(session, permissions).create(
                 actor,
-                NewIssue(project_id=project.id, summary="x", custom_fields={"severity": "nope"}),
+                NewIssue(
+                    project_id=project.id,
+                    type_id=issue_type.id,
+                    summary="x",
+                    custom_fields={"severity": "nope"},
+                ),
             )
         assert exc.value.details["field"] == "severity"
 
@@ -697,7 +770,7 @@ class TestCustomFields:
         actor = await full_access(session, user, project)
         with pytest.raises(ValidationError) as exc:
             await IssueService(session, permissions).create(
-                actor, NewIssue(project_id=project.id, summary="x")
+                actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
             )
         assert exc.value.code == "issues.required_custom_field_missing"
         assert exc.value.details["fields"] == ["team"]
@@ -719,7 +792,12 @@ class TestCustomFields:
         actor = await full_access(session, user, project)
         view = await IssueService(session, permissions).create(
             actor,
-            NewIssue(project_id=project.id, summary="x", custom_fields={"tags": ["b", "a"]}),
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="x",
+                custom_fields={"tags": ["b", "a"]},
+            ),
         )
         assert view.custom_fields["tags"] == ["b", "a"]
 
@@ -736,7 +814,9 @@ class TestSecurityLevel:
         """스코프 권한이 있어도 보안 레벨에서 막힌다 (auth.md 5절 객체 수준 제한)."""
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="secret"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="secret")
+        )
 
         insider = User(email=f"i-{new_id()}@e.com", display_name="I", status="active")
         session.add(insider)
@@ -764,7 +844,9 @@ class TestSecurityLevel:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="secret"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="secret")
+        )
 
         level = SecurityLevel(
             project_id=project.id,
@@ -790,7 +872,9 @@ class TestSecurityLevel:
         참조가 끊기고, 아무도 못 보는 이슈가 남지 않는다."""
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        view = await service.create(actor, NewIssue(project_id=project.id, summary="x"))
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
 
         insider = User(email=f"i-{new_id()}@e.com", display_name="I", status="active")
         session.add(insider)
@@ -827,7 +911,9 @@ class TestComments:
         """내부 노트는 SQL 단계에서 걸러야 한다. 가져와서 거르면 사고가 난다."""
         author = await full_access(session, user, project)
         issues = IssueService(session, permissions)
-        view = await issues.create(author, NewIssue(project_id=project.id, summary="x"))
+        view = await issues.create(
+            author, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
 
         comments = CommentService(session, permissions)
         await comments.add(author, view.issue.id, "공개 코멘트")
@@ -859,7 +945,9 @@ class TestComments:
     ) -> None:
         author = await full_access(session, user, project)
         issues = IssueService(session, permissions)
-        view = await issues.create(author, NewIssue(project_id=project.id, summary="x"))
+        view = await issues.create(
+            author, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
 
         outsider = User(email=f"o-{new_id()}@e.com", display_name="O", status="active")
         session.add(outsider)
@@ -884,7 +972,9 @@ class TestComments:
     ) -> None:
         author = await full_access(session, user, project)
         issues = IssueService(session, permissions)
-        view = await issues.create(author, NewIssue(project_id=project.id, summary="x"))
+        view = await issues.create(
+            author, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
+        )
         comments = CommentService(session, permissions)
         comment = await comments.add(author, view.issue.id, "내 것")
 
@@ -910,7 +1000,7 @@ class TestComments:
     ) -> None:
         author = await full_access(session, user, project)
         view = await IssueService(session, permissions).create(
-            author, NewIssue(project_id=project.id, summary="x")
+            author, NewIssue(project_id=project.id, type_id=issue_type.id, summary="x")
         )
         with pytest.raises(ValidationError) as exc:
             await CommentService(session, permissions).add(author, view.issue.id, "   ")
@@ -928,7 +1018,9 @@ class TestListing:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        await service.create(actor, NewIssue(project_id=project.id, summary="보임"))
+        await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="보임")
+        )
 
         hidden = Project(key=f"H{secrets.token_hex(3).upper()}", name="Hidden")
         session.add(hidden)
@@ -940,7 +1032,9 @@ class TestListing:
             scope=Scope.project(hidden.id),
         )
         creator = actor_for(user)
-        await service.create(creator, NewIssue(project_id=hidden.id, summary="숨김"))
+        await service.create(
+            creator, NewIssue(project_id=hidden.id, type_id=issue_type.id, summary="숨김")
+        )
 
         # 첫 액터의 ACL 은 project 스코프 하나뿐이다.
         page = await service.list_for(actor, PageRequest(limit=50), project_id=project.id)
@@ -956,8 +1050,12 @@ class TestListing:
     ) -> None:
         actor = await full_access(session, user, project)
         service = IssueService(session, permissions)
-        live = await service.create(actor, NewIssue(project_id=project.id, summary="살아있음"))
-        gone = await service.create(actor, NewIssue(project_id=project.id, summary="아카이브"))
+        live = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="살아있음")
+        )
+        gone = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="아카이브")
+        )
         await service.archive(actor, gone.issue.id)
         await session.flush()
 
