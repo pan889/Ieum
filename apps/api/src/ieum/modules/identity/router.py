@@ -1,0 +1,249 @@
+"""identity HTTP 라우터. 얇게 유지한다 — 스키마 검증과 서비스 호출뿐."""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from fastapi import APIRouter, status
+
+from ieum.core.deps import (
+    AppSettings,
+    ClientIp,
+    CurrentActor,
+    DbSession,
+    PendingMfaActor,
+    PermissionDep,
+    UserAgent,
+)
+from ieum.core.permissions import Scope
+from ieum.modules.identity import permissions as perms
+from ieum.modules.identity.schemas import (
+    AcceptInviteRequest,
+    BackupCodesResponse,
+    ChangePasswordRequest,
+    InviteRequest,
+    LoginRequest,
+    MFAVerifyRequest,
+    RefreshRequest,
+    SessionResponse,
+    TokenResponse,
+    TOTPEnrollResponse,
+    UserResponse,
+)
+from ieum.modules.identity.service import (
+    AuthService,
+    IssuedTokens,
+    MFAService,
+    UserService,
+)
+
+auth_router = APIRouter(prefix="/auth", tags=["auth"])
+users_router = APIRouter(prefix="/users", tags=["users"])
+
+
+def _tokens(issued: IssuedTokens) -> TokenResponse:
+    return TokenResponse(
+        access_token=issued.access_token,
+        refresh_token=issued.refresh_token,
+        expires_in=issued.expires_in,
+        mfa_required=issued.mfa_required,
+    )
+
+
+@auth_router.post("/login", response_model=TokenResponse)
+async def login(
+    body: LoginRequest,
+    session: DbSession,
+    settings: AppSettings,
+    ip: ClientIp,
+    user_agent: UserAgent = None,
+) -> TokenResponse:
+    """로컬 로그인. 계정 존재 여부가 응답으로 새지 않는다."""
+    issued = await AuthService(session, settings).login(
+        email=body.email, password=body.password, ip=ip, user_agent=user_agent
+    )
+    await session.commit()
+    return _tokens(issued)
+
+
+@auth_router.post("/refresh", response_model=TokenResponse)
+async def refresh(
+    body: RefreshRequest,
+    session: DbSession,
+    settings: AppSettings,
+    ip: ClientIp,
+    user_agent: UserAgent = None,
+) -> TokenResponse:
+    """리프레시 로테이션. 재사용이 감지되면 세션 계열 전체가 폐기된다."""
+    service = AuthService(session, settings)
+    try:
+        issued = await service.refresh(
+            refresh_token=body.refresh_token, ip=ip, user_agent=user_agent
+        )
+    except Exception:
+        # 재사용 탐지의 폐기 기록은 커밋돼야 한다. 롤백하면 탐지가 무의미해진다.
+        await session.commit()
+        raise
+    await session.commit()
+    return _tokens(issued)
+
+
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(actor: PendingMfaActor, session: DbSession, settings: AppSettings) -> None:
+    if actor.session_id is not None:
+        await AuthService(session, settings).logout(session_id=actor.session_id)
+    await session.commit()
+
+
+@auth_router.get("/me", response_model=UserResponse)
+async def me(actor: CurrentActor, session: DbSession) -> UserResponse:
+    from ieum.modules.identity.repository import UserRepository
+
+    user = await UserRepository(session).get(actor.user_id)
+    assert user is not None  # 액터가 있으면 사용자도 있다
+    return UserResponse.model_validate(user)
+
+
+@auth_router.get("/sessions", response_model=list[SessionResponse])
+async def list_sessions(actor: CurrentActor, session: DbSession) -> list[SessionResponse]:
+    from ieum.modules.identity.repository import SessionRepository
+
+    rows = await SessionRepository(session).list_live_for_user(actor.user_id)
+    return [
+        SessionResponse.model_validate(r).model_copy(
+            update={"is_current": r.id == actor.session_id}
+        )
+        for r in rows
+    ]
+
+
+@auth_router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_all_sessions(
+    actor: CurrentActor, session: DbSession, settings: AppSettings
+) -> None:
+    """본인의 모든 세션을 끊는다. 기기 분실 시의 첫 대응이다."""
+    await AuthService(session, settings).revoke_all_sessions(user_id=actor.user_id)
+    await session.commit()
+
+
+# ── 2FA ────────────────────────────────────────────────────────
+# MFA 미완료 세션도 접근할 수 있어야 한다. 그래야 강제 등록 흐름이 성립한다.
+
+
+@auth_router.post("/mfa/totp/enroll", response_model=TOTPEnrollResponse)
+async def enroll_totp(
+    actor: PendingMfaActor, session: DbSession, settings: AppSettings
+) -> TOTPEnrollResponse:
+    enrollment = await MFAService(session, settings).start_totp_enrollment(
+        user_id=actor.user_id, mfa_satisfied=actor.mfa_satisfied_at is not None
+    )
+    await session.commit()
+    return TOTPEnrollResponse(
+        credential_id=enrollment.credential_id,
+        secret=enrollment.secret,
+        provisioning_uri=enrollment.provisioning_uri,
+        qr_svg=enrollment.qr_svg,
+    )
+
+
+@auth_router.post("/mfa/totp/{credential_id}/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def confirm_totp(
+    credential_id: UUID,
+    body: MFAVerifyRequest,
+    actor: PendingMfaActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> None:
+    await MFAService(session, settings).confirm_totp_enrollment(
+        user_id=actor.user_id,
+        credential_id=credential_id,
+        code=body.code,
+        mfa_satisfied=actor.mfa_satisfied_at is not None,
+    )
+    await session.commit()
+
+
+@auth_router.post("/mfa/verify", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_mfa(
+    body: MFAVerifyRequest,
+    actor: PendingMfaActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> None:
+    """로그인 후 2FA 확인. 성공하면 이 세션의 모든 API 가 열린다."""
+    assert actor.session_id is not None
+    service = MFAService(session, settings)
+    try:
+        await service.verify(user_id=actor.user_id, session_id=actor.session_id, code=body.code)
+    except Exception:
+        await session.commit()  # 실패 감사 기록을 남긴다
+        raise
+    await session.commit()
+
+
+@auth_router.post("/mfa/backup-codes", response_model=BackupCodesResponse)
+async def issue_backup_codes(
+    actor: CurrentActor, session: DbSession, settings: AppSettings
+) -> BackupCodesResponse:
+    """10개를 발급한다. 이 응답 이후로는 서버도 평문을 모른다.
+
+    MFA 를 통과한 세션 전용이다 — PendingMfaActor 를 쓰면 2FA 우회가 된다.
+    """
+    codes = await MFAService(session, settings).issue_backup_codes(
+        user_id=actor.user_id, mfa_satisfied=actor.mfa_satisfied_at is not None
+    )
+    await session.commit()
+    return BackupCodesResponse(codes=codes)
+
+
+# ── 사용자 ──────────────────────────────────────────────────────
+
+
+@users_router.post("/invite", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def invite_user(
+    body: InviteRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> UserResponse:
+    await permissions.require(session, actor, perms.USER_INVITE, scope=Scope.global_())
+    user = await UserService(session, settings).invite(
+        email=body.email,
+        display_name=body.display_name,
+        locale=body.locale,
+        timezone=body.timezone,
+        invited_by=actor.user_id,
+    )
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
+@users_router.post("/accept-invite", response_model=UserResponse)
+async def accept_invite(
+    body: AcceptInviteRequest, session: DbSession, settings: AppSettings
+) -> UserResponse:
+    from ieum.modules.identity.invites import decode_invite_token
+
+    user_id = decode_invite_token(body.token, settings)
+    user = await UserService(session, settings).activate_with_password(
+        user_id=user_id, password=body.password
+    )
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
+@users_router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    body: ChangePasswordRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> None:
+    """비밀번호를 바꾸면 다른 기기의 세션이 전부 끊긴다."""
+    await UserService(session, settings).change_password(
+        user_id=actor.user_id,
+        current_password=body.current_password,
+        new_password=body.new_password,
+    )
+    await session.commit()

@@ -10,14 +10,16 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Iterator
 
+import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ieum.config import Settings
 from ieum.core.context import Actor
 from ieum.core.ids import new_id
-from ieum.db.base import Base
+from ieum.db.models import Base
 
 TEST_SECRET = "test-secret-key-at-least-32-characters-long-xxxx"
 
@@ -73,6 +75,50 @@ async def session(engine: object) -> AsyncIterator[AsyncSession]:
         yield s
     await trans.rollback()
     await conn.close()
+
+
+@pytest_asyncio.fixture
+async def app_client(engine: object, settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
+    """시드까지 끝난 실제 앱에 붙은 HTTP 클라이언트.
+
+    통합 테스트는 라우터·의존성·권한 배선까지 함께 봐야 의미가 있다.
+    DB 세션은 dependency_overrides 로 갈아끼운다 — 모듈 전역을 건드리면
+    테스트끼리 상태가 샌다.
+    """
+    from ieum.config import get_settings
+    from ieum.db.session import get_db_session
+    from ieum.main import create_app
+    from ieum.seed import seed
+
+    factory = async_sessionmaker(bind=engine, expire_on_commit=False)  # type: ignore[arg-type]
+
+    async with factory() as s:
+        await _truncate_all(s)
+        await seed(s, settings)
+        await s.commit()
+
+    async def _override_session() -> AsyncIterator[AsyncSession]:
+        async with factory() as s:
+            yield s
+
+    app = create_app(settings)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_db_session] = _override_session
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
+async def _truncate_all(session: AsyncSession) -> None:
+    """테스트 간 격리. 통합 테스트는 커밋을 하므로 롤백으로는 부족하다."""
+    tables = ", ".join(f'"{t.name}"' for t in reversed(Base.metadata.sorted_tables))
+    await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture
+def seed_admin() -> tuple[str, str]:
+    return "admin@example.com", "seed-admin-password-1234"
 
 
 @pytest.fixture

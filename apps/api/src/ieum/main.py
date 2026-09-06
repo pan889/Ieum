@@ -19,7 +19,11 @@ from ieum.config import Settings, get_settings
 from ieum.core.errors import install_exception_handlers
 from ieum.core.logging import configure_logging, get_logger
 from ieum.core.middleware import TraceMiddleware
+from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
+from ieum.modules.identity.router import auth_router, users_router
+from ieum.modules.org.repository import OrgPermissionResolver
+from ieum.modules.org.router import projects_router, roles_router
 
 log = get_logger(__name__)
 
@@ -92,6 +96,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     install_exception_handlers(app)
     app.include_router(_build_ops_router())
+
+    # 권한 리졸버 배선. core 는 org 를 import 하지 않으므로 여기서 꽂아 넣는다.
+    set_permission_service(
+        PermissionService(
+            resolver=OrgPermissionResolver(),
+            step_up_window_seconds=settings.step_up_window_seconds,
+        )
+    )
+
+    for router in (auth_router, users_router, projects_router, roles_router):
+        app.include_router(router, prefix=API_PREFIX)
 
     return app
 

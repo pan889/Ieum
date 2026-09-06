@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 
@@ -15,15 +16,25 @@ def _cmd_openapi() -> int:
     return 0
 
 
+def _cmd_seed() -> int:
+    """기본 워크스페이스·내장 역할·관리자 계정을 만든다. 멱등하다."""
+    from ieum.seed import run_seed
+
+    return asyncio.run(run_seed())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ieum")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("openapi", help="OpenAPI 스키마 덤프")
+    sub.add_parser("seed", help="초기 데이터 생성 (멱등)")
 
     args = parser.parse_args(argv)
     match args.command:
         case "openapi":
             return _cmd_openapi()
+        case "seed":
+            return _cmd_seed()
         case _:  # pragma: no cover
             parser.error(f"알 수 없는 명령: {args.command}")
             return 2

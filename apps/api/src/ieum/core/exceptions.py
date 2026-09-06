@@ -25,7 +25,10 @@ class IeumError(Exception):
         code: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
-        self.message = message or self.__class__.__doc__ or self.code
+        # docstring 을 기본 메시지로 쓰면 여러 줄 설계 주석이 API 응답으로 샌다.
+        # 첫 줄만 쓴다.
+        default = (self.__class__.__doc__ or self.code).strip().split("\n")[0]
+        self.message = message or default
         if code is not None:
             self.code = code
         self.details: dict[str, Any] = details or {}

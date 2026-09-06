@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, select
+from sqlalchemy import DateTime, Index, Integer, String, Text, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -49,7 +49,7 @@ class OutboxEvent(Entity):
         Index(
             "ix_outbox_event_unpublished",
             "created_at",
-            postgresql_where=published_at.is_(None),
+            postgresql_where=text("published_at IS NULL"),
         ),
         Index("ix_outbox_event_aggregate", "aggregate_type", "aggregate_id"),
     )

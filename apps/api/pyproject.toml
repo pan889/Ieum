@@ -44,6 +44,7 @@ dev = [
     "httpx>=0.28",
     "testcontainers[postgres]>=4.13",
     "bandit>=1.9",
+    "types-qrcode>=8.2",
 ]
 
 [build-system]
@@ -85,18 +86,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]   # 테스트 안의 더미 비밀번호
 
-# CLAUDE.md 절대규칙 1: 모듈 경계를 넘는 import 금지.
-# 다른 모듈은 오직 contracts 를 통해서만 접근한다. ruff 가 1차로 막는다.
+# CLAUDE.md 절대규칙 1(모듈 경계를 넘는 import 금지)은 ruff 로 표현할 수 없다.
+# banned-api 는 "같은 모듈 안에서는 허용"을 구분하지 못해 자기 내부 import 까지 막는다.
+# 대신 tests/test_module_boundaries.py 가 AST 로 정확히 검사한다.
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
-
-[tool.ruff.lint.flake8-tidy-imports.banned-api]
-"ieum.modules.identity.models".msg = "모듈 경계 위반. ieum.modules.identity.contracts 를 사용한다."
-"ieum.modules.identity.service".msg = "모듈 경계 위반. contracts 를 사용한다."
-"ieum.modules.identity.repository".msg = "모듈 경계 위반. contracts 를 사용한다."
-"ieum.modules.org.models".msg = "모듈 경계 위반. ieum.modules.org.contracts 를 사용한다."
-"ieum.modules.org.service".msg = "모듈 경계 위반. contracts 를 사용한다."
-"ieum.modules.org.repository".msg = "모듈 경계 위반. contracts 를 사용한다."
 
 [tool.ruff.lint.isort]
 known-first-party = ["ieum"]
@@ -114,13 +108,15 @@ mypy_path = "src"
 packages = ["ieum"]
 
 [[tool.mypy.overrides]]
-module = ["qrcode.*", "arq.*", "testcontainers.*"]
+module = ["arq.*", "testcontainers.*"]
 ignore_missing_imports = true
 
 # ── pytest ──────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+# 테스트도 같은 루프에서 돌아야 세션 스코프 엔진의 커넥션을 공유할 수 있다.
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [

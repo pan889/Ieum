@@ -115,6 +115,9 @@ class PermissionRegistry:
     def keys(self) -> frozenset[str]:
         return frozenset(self._defs)
 
+    def __contains__(self, key: object) -> bool:
+        return key in self._defs
+
 
 registry = PermissionRegistry()
 
@@ -268,3 +271,23 @@ class PermissionService:
         age = (utcnow() - satisfied_at).total_seconds()
         if age > self.step_up_window_seconds:
             raise StepUpRequiredError(details={"window_seconds": self.step_up_window_seconds})
+
+
+# ── 서비스 배선 ─────────────────────────────────────────────────
+# core 는 org 를 import 할 수 없다(의존 방향). 그래서 org 가 구현한 리졸버를
+# 기동 시점에 여기 꽂아 넣고, 의존성은 이 홀더에서 꺼내 쓴다.
+
+_service: PermissionService | None = None
+
+
+def set_permission_service(service: PermissionService) -> None:
+    global _service
+    _service = service
+
+
+def get_permission_service() -> PermissionService:
+    if _service is None:
+        raise RuntimeError(
+            "PermissionService 가 배선되지 않았다. main.create_app() 을 거쳐야 한다."
+        )
+    return _service
