@@ -45,6 +45,15 @@ export {
   type NewSamlProvider,
 } from './projects'
 export {
+  createFieldsApi,
+  type FieldDefinitionAdmin,
+  type FieldsApi,
+  createWorkflowsApi,
+  type WorkflowDetail,
+  type WorkflowStateDetail,
+  type WorkflowSummary,
+  type WorkflowTransitionDetail,
+  type WorkflowsApi,
   createIssuesApi,
   type AvailableTransition,
   type FieldDefinition,

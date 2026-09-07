@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import CursorResult, Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page, PageRequest
@@ -88,6 +88,49 @@ class WorkflowRepository:
     async def transition(self, transition_id: UUID) -> WorkflowTransition | None:
         return await self._s.get(WorkflowTransition, transition_id)
 
+    async def all_workflows(self) -> list[Workflow]:
+        stmt = select(Workflow).order_by(Workflow.name)
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def state_counts(self) -> dict[UUID, int]:
+        rows = (
+            await self._s.execute(
+                select(WorkflowState.workflow_id, func.count(WorkflowState.id)).group_by(
+                    WorkflowState.workflow_id
+                )
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    async def transition_counts(self) -> dict[UUID, int]:
+        rows = (
+            await self._s.execute(
+                select(WorkflowTransition.workflow_id, func.count(WorkflowTransition.id)).group_by(
+                    WorkflowTransition.workflow_id
+                )
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    async def transitions_of(self, workflow_id: UUID) -> list[WorkflowTransition]:
+        """전이 전부. 전역 전이(`from_state_id IS NULL`)도 포함한다 —
+        관리 화면은 어디서든 갈 수 있는 길을 보여 줘야 한다."""
+        stmt = (
+            select(WorkflowTransition)
+            .where(WorkflowTransition.workflow_id == workflow_id)
+            .order_by(WorkflowTransition.position, WorkflowTransition.name)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def types_using(self, workflow_id: UUID) -> list[IssueType]:
+        """이 워크플로우를 쓰는 이슈 유형. 고칠 때 영향 범위다."""
+        stmt = (
+            select(IssueType)
+            .where(IssueType.workflow_id == workflow_id)
+            .order_by(IssueType.position, IssueType.name)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
 
 class IssueTypeRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -148,6 +191,42 @@ class FieldDefinitionRepository:
     def add(self, definition: FieldDefinition) -> FieldDefinition:
         self._s.add(definition)
         return definition
+
+    async def get(self, definition_id: UUID) -> FieldDefinition | None:
+        return await self._s.get(FieldDefinition, definition_id)
+
+    async def all_definitions(self) -> list[FieldDefinition]:
+        """정의 전부. 관리 화면이 쓴다 — 프로젝트·유형 제한과 무관하게 본다."""
+        stmt = select(FieldDefinition).order_by(FieldDefinition.position, FieldDefinition.name)
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def value_counts(self) -> dict[str, int]:
+        """필드 키별로 값을 들고 있는 이슈 수.
+
+        지우기 전에 알아야 한다. `issue_field_value.field_key` 에는 FK 가
+        없어서(정의가 없는 키도 담길 수 있다) 지우기가 값을 자동으로
+        치우지 않는다.
+        """
+        rows = (
+            await self._s.execute(
+                select(IssueFieldValue.field_key, func.count()).group_by(IssueFieldValue.field_key)
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    async def delete_definition(self, definition_id: UUID, key: str) -> int:
+        """정의와 그 값을 함께 지운다. 지운 값의 개수를 돌려준다.
+
+        **값을 남기면 되살아난다.** FK 가 없으므로 정의만 지우면 값은 보이지
+        않는 채로 남고, 나중에 같은 키로 정의를 다시 만들면 그 값이 다시
+        나타난다 — 종류가 달라졌으면 위젯이 엉뚱한 것을 그린다. 그룹을 지울
+        때 역할 할당을 함께 지우는 것과 같은 판단이다.
+        """
+        result: CursorResult[Any] = await self._s.execute(  # type: ignore[assignment]
+            delete(IssueFieldValue).where(IssueFieldValue.field_key == key)
+        )
+        await self._s.execute(delete(FieldDefinition).where(FieldDefinition.id == definition_id))
+        return int(result.rowcount or 0)
 
     async def applicable_to(
         self, *, project_id: UUID, issue_type_id: UUID

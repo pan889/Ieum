@@ -45,7 +45,7 @@ test('역할을 만들고, 권한을 고르고, 주고, 되돌린다', async ({ 
 
   // 권한을 하나 켠다. 켜자마자 저장된다 — "저장" 버튼을 따로 두면 눌렀는지
   // 아닌지가 화면에 남고, 안 누른 사람은 권한을 준 줄로 안다.
-  const chip = row.getByRole('button', { name: /^view the audit log$/i })
+  const chip = row.getByRole('button', { name: /\(identity\.audit\.view\)$/ })
   await expect(chip).toBeVisible()
   await chip.click()
   await expect(chip).toHaveAttribute('aria-pressed', 'true')
@@ -91,7 +91,7 @@ test('내장 역할은 권한 손잡이를 그리지 않고 이유를 말한다'
   await row.getByRole('button', { name: /^edit Administrator$/i }).click()
   await expect(row).toContainText(/restored from their definition on every deploy/i)
   // 권한 칩이 없다.
-  await expect(row.getByRole('button', { name: /^view the audit log$/i })).toHaveCount(0)
+  await expect(row.getByRole('button', { name: /\(identity\.audit\.view\)$/ })).toHaveCount(0)
 })
 
 test('자기 관리자 역할은 스스로 회수할 수 없다', async ({ page }) => {

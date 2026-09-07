@@ -306,3 +306,116 @@ export function createIssuesApi(client: ApiClient) {
 }
 
 export type IssuesApi = ReturnType<typeof createIssuesApi>
+
+
+// ── 관리 콘솔: 워크플로우와 필드 정의 ──────────────────────────
+
+const ADMIN_WORKFLOWS = '/api/v1/admin/workflows'
+const ADMIN_FIELDS = '/api/v1/admin/fields'
+
+/** 목록 한 줄. 고칠 때 무엇이 영향을 받는지까지 담는다. */
+export interface WorkflowSummary {
+  id: string
+  name: string
+  description: string | null
+  is_builtin: boolean
+  state_count: number
+  transition_count: number
+  /** 이 워크플로우를 쓰는 이슈 유형 이름. */
+  used_by: string[]
+}
+
+export interface WorkflowStateDetail {
+  id: string
+  name: string
+  /** 보드 컬럼·"완료 여부" 판정의 근거. 이름이 뭐든 시스템은 이걸 본다. */
+  category: string
+  position: number
+  is_initial: boolean
+}
+
+export interface WorkflowTransitionDetail {
+  id: string
+  name: string
+  /** null 이면 **모든 상태에서** 갈 수 있다(전역 전이). */
+  from_state_id: string | null
+  to_state_id: string
+  conditions: Record<string, unknown>[]
+  post_functions: Record<string, unknown>[]
+  position: number
+}
+
+export interface WorkflowDetail {
+  id: string
+  name: string
+  description: string | null
+  is_builtin: boolean
+  states: WorkflowStateDetail[]
+  transitions: WorkflowTransitionDetail[]
+  used_by: string[]
+}
+
+/**
+ * 워크플로우 조회. **편집은 없다** — 상태를 지우면 이미 그 상태에 있는
+ * 이슈를 어디로 보낼지 정해야 한다(서버의 issues/admin.py 참고).
+ */
+export function createWorkflowsApi(client: ApiClient) {
+  return {
+    list: () => client.get<WorkflowSummary[]>(ADMIN_WORKFLOWS),
+    get: (id: string) => client.get<WorkflowDetail>(`${ADMIN_WORKFLOWS}/${id}`),
+  }
+}
+
+export type WorkflowsApi = ReturnType<typeof createWorkflowsApi>
+
+/** 관리 화면용 필드 정의. 목록에 필요한 곁가지까지 담는다. */
+export interface FieldDefinitionAdmin {
+  id: string
+  key: string
+  name: string
+  kind: string
+  description: string | null
+  config: Record<string, unknown>
+  is_required: boolean
+  position: number
+  /** null 이면 제한 없음. 둘 다 null 이면 어디서나 보인다. */
+  project_id: string | null
+  issue_type_id: string | null
+  /** 이 필드에 값을 넣은 이슈 수. **지우기 전에 알아야 한다.** */
+  value_count: number
+}
+
+/**
+ * 커스텀 필드 정의.
+ *
+ * 키와 종류는 **만들 때만** 정한다. 키는 IQL 식별자이자 값의 주소이고,
+ * 종류는 값의 해석을 정한다 — 나중에 바꾸면 저장된 값이 어긋난다.
+ */
+export function createFieldsApi(client: ApiClient) {
+  return {
+    list: () => client.get<FieldDefinitionAdmin[]>(ADMIN_FIELDS),
+    create: (body: {
+      key: string
+      name: string
+      kind: string
+      description?: string | null
+      config?: Record<string, unknown>
+      is_required?: boolean
+      position?: number
+    }) => client.post<FieldDefinition>(ADMIN_FIELDS, body),
+    update: (
+      id: string,
+      body: {
+        name?: string
+        description?: string | null
+        config?: Record<string, unknown>
+        is_required?: boolean
+        position?: number
+      },
+    ) => client.patch<FieldDefinition>(`${ADMIN_FIELDS}/${id}`, body),
+    /** 정의와 **그 값**을 함께 지운다. 남기면 같은 키로 되살아난다. */
+    remove: (id: string) => client.delete<void>(`${ADMIN_FIELDS}/${id}`),
+  }
+}
+
+export type FieldsApi = ReturnType<typeof createFieldsApi>

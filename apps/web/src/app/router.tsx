@@ -20,9 +20,11 @@ import { AuditLogScreen } from '@/features/settings/AuditLogScreen'
 import { SecurityScreen } from '@/features/settings/SecurityScreen'
 import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
 import { GroupsScreen } from '@/features/settings/GroupsScreen'
+import { FieldsScreen } from '@/features/settings/FieldsScreen'
 import { RolesScreen } from '@/features/settings/RolesScreen'
 import { SsoScreen } from '@/features/settings/SsoScreen'
 import { UsersScreen } from '@/features/settings/UsersScreen'
+import { WorkflowsScreen } from '@/features/settings/WorkflowsScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
@@ -138,6 +140,18 @@ const rolesRoute = createRoute({
   component: RolesScreen,
 })
 
+const workflowsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/workflows',
+  component: WorkflowsScreen,
+})
+
+const fieldsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/fields',
+  component: FieldsScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -205,6 +219,8 @@ const routeTree = rootRoute.addChildren([
   peopleRoute,
   groupsRoute,
   rolesRoute,
+  workflowsRoute,
+  fieldsRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

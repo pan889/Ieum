@@ -8,7 +8,7 @@ test('2FA 없이는 토큰을 만들 수 없다', async ({ page }) => {
 
   await page.getByRole('button', { name: /new token/i }).click()
   await page.getByLabel(/^name$/i).fill('ci')
-  await page.getByRole('button', { name: 'identity.user.view' }).click()
+  await page.getByRole('button', { name: /\(identity\.user\.view\)$/ }).click()
   await page.getByRole('button', { name: /create token/i }).click()
 
   await expect(page.getByRole('alert')).toContainText(/two-factor/i)
@@ -27,10 +27,14 @@ test('권한 목록을 스코프 후보로 보여준다', async ({ page, console
   await page.getByRole('button', { name: /new token/i }).click()
 
   // 서버가 등록한 권한 상수를 그대로 쓴다 — 프론트에 하드코딩하면 갈라진다.
-  await expect(page.getByRole('button', { name: 'issue.view' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'identity.token.issue' })).toBeVisible()
+  //
+  // 칩에 보이는 글자는 번역된 이름이고, **읽히는 이름**은 "이름 (키)" 다.
+  // 정확한 문자열을 스크립트에 적어야 하는 사람이 있어서 키를 함께 담는다.
+  // 그래서 키로 고른다 — 이름만으로 고르면 카탈로그 문구가 계약이 된다.
+  await expect(page.getByRole('button', { name: /\(issue\.view\)$/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /\(identity\.token\.issue\)$/ })).toBeVisible()
 
-  const chip = page.getByRole('button', { name: 'issue.view' })
+  const chip = page.getByRole('button', { name: /\(issue\.view\)$/ })
   await expect(chip).toHaveAttribute('aria-pressed', 'false')
   await chip.click()
   await expect(chip).toHaveAttribute('aria-pressed', 'true')

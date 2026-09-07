@@ -249,9 +249,14 @@ function RoleCard({
                     key={def.key}
                     pressed={held.has(def.key)}
                     disabled={save.isPending}
-                    // 정확한 권한 문자열은 여기서만 보인다. 이름은 번역되고,
-                    // 문서·설정을 맞출 때 필요한 것은 키 쪽이다.
+                    // 정확한 권한 문자열은 툴팁과 **읽히는 이름**에 함께
+                    // 넣는다. 툴팁만 두면 키보드·스크린 리더로 쓰는 사람에게는
+                    // 없는 값이고, 문서·설정을 맞출 때 필요한 것은 키 쪽이다.
                     title={def.key}
+                    aria-label={t('admin:permissionWithKey', {
+                      name: t(`admin:permission.${def.key}`),
+                      key: def.key,
+                    })}
                     onClick={() => { toggle(def.key) }}
                   >
                     {t(`admin:permission.${def.key}`)}

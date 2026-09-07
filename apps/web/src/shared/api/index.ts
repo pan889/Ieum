@@ -5,6 +5,7 @@ import {
   createAuditApi,
   createAuthApi,
   createBoardsApi,
+  createFieldsApi,
   createGroupsApi,
   createIdpApi,
   createIssuesApi,
@@ -15,6 +16,7 @@ import {
   createSecurityApi,
   createUsersApi,
   createWikiApi,
+  createWorkflowsApi,
 } from '@ieum/api-client'
 
 import { useAuthStore } from '@/features/auth/store'
@@ -42,3 +44,5 @@ export const auditApi = createAuditApi(apiClient)
 export const securityApi = createSecurityApi(apiClient)
 export const idpApi = createIdpApi(apiClient)
 export const groupsApi = createGroupsApi(apiClient)
+export const workflowsApi = createWorkflowsApi(apiClient)
+export const fieldsApi = createFieldsApi(apiClient)

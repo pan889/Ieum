@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, Query, status
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
+from ieum.modules.issues.admin import FieldDefinitionService, WorkflowCatalogService
 from ieum.modules.issues.bulk import BulkService
 from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import HistoryRepository
@@ -19,7 +20,10 @@ from ieum.modules.issues.schemas import (
     CommentCreateRequest,
     CommentResponse,
     CommentUpdateRequest,
+    FieldDefinitionAdminResponse,
+    FieldDefinitionCreateRequest,
     FieldDefinitionResponse,
+    FieldDefinitionUpdateRequest,
     HistoryEntryResponse,
     IssueCreateRequest,
     IssuePageResponse,
@@ -34,7 +38,9 @@ from ieum.modules.issues.schemas import (
     TransitionRequest,
     TransitionResponse,
     VersionResponse,
+    WorkflowDetailResponse,
     WorkflowStateResponse,
+    WorkflowSummaryResponse,
     WorklogCreateRequest,
     WorklogPanelResponse,
     WorklogResponse,
@@ -49,6 +55,9 @@ from ieum.modules.issues.service import (
 from ieum.modules.issues.worklog import TimeSummary, WorklogService
 
 issues_router = APIRouter(prefix="/issues", tags=["issues"])
+#: 관리 콘솔. 이슈가 아니라 이슈가 **따르는 정의**를 다룬다.
+workflows_router = APIRouter(prefix="/admin/workflows", tags=["workflows"])
+fields_router = APIRouter(prefix="/admin/fields", tags=["fields"])
 
 #: 낙관적 잠금. 없으면 검사하지 않는다 (강제하면 단순 스크립트가 불편해진다).
 IfMatch = Annotated[str | None, Header(alias="If-Match")]
@@ -528,3 +537,101 @@ async def bulk_edit(
             for f in result.failed
         ],
     )
+
+
+# ── 관리 콘솔: 워크플로우 ───────────────────────────────────────
+#
+# **읽기만 한다.** 상태를 지우거나 초기 상태를 옮기는 일은 이미 그 상태에 있는
+# 이슈를 어디로 보낼지 정해야 한다 — 절반만 만든 편집은 없는 편집보다 나쁘다
+# (issues/admin.py 참고).
+
+
+@workflows_router.get("", response_model=list[WorkflowSummaryResponse])
+async def list_workflows(
+    actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[WorkflowSummaryResponse]:
+    views = await WorkflowCatalogService(session, permissions).list_all(actor)
+    return [WorkflowSummaryResponse.of(view) for view in views]
+
+
+@workflows_router.get("/{workflow_id}", response_model=WorkflowDetailResponse)
+async def get_workflow(
+    workflow_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> WorkflowDetailResponse:
+    detail = await WorkflowCatalogService(session, permissions).detail(actor, workflow_id)
+    return WorkflowDetailResponse.of(detail)
+
+
+# ── 관리 콘솔: 커스텀 필드 정의 ─────────────────────────────────
+
+
+@fields_router.get("", response_model=list[FieldDefinitionAdminResponse])
+async def list_all_field_definitions(
+    actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[FieldDefinitionAdminResponse]:
+    views = await FieldDefinitionService(session, permissions).list_all(actor)
+    return [FieldDefinitionAdminResponse.of(view) for view in views]
+
+
+@fields_router.post("", response_model=FieldDefinitionResponse, status_code=status.HTTP_201_CREATED)
+async def create_field_definition(
+    body: FieldDefinitionCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> FieldDefinitionResponse:
+    definition = await FieldDefinitionService(session, permissions).create(
+        actor,
+        key=body.key,
+        name=body.name,
+        kind=body.kind,
+        description=body.description,
+        config=body.config,
+        is_required=body.is_required,
+        position=body.position,
+        project_id=body.project_id,
+        issue_type_id=body.issue_type_id,
+    )
+    await session.commit()
+    return FieldDefinitionResponse.model_validate(definition)
+
+
+@fields_router.patch("/{definition_id}", response_model=FieldDefinitionResponse)
+async def update_field_definition(
+    definition_id: UUID,
+    body: FieldDefinitionUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> FieldDefinitionResponse:
+    definition = await FieldDefinitionService(session, permissions).update(
+        actor,
+        definition_id,
+        name=body.name,
+        description=body.description,
+        config=body.config,
+        is_required=body.is_required,
+        position=body.position,
+    )
+    await session.commit()
+    return FieldDefinitionResponse.model_validate(definition)
+
+
+@fields_router.delete("/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_field_definition(
+    definition_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    """정의를 지운다. **값도 함께 사라진다.**
+
+    남기면 되살아난다 — `issue_field_value.field_key` 에 FK 가 없어서, 같은
+    키로 정의를 다시 만들면 옛 값이 다시 나타난다(종류가 달라졌으면 위젯이
+    엉뚱한 것을 그린다). 화면은 지우기 전에 몇 개가 사라지는지 보여 준다.
+    """
+    await FieldDefinitionService(session, permissions).delete(actor, definition_id)
+    await session.commit()

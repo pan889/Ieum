@@ -35,7 +35,7 @@ from ieum.modules.identity.router import (
 from ieum.modules.issues import attachments as issue_attachments
 from ieum.modules.issues.board_router import boards_router
 from ieum.modules.issues.contracts import issue_model
-from ieum.modules.issues.router import issues_router
+from ieum.modules.issues.router import fields_router, issues_router, workflows_router
 from ieum.modules.issues.search_router import filters_router, search_router
 from ieum.modules.issues.service import SecurityLevelGuard
 from ieum.modules.notify.router import (
@@ -148,6 +148,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         roles_router,
         security_router,
         issues_router,
+        workflows_router,
+        fields_router,
         boards_router,
         attachments_router,
         search_router,

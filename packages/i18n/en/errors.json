@@ -179,5 +179,10 @@
   "org.role_is_builtin": "Built-in roles are restored on every deploy — their permissions can't be changed here.",
   "org.cannot_revoke_own_admin": "You can't take your own administrator role back. Ask another administrator.",
   "org.cannot_drop_own_role_manage": "This role is your only way to manage roles. Give someone else that permission first.",
-  "org.permission_scope_mismatch": "Those permissions don't apply at this scope: {permissions}."
+  "org.permission_scope_mismatch": "Those permissions don't apply at this scope: {permissions}.",
+  "issues.field_key_taken": "That field key is already in use.",
+  "issues.invalid_field_key": "Field keys are 2–64 characters: lowercase letters, digits and underscores, starting with a letter.",
+  "issues.field_name_required": "Give the field a label.",
+  "issues.field_options_required": "Add at least one choice — otherwise nobody can fill this field in.",
+  "issues.field_options_duplicated": "Two choices are the same."
 }

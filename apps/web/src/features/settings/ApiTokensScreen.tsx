@@ -120,9 +120,16 @@ export function ApiTokensScreen() {
                     key={definition.key}
                     pressed={scopes.includes(definition.key)}
                     // 예전에는 서버가 준 한국어 설명이 툴팁이었다 — 영어
-                    // 화면에서 한국어가 떴다. 이름은 번역하고 툴팁에는
-                    // 정확한 권한 문자열을 둔다.
+                    // 화면에서 한국어가 떴다. 이름은 번역한다.
+                    //
+                    // 정확한 권한 문자열은 **읽히는 이름에도** 넣는다. 툴팁만
+                    // 두면 키보드·스크린 리더로 쓰는 사람에게는 없는 값이고,
+                    // 스코프를 스크립트에 그대로 적어야 하는 자리가 여기다.
                     title={definition.key}
+                    aria-label={t('admin:permissionWithKey', {
+                      name: t(`admin:permission.${definition.key}`),
+                      key: definition.key,
+                    })}
                     onClick={() => {
                       setScopes((current) =>
                         current.includes(definition.key)

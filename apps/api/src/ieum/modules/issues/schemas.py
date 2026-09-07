@@ -158,6 +158,156 @@ class FieldDefinitionResponse(BaseModel):
     position: int
 
 
+class FieldDefinitionAdminResponse(BaseModel):
+    """관리 화면용 필드 정의. 목록에 필요한 곁가지까지 담는다."""
+
+    id: UUID
+    key: str
+    name: str
+    kind: str
+    description: str | None
+    config: dict[str, Any]
+    is_required: bool
+    position: int
+    #: NULL 이면 제한 없음. 화면은 "어디서나" 와 "제한됨" 을 이것으로 가른다.
+    project_id: UUID | None
+    issue_type_id: UUID | None
+    #: 이 필드에 값을 넣은 이슈 수. **지우기 전에 알아야 한다** — 지우면
+    #: 값도 함께 사라진다.
+    value_count: int
+
+    @classmethod
+    def of(cls, view: Any) -> FieldDefinitionAdminResponse:
+        row = view.definition
+        return cls(
+            id=row.id,
+            key=row.key,
+            name=row.name,
+            kind=row.kind,
+            description=row.description,
+            config=dict(row.config),
+            is_required=row.is_required,
+            position=row.position,
+            project_id=row.project_id,
+            issue_type_id=row.issue_type_id,
+            value_count=view.values,
+        )
+
+
+class FieldDefinitionCreateRequest(BaseModel):
+    """필드 정의를 만든다.
+
+    키와 종류는 **만들 때만** 정한다. 키는 IQL 식별자이자 값의 주소이고,
+    종류는 값의 해석을 정한다 — 나중에 바꾸면 이미 저장된 값이 어긋난다.
+    """
+
+    key: str = Field(min_length=2, max_length=64)
+    name: str = Field(min_length=1, max_length=100)
+    kind: str = Field(min_length=1, max_length=20)
+    description: str | None = Field(default=None, max_length=4000)
+    #: 종류별 설정. `select` 는 `options`, `number` 는 `min`/`max` 등.
+    config: dict[str, Any] = Field(default_factory=dict)
+    is_required: bool = False
+    position: int = Field(default=0, ge=0, le=9999)
+    #: 비우면 어디서나 보인다.
+    project_id: UUID | None = None
+    issue_type_id: UUID | None = None
+
+
+class FieldDefinitionUpdateRequest(BaseModel):
+    """보내지 않은 항목은 그대로 둔다. 키와 종류는 여기 없다."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=4000)
+    config: dict[str, Any] | None = None
+    is_required: bool | None = None
+    position: int | None = Field(default=None, ge=0, le=9999)
+
+
+class WorkflowStateDetailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    #: 보드 컬럼·번다운·"완료 여부" 판정의 근거. 이름이 뭐든 시스템은 이걸 본다.
+    category: str
+    position: int
+    is_initial: bool
+
+
+class WorkflowTransitionResponse(BaseModel):
+    id: UUID
+    name: str
+    #: NULL 이면 **모든 상태에서** 갈 수 있다(전역 전이).
+    from_state_id: UUID | None
+    to_state_id: UUID
+    #: 등록된 이름 + 파라미터. 임의 코드 실행은 지원하지 않는다.
+    conditions: list[dict[str, Any]]
+    post_functions: list[dict[str, Any]]
+    position: int
+
+    @classmethod
+    def of(cls, row: Any) -> WorkflowTransitionResponse:
+        return cls(
+            id=row.id,
+            name=row.name,
+            from_state_id=row.from_state_id,
+            to_state_id=row.to_state_id,
+            conditions=list(row.conditions),
+            post_functions=list(row.post_functions),
+            position=row.position,
+        )
+
+
+class WorkflowSummaryResponse(BaseModel):
+    """목록 한 줄. 고칠 때 무엇이 영향을 받는지까지 보여 준다."""
+
+    id: UUID
+    name: str
+    description: str | None
+    is_builtin: bool
+    state_count: int
+    transition_count: int
+    #: 이 워크플로우를 쓰는 이슈 유형 이름.
+    used_by: list[str]
+
+    @classmethod
+    def of(cls, view: Any) -> WorkflowSummaryResponse:
+        return cls(
+            id=view.workflow.id,
+            name=view.workflow.name,
+            description=view.workflow.description,
+            is_builtin=view.workflow.is_builtin,
+            state_count=view.states,
+            transition_count=view.transitions,
+            used_by=list(view.used_by),
+        )
+
+
+class WorkflowDetailResponse(BaseModel):
+    """상태와 전이 전부. **읽기 전용이다** (issues/admin.py 참고)."""
+
+    id: UUID
+    name: str
+    description: str | None
+    is_builtin: bool
+    states: list[WorkflowStateDetailResponse]
+    transitions: list[WorkflowTransitionResponse]
+    used_by: list[str]
+
+    @classmethod
+    def of(cls, detail: Any) -> WorkflowDetailResponse:
+        return cls(
+            id=detail.workflow.id,
+            name=detail.workflow.name,
+            description=detail.workflow.description,
+            is_builtin=detail.workflow.is_builtin,
+            states=[WorkflowStateDetailResponse.model_validate(s) for s in detail.states],
+            transitions=[WorkflowTransitionResponse.of(t) for t in detail.transitions],
+            used_by=[t.name for t in detail.types],
+        )
+
+
 class VersionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
