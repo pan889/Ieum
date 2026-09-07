@@ -11,9 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
 from ieum.modules.desk.models import (
+    CannedResponse,
     CustomerMembership,
     CustomerOrganization,
     Portal,
+    Queue,
     RequestType,
     TicketExt,
 )
@@ -266,3 +268,74 @@ class TicketRepository:
         stmt = stmt.order_by(TicketExt.issue_id.desc()).limit(request.fetch_limit)
         rows = list((await self._s.execute(stmt)).scalars().all())
         return PageResult.from_rows(rows, request, lambda t: {"id": str(t.issue_id)})
+
+
+class QueueRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get(self, queue_id: UUID) -> Queue | None:
+        return await self._s.get(Queue, queue_id)
+
+    def add(self, queue: Queue) -> Queue:
+        self._s.add(queue)
+        return queue
+
+    async def list_for_project(self, project_id: UUID) -> list[Queue]:
+        """사이드바 순서대로. 보관된 것은 뺀다.
+
+        `position` 이 같으면 이름으로 가른다 — 안 그러면 새로고침마다 순서가
+        바뀌고, 사람은 큐가 사라졌다고 생각한다.
+        """
+        stmt: Select[tuple[Queue]] = (
+            select(Queue)
+            .where(Queue.project_id == project_id, Queue.archived_at.is_(None))
+            .order_by(Queue.position, Queue.name)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def name_taken(self, project_id: UUID, name: str, *, exclude: UUID | None = None) -> bool:
+        """이름 중복. 보관된 것까지 본다 — 유니크 제약이 `archived_at` 을
+        모르기 때문이다. 여기서 안 보면 저장이 500 으로 터진다."""
+        stmt = select(func.count()).where(Queue.project_id == project_id, Queue.name == name)
+        if exclude is not None:
+            stmt = stmt.where(Queue.id != exclude)
+        return bool((await self._s.execute(stmt)).scalar_one())
+
+
+class CannedResponseRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get(self, response_id: UUID) -> CannedResponse | None:
+        return await self._s.get(CannedResponse, response_id)
+
+    def add(self, response: CannedResponse) -> CannedResponse:
+        self._s.add(response)
+        return response
+
+    async def list_for_project(self, project_id: UUID) -> list[CannedResponse]:
+        stmt: Select[tuple[CannedResponse]] = (
+            select(CannedResponse)
+            .where(CannedResponse.project_id == project_id, CannedResponse.archived_at.is_(None))
+            .order_by(CannedResponse.name)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def name_taken(self, project_id: UUID, name: str, *, exclude: UUID | None = None) -> bool:
+        stmt = select(func.count()).where(
+            CannedResponse.project_id == project_id, CannedResponse.name == name
+        )
+        if exclude is not None:
+            stmt = stmt.where(CannedResponse.id != exclude)
+        return bool((await self._s.execute(stmt)).scalar_one())
+
+    async def shortcut_taken(
+        self, project_id: UUID, shortcut: str, *, exclude: UUID | None = None
+    ) -> bool:
+        stmt = select(func.count()).where(
+            CannedResponse.project_id == project_id, CannedResponse.shortcut == shortcut
+        )
+        if exclude is not None:
+            stmt = stmt.where(CannedResponse.id != exclude)
+        return bool((await self._s.execute(stmt)).scalar_one())

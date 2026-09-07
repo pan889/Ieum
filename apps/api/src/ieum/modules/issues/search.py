@@ -122,7 +122,24 @@ class SearchService:
             )
         return ValidationResult(valid=True, fields=sorted(_referenced_fields(query)))
 
-    async def search(self, actor: Actor, iql: str, request: PageRequest) -> Page[Issue]:
+    async def search(
+        self,
+        actor: Actor,
+        iql: str,
+        request: PageRequest,
+        *,
+        extra_where: ColumnElement[bool] | None = None,
+    ) -> Page[Issue]:
+        """IQL 실행. **언제나 실행자의 `issue.view` ACL 을 탄다.**
+
+        `extra_where` 는 부르는 쪽이 얹는 조건이다. `desk` 의 큐가 "티켓인
+        이슈만" 을 여기로 넘긴다 — `issue` 를 아는 것은 이 모듈이고 `desk` 는
+        자기 테이블(`ticket_ext`)만 아는데, 둘을 한 질의로 묶어야 하기
+        때문이다. 조건을 여기서 얹으면 페이지네이션이 맞는다: 밖에서 결과를
+        걸러내면 50개를 읽어 3개가 남고, 다음 페이지가 어디인지 알 수 없다.
+        `desk` 가 `issue` 를 import 하지 않고 `issues` 가 `desk` 를 import
+        하지 않으므로 화살표는 그대로다(ADR-0010).
+        """
         acl = await self._perms.acl_for(self._s, actor, perms.ISSUE_VIEW)
         query = parse(iql)
         compiled = compile_query(
@@ -133,6 +150,8 @@ class SearchService:
         )
 
         stmt: Select[Any] = compiled.apply(select(Issue))
+        if extra_where is not None:
+            stmt = stmt.where(extra_where)
         payload = request.cursor_payload
         if payload:
             # 정렬 키가 자유롭기 때문에 커서는 id 기준으로만 잡는다.

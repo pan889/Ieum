@@ -26,15 +26,19 @@ from ieum.modules.desk import permissions as perms
 from ieum.modules.desk.events import TicketSubmitted
 from ieum.modules.desk.models import (
     RESERVED_FORM_KEYS,
+    CannedResponse,
     CustomerOrganization,
     Portal,
+    Queue,
     RequestType,
     TicketExt,
 )
 from ieum.modules.desk.repository import (
+    CannedResponseRepository,
     CustomerMembershipRepository,
     CustomerOrganizationRepository,
     PortalRepository,
+    QueueRepository,
     RequestTypeRepository,
     TicketRepository,
     normalize_domain,
@@ -1301,3 +1305,266 @@ def _guest_actor(email: str) -> Actor:
 
 
 _NIL_UUID = UUID(int=0)
+
+
+# ── 큐 (C3) ────────────────────────────────────────────────────
+
+#: 큐 이름·정형 응답 이름의 길이 상한. 모델의 컬럼과 같아야 한다 —
+#: 넘치면 DB 가 500 으로 거절하고, 사람은 무엇이 문제인지 못 본다.
+NAME_MAX = 120
+#: 단축어. `/` 로 부르는 자리이므로 공백을 두지 않는다.
+SHORTCUT_PATTERN = re.compile(r"^[A-Za-z0-9가-힣_-]{1,40}$")
+
+
+@dataclass(frozen=True, slots=True)
+class QueueView:
+    queue: Queue
+
+
+class QueueService:
+    """큐 정의와 실행.
+
+    정의를 고치는 것은 `desk.queue.manage`, 목록을 보는 것은
+    `desk.queue.work` 다. 그리고 큐가 내주는 티켓은 실행자의 `issue.view`
+    ACL 을 그대로 탄다 — **큐가 권한을 넓히지 않는다.**
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._queues = QueueRepository(session)
+
+    # ── 정의 ────────────────────────────────────────────────────
+
+    async def create(
+        self, actor: Actor, *, project_id: UUID, name: str, iql: str, position: int
+    ) -> QueueView:
+        await self._perms.require(
+            self._s, actor, perms.QUEUE_MANAGE, scope=Scope.project(project_id)
+        )
+        clean_name = await self._validated_name(project_id, name)
+        clean_iql = await self._validated_iql(actor, iql)
+        queue = self._queues.add(
+            Queue(project_id=project_id, name=clean_name, iql=clean_iql, position=max(position, 0))
+        )
+        await self._s.flush()
+        return QueueView(queue=queue)
+
+    async def update(
+        self,
+        actor: Actor,
+        queue_id: UUID,
+        *,
+        name: str | None = None,
+        iql: str | None = None,
+        position: int | None = None,
+    ) -> QueueView:
+        queue = await self._require_queue(actor, queue_id, perms.QUEUE_MANAGE)
+        if name is not None:
+            queue.name = await self._validated_name(queue.project_id, name, exclude=queue.id)
+        if iql is not None:
+            queue.iql = await self._validated_iql(actor, iql)
+        if position is not None:
+            queue.position = max(position, 0)
+        await self._s.flush()
+        return QueueView(queue=queue)
+
+    async def delete(self, actor: Actor, queue_id: UUID) -> None:
+        """보관한다. 지우지 않는다 — 큐 이름이 감사 로그와 링크에 남아 있다."""
+        queue = await self._require_queue(actor, queue_id, perms.QUEUE_MANAGE)
+        queue.archived_at = utcnow()
+        await self._s.flush()
+
+    async def list_for(self, actor: Actor, project_id: UUID) -> list[Queue]:
+        """이 프로젝트의 큐. 일하는 권한으로 본다."""
+        await self._perms.require(self._s, actor, perms.QUEUE_WORK, scope=Scope.project(project_id))
+        return await self._queues.list_for_project(project_id)
+
+    # ── 실행 ────────────────────────────────────────────────────
+
+    async def run(
+        self, actor: Actor, queue_id: UUID, request: PageRequest
+    ) -> Page[issues.TicketRow]:
+        """큐를 돌려 티켓 목록을 낸다. **티켓만 나온다.**
+
+        조건을 밖에서 걸러내지 않고 한 질의에 넣는다 — 밖에서 걸러내면
+        50개를 읽어 3개가 남고, 다음 페이지가 어디인지 알 수 없다.
+        """
+        queue = await self._require_queue(actor, queue_id, perms.QUEUE_WORK)
+        return await issues.run_iql(
+            self._s,
+            self._perms,
+            actor,
+            queue.iql,
+            request,
+            extra_where=self._tickets_only(),
+        )
+
+    def _tickets_only(self) -> Any:
+        """ "티켓인 이슈만" 조건.
+
+        큐는 데스크의 화면이다. IQL 이 평범한 이슈까지 잡으면 상담원의 큐에
+        고객과 무관한 이슈가 섞이고, 그 이슈에는 요청자도 창구도 없어서
+        상담원 화면이 반쯤 빈 채로 그려진다.
+
+        조건을 IQL 로 강제하지 않는 이유: `type = Request` 같은 규칙은
+        관리자가 유형 이름을 바꾸는 순간 조용히 무력해진다. 티켓의 정의는
+        `ticket_ext` 행이 있는 것이고, 그게 이름에 의존하지 않는 유일한
+        근거다.
+        """
+        from sqlalchemy import exists, select
+
+        return exists(
+            select(TicketExt.issue_id).where(TicketExt.issue_id == issues.issue_id_column())
+        )
+
+    # ── 내부 ────────────────────────────────────────────────────
+
+    async def _require_queue(self, actor: Actor, queue_id: UUID, permission: str) -> Queue:
+        queue = await self._queues.get(queue_id)
+        if queue is None or queue.archived_at is not None:
+            raise NotFoundError("큐를 찾을 수 없다.")
+        await self._perms.require(self._s, actor, permission, scope=Scope.project(queue.project_id))
+        return queue
+
+    async def _validated_name(
+        self, project_id: UUID, raw: str, *, exclude: UUID | None = None
+    ) -> str:
+        name = raw.strip()
+        if not name:
+            raise ValidationError("이름을 비울 수 없다.", code="desk.queue_name_empty")
+        if len(name) > NAME_MAX:
+            raise ValidationError("이름이 너무 길다.", code="desk.queue_name_too_long")
+        if await self._queues.name_taken(project_id, name, exclude=exclude):
+            raise ConflictError("같은 이름의 큐가 있다.", code="desk.queue_name_taken")
+        return name
+
+    async def _validated_iql(self, actor: Actor, raw: str) -> str:
+        """**저장할 때 질의를 검증한다.**
+
+        요청 유형 폼과 같은 판단이다: 저장은 되고 실행이 실패하는 큐를 만들 수
+        없게 한다. 그런 큐는 사이드바에 이름만 있고 누를 때만 실패하는데, 그
+        사이 그 큐로 들어와야 할 티켓들은 **아무도 안 본다.** 폼과 달리 여기서는
+        실패가 늦게 드러난다 — 큐를 만든 사람은 자기 큐를 눌러 보지 않는다.
+        """
+        iql = raw.strip()
+        if not iql:
+            raise ValidationError("조건을 비울 수 없다.", code="desk.queue_iql_empty")
+        problem = await issues.validate_iql(self._s, self._perms, actor, iql)
+        if problem is not None:
+            raise ValidationError(problem.message, code=problem.code, details=problem.details)
+        return iql
+
+
+# ── 정형 응답 (C10) ────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class CannedResponseView:
+    response: CannedResponse
+
+
+class CannedResponseService:
+    """정형 응답. 고치는 것은 `queue.manage`, 쓰는 것은 `queue.work` 다."""
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._responses = CannedResponseRepository(session)
+
+    async def create(
+        self, actor: Actor, *, project_id: UUID, name: str, body: str, shortcut: str | None
+    ) -> CannedResponseView:
+        await self._perms.require(
+            self._s, actor, perms.QUEUE_MANAGE, scope=Scope.project(project_id)
+        )
+        response = self._responses.add(
+            CannedResponse(
+                project_id=project_id,
+                name=await self._validated_name(project_id, name),
+                body=self._validated_body(body),
+                shortcut=await self._validated_shortcut(project_id, shortcut),
+            )
+        )
+        await self._s.flush()
+        return CannedResponseView(response=response)
+
+    async def update(
+        self,
+        actor: Actor,
+        response_id: UUID,
+        *,
+        name: str | None = None,
+        body: str | None = None,
+        shortcut: str | None = None,
+        clear_shortcut: bool = False,
+    ) -> CannedResponseView:
+        row = await self._require_response(actor, response_id, perms.QUEUE_MANAGE)
+        if name is not None:
+            row.name = await self._validated_name(row.project_id, name, exclude=row.id)
+        if body is not None:
+            row.body = self._validated_body(body)
+        # 단축어를 **비우는 것**과 안 건드리는 것을 가른다. `None` 을 "지워라"
+        # 로 읽으면 이름만 고치려는 요청이 단축어를 함께 날린다.
+        if clear_shortcut:
+            row.shortcut = None
+        elif shortcut is not None:
+            row.shortcut = await self._validated_shortcut(row.project_id, shortcut, exclude=row.id)
+        await self._s.flush()
+        return CannedResponseView(response=row)
+
+    async def delete(self, actor: Actor, response_id: UUID) -> None:
+        row = await self._require_response(actor, response_id, perms.QUEUE_MANAGE)
+        row.archived_at = utcnow()
+        await self._s.flush()
+
+    async def list_for(self, actor: Actor, project_id: UUID) -> list[CannedResponse]:
+        await self._perms.require(self._s, actor, perms.QUEUE_WORK, scope=Scope.project(project_id))
+        return await self._responses.list_for_project(project_id)
+
+    # ── 내부 ────────────────────────────────────────────────────
+
+    async def _require_response(
+        self, actor: Actor, response_id: UUID, permission: str
+    ) -> CannedResponse:
+        row = await self._responses.get(response_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("정형 응답을 찾을 수 없다.")
+        await self._perms.require(self._s, actor, permission, scope=Scope.project(row.project_id))
+        return row
+
+    async def _validated_name(
+        self, project_id: UUID, raw: str, *, exclude: UUID | None = None
+    ) -> str:
+        name = raw.strip()
+        if not name:
+            raise ValidationError("이름을 비울 수 없다.", code="desk.canned_name_empty")
+        if len(name) > NAME_MAX:
+            raise ValidationError("이름이 너무 길다.", code="desk.canned_name_too_long")
+        if await self._responses.name_taken(project_id, name, exclude=exclude):
+            raise ConflictError("같은 이름의 정형 응답이 있다.", code="desk.canned_name_taken")
+        return name
+
+    def _validated_body(self, raw: str) -> str:
+        from ieum.core.markdown import normalize as normalize_markdown
+
+        body = normalize_markdown(raw)
+        if not body:
+            raise ValidationError("내용을 비울 수 없다.", code="desk.canned_body_empty")
+        return body
+
+    async def _validated_shortcut(
+        self, project_id: UUID, raw: str | None, *, exclude: UUID | None = None
+    ) -> str | None:
+        if raw is None:
+            return None
+        shortcut = raw.strip().lstrip("/")
+        if not shortcut:
+            return None
+        if not SHORTCUT_PATTERN.match(shortcut):
+            raise ValidationError(
+                "단축어에는 공백을 쓸 수 없다.", code="desk.canned_shortcut_invalid"
+            )
+        if await self._responses.shortcut_taken(project_id, shortcut, exclude=exclude):
+            raise ConflictError("같은 단축어가 있다.", code="desk.canned_shortcut_taken")
+        return shortcut

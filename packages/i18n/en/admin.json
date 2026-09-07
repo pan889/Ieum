@@ -73,6 +73,7 @@
   "people.searchHint": "Type a name or an email address.",
   "permission.desk.customer.manage": "Manage customer organizations",
   "permission.desk.portal.manage": "Manage portals and request types",
+  "permission.desk.queue.manage": "Manage queues and canned responses",
   "permission.desk.queue.work": "Work tickets in queues",
   "permission.identity.audit.view": "View the audit log",
   "permission.identity.group.manage": "Create groups and change members",

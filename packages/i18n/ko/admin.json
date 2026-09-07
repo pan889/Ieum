@@ -73,6 +73,7 @@
   "people.searchHint": "이름이나 이메일 주소를 입력하세요.",
   "permission.desk.customer.manage": "고객 조직 관리",
   "permission.desk.portal.manage": "포털·요청 유형 관리",
+  "permission.desk.queue.manage": "큐·정형 응답 관리",
   "permission.desk.queue.work": "큐에서 티켓 처리",
   "permission.identity.audit.view": "감사 로그 조회",
   "permission.identity.group.manage": "그룹 생성·멤버 변경",

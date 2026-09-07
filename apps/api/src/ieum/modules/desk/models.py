@@ -194,3 +194,77 @@ class TicketExt(Base):
         Index("ix_ticket_ext_request_type_id", "request_type_id"),
         Index("ix_ticket_ext_guest_email", "guest_email"),
     )
+
+
+class Queue(Entity, Archivable):
+    """조건 기반 티켓 목록 (feature-map C3).
+
+    큐는 **뷰다.** 저장하는 것은 IQL 원문 하나이고, 목록은 볼 때마다 그
+    질의로 만들어진다 — 티켓을 큐에 "넣는" 행이 없다. 상태가 바뀌면 큐가
+    저절로 따라오는 것이 요점이다: 사람이 티켓을 옮겨 담아야 하는 큐는
+    반드시 실제 상태와 어긋난다.
+
+    **`visible_role_ids` 를 두지 않는다** — data-model.md 는 그 컬럼을 적어
+    두었지만 만들지 않았다. 이유가 둘이다.
+
+    1. **가리는 것이 막는 것이 아니다.** 큐에서 안 보여도 그 티켓은 이슈
+       목록·검색·직접 주소로 그대로 열린다. 접근 제어처럼 읽히는데 아무 것도
+       막지 않는 손잡이는 없는 것보다 나쁘다 — 관리자가 그것으로 무언가를
+       숨겼다고 믿게 된다.
+    2. **ACL 을 배열 컬럼에 두면 텍스트 하나를 고쳐서 권한이 움직인다.**
+       `customer_organization.domains` 에서 이미 같은 판단을 했다(소속은
+       행이다). 권한 시스템에는 `ScopeKind.QUEUE` 가 이미 있으므로, 큐 단위
+       제한이 정말 필요해지면 `Scope.queue(id)` 역할 할당이 옳은 자리다.
+
+    지금 큐를 볼 수 있는 근거는 프로젝트의 `desk.queue.work` 다. 그리고 큐가
+    내주는 티켓은 `issue.view` ACL 을 그대로 탄다 — 큐가 권한을 넓히지 않는다.
+    """
+
+    __tablename__ = "queue"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: IQL **원문**이다. 컴파일 결과를 저장하지 않는다 — 문법이 자라면 저장된
+    #: 결과는 낡고, 사람이 고칠 수 있는 것은 원문뿐이다.
+    iql: Mapped[str] = mapped_column(Text, nullable=False)
+    #: 사이드바 순서. 작은 것이 위다.
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_queue_project_id_name"),
+        Index("ix_queue_project_id", "project_id"),
+    )
+
+
+class CannedResponse(Entity, Archivable):
+    """정형 응답 (feature-map C10). 상담원이 코멘트에 끼워 넣는 조각이다.
+
+    프로젝트 단위의 **공용** 자료다. 소유자를 두지 않는 것이 의도다: 개인
+    스니펫이면 사람이 떠날 때 같이 사라지고, 그 사람이 쓰던 문구를 다음
+    사람이 다시 만든다.
+
+    본문은 마크다운이고 **치환을 하지 않는다.** `{{고객이름}}` 같은 것을
+    넣기 시작하면 값이 없을 때 무엇을 내보낼지 정해야 하고, 그 답은 언제나
+    "고객에게 빈칸이나 중괄호가 배달된다" 로 끝난다. 넣을 것은 상담원이
+    보고 고친다 — 끼워 넣기는 **초안**이지 발송이 아니다.
+    """
+
+    __tablename__ = "canned_response"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    #: `/환불` 처럼 편집기에서 부르는 이름. 비워 둘 수 있다.
+    shortcut: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_canned_response_project_id_name"),
+        # 같은 프로젝트에 같은 단축어가 둘이면 어느 것이 나올지 사람이 알 수
+        # 없다. NULL 은 여러 개 허용된다(단축어 없는 응답).
+        UniqueConstraint("project_id", "shortcut", name="uq_canned_response_project_id_shortcut"),
+        Index("ix_canned_response_project_id", "project_id"),
+    )

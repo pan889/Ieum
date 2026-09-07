@@ -79,6 +79,11 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             # 데이터를 외부로 내보내는 일이라 step-up 대상이다.
             notify_perms.WEBHOOK_VIEW,
             notify_perms.WEBHOOK_MANAGE,
+            # 큐는 보드와 같은 종류의 것이다 — 프로젝트 관리자가 자기
+            # 프로젝트의 작업 목록을 정한다. 포털 정의(`portal.manage`)는
+            # 여기 넣지 않았다: 그건 고객이 보는 화면이고, 누가 고쳐야 하는지는
+            # 따로 정할 문제다.
+            desk_perms.QUEUE_MANAGE,
         ),
     ),
     "Project Member": (

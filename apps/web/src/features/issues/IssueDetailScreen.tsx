@@ -85,7 +85,7 @@ export function IssueDetailScreen() {
           <TimeTracking issueId={data.id} version={data.version} />
           <Attachments ownerType="issue" ownerId={data.id} />
           <LinkedDocs issueId={data.id} />
-          <Comments issueId={data.id} isTicket={desk !== null} />
+          <Comments issueId={data.id} projectId={data.project_id} isTicket={desk !== null} />
           <History issueId={data.id} />
         </div>
         <div className="flex flex-col gap-5">
@@ -457,7 +457,63 @@ function TicketFacts({ ticket }: { ticket: AgentTicket }) {
   )
 }
 
-function Comments({ issueId, isTicket }: { issueId: string; isTicket: boolean }) {
+/**
+ * 정형 응답 고르기.
+ *
+ * 고른 것을 **덮어쓰지 않고 잇는다.** 쓰던 글을 지우면 되돌릴 수 없고,
+ * 상담원은 보통 "인사 + 정형 문구 + 마무리" 로 쓴다.
+ *
+ * 목록을 못 가져오면(권한이 없거나 이 프로젝트에 없으면) **아무 것도 그리지
+ * 않는다.** 빈 선택 상자나 오류를 띄우면, 코멘트를 쓰려는 사람에게 자기가
+ * 요청하지도 않은 실패를 보여 주는 것이 된다.
+ */
+function CannedPicker({
+  projectId,
+  onPick,
+}: {
+  projectId: string
+  onPick: (text: string) => void
+}) {
+  const { t } = useTranslation(['desk'])
+  const responses = useQuery({
+    queryKey: ['canned', projectId],
+    queryFn: () => deskApi.listCannedResponses(projectId),
+    retry: false,
+  })
+
+  const rows = responses.data ?? []
+  if (rows.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted">{t('desk:canned.insert')}</span>
+      {/* `Chip` 을 쓰지 않는다. 그건 `aria-pressed` 를 붙이므로 토글로
+          읽히는데, 여기 있는 것은 누르면 글이 들어가는 **행동**이다 —
+          스크린 리더에 "선택 안 됨" 이라고 알려 줄 이유가 없다. */}
+      {rows.map((row) => (
+        <Button
+          key={row.id}
+          type="button"
+          variant="ghost"
+          className="text-xs"
+          onClick={() => { onPick(row.body) }}
+        >
+          {row.shortcut ? `${row.name} (/${row.shortcut})` : row.name}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+function Comments({
+  issueId,
+  projectId,
+  isTicket,
+}: {
+  issueId: string
+  projectId: string
+  isTicket: boolean
+}) {
   const { t } = useTranslation(['issues', 'desk'])
   const queryClient = useQueryClient()
   const [body, setBody] = useState('')
@@ -533,6 +589,19 @@ function Comments({ issueId, isTicket }: { issueId: string; isTicket: boolean })
           있으면 기본값을 틀릴 수 없다. 티켓이 아닌 이슈에는 고객이 없으므로
           위험이 없고, 잘 돌던 화면을 바꾸지 않는다.
         */}
+        {/* 정형 응답은 **티켓에만** 둔다. 티켓이 아닌 이슈에는 고객이 없고,
+            정형 응답은 고객에게 하는 말이다. */}
+        {isTicket ? (
+          <CannedPicker
+            projectId={projectId}
+            onPick={(text) => {
+              // **덮어쓰지 않고 잇는다.** 쓰던 글이 있는데 지우면 그건
+              // 되돌릴 수 없다 — 편집기의 실행 취소는 프로그램이 바꾼
+              // 값까지 되돌려 주지 않는다.
+              setBody((current) => (current.trim() === '' ? text : `${current}\n\n${text}`))
+            }}
+          />
+        ) : null}
         {isTicket ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button

@@ -12,9 +12,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
+from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, get_permission_service
 from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import IssueRepository, WorkflowRepository
@@ -335,3 +337,116 @@ async def add_public_comment(
         created_at=comment.created_at,
         edited_at=comment.edited_at,
     )
+
+
+# ── 큐 (C3) ────────────────────────────────────────────────────
+#
+# 큐는 IQL 로 만든 티켓 목록이다. 질의를 실행하는 것은 `issues` 의 일이고
+# (컴파일러·ACL·이슈 모델이 여기 있다), "티켓만" 이라는 조건은 `desk` 가
+# 자기 테이블로 만들어 넘긴다.
+
+
+@dataclass(frozen=True, slots=True)
+class TicketRow:
+    """큐 한 줄. 상세(`TicketIssue`)보다 가볍다.
+
+    **행마다 조회하지 않는다.** 처음에는 `TicketIssue` 를 그대로 냈는데, 그건
+    `to_view` 를 행마다 부르므로 라벨·커스텀 필드까지 한 줄에 다섯 번씩
+    조회한다 — 50줄이면 백 번이 넘고, 큐는 상담원이 하루 종일 여는 화면이다.
+    목록에 필요한 것만 담고 `to_summaries`(배치 조회)를 쓴다. 그 헬퍼는
+    이슈 목록·검색이 이미 쓰고 있었다.
+    """
+
+    id: UUID
+    project_id: UUID
+    key: str
+    summary: str
+    state_name: str
+    state_category: str
+    priority: int
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class IqlProblem:
+    """질의가 틀렸을 때. 코드와 사람이 읽을 문구, 그리고 위치."""
+
+    code: str
+    message: str
+    details: dict[str, Any]
+
+
+async def validate_iql(
+    session: AsyncSession, permissions: PermissionService, actor: Actor, iql: str
+) -> IqlProblem | None:
+    """문법·필드 검증. 실행하지 않는다. 맞으면 `None` 이다.
+
+    **큐를 저장할 때 부른다.** 저장은 되고 실행이 실패하는 큐를 만들 수 없게
+    하는 것이 요점이다 — 요청 유형 폼에서 같은 판단을 했다. 큐가 그런 상태로
+    남으면 사이드바에 이름은 있는데 눌렀을 때만 실패하고, 그 사이 그 큐로
+    들어와야 할 티켓들은 아무도 안 본다.
+    """
+    from ieum.modules.issues.search import SearchService
+
+    result = await SearchService(session, permissions).validate(actor, iql)
+    if result.valid:
+        return None
+    error = result.error or {}
+    return IqlProblem(
+        # 기본값은 실제 IQL 코드 접두사와 같아야 한다. 한 번 `issues.` 로
+        # 적었고, 그러면 카탈로그에 없는 코드가 화면에 그대로 찍힌다.
+        code=str(error.get("code", "iql.invalid")),
+        message=str(error.get("message", "질의를 읽을 수 없다.")),
+        details={k: v for k, v in error.items() if k not in ("code", "message")},
+    )
+
+
+async def run_iql(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    iql: str,
+    request: PageRequest,
+    *,
+    extra_where: ColumnElement[bool] | None = None,
+) -> Page[TicketRow]:
+    """IQL 을 **실행자 권한으로** 돌린다.
+
+    큐를 만든 사람의 권한을 승계하지 않는다. 승계하면 큐를 공유하는 것이 곧
+    권한 상승이 된다(query-language.md 6절, 저장 필터와 같은 판단이다).
+
+    `extra_where` 는 부르는 쪽의 조건을 한 질의에 넣는 자리다 — 밖에서
+    걸러내면 페이지가 어긋난다.
+    """
+    from ieum.modules.issues.search import SearchService
+    from ieum.modules.issues.service import IssueService
+
+    page = await SearchService(session, permissions).search(
+        actor, iql, request, extra_where=extra_where
+    )
+    service = IssueService(session, permissions)
+    return Page(
+        items=[
+            TicketRow(
+                id=row.issue.id,
+                project_id=row.issue.project_id,
+                key=row.key,
+                summary=row.issue.summary,
+                state_name=row.state_name,
+                state_category=row.state_category,
+                priority=row.issue.priority,
+                created_at=row.issue.created_at,
+                updated_at=row.issue.updated_at,
+            )
+            for row in await service.to_summaries(page.items)
+        ],
+        next_cursor=page.next_cursor,
+        total=page.total,
+    )
+
+
+def issue_id_column() -> Any:
+    """`issue.id` 컬럼. 다른 모듈이 자기 테이블과 이 이슈를 잇는 조건을
+    만들 때 쓴다 — 모델 자체를 내주지 않으려고 컬럼 하나만 낸다."""
+    return Issue.id

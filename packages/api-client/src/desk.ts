@@ -231,8 +231,83 @@ export interface AgentTicketEnvelope {
   ticket: AgentTicket | null
 }
 
+/**
+ * 조건 기반 티켓 목록 (C3). 저장하는 것은 IQL **원문** 하나다.
+ *
+ * `visible_role_ids` 가 없는 것이 의도다: 큐에서 가려도 그 티켓은 이슈
+ * 목록·검색으로 그대로 열리므로, 접근 제어처럼 읽히는데 아무 것도 막지 않는
+ * 손잡이가 된다.
+ */
+export interface Queue {
+  id: string
+  project_id: string
+  name: string
+  iql: string
+  position: number
+}
+
+/** 큐 한 줄. 고객이 보는 `TicketSummary` 와 달리 우선순위가 있다. */
+export interface QueueTicket {
+  id: string
+  key: string
+  summary: string
+  state_name: string
+  state_category: string
+  priority: number
+  created_at: string
+  updated_at: string
+}
+
+export interface QueueTicketPage {
+  items: QueueTicket[]
+  next_cursor: string | null
+  total: number | null
+}
+
+/** 정형 응답 (C10). 상담원이 코멘트에 끼워 넣는 조각이다. */
+export interface CannedResponse {
+  id: string
+  project_id: string
+  name: string
+  body: string
+  shortcut: string | null
+}
+
+export interface NewQueue {
+  project_id: string
+  name: string
+  iql: string
+  position?: number
+}
+
+export interface QueuePatch {
+  name?: string
+  iql?: string
+  position?: number
+}
+
+export interface NewCannedResponse {
+  project_id: string
+  name: string
+  body: string
+  shortcut?: string | null
+}
+
+export interface CannedResponsePatch {
+  name?: string
+  body?: string
+  shortcut?: string | null
+  /**
+   * 단축어를 **지운다.** `shortcut: null` 을 "지워라" 로 읽지 않는 이유는
+   * 이름만 고치려는 요청이 단축어를 함께 날리기 때문이다.
+   */
+  clear_shortcut?: boolean
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
+const QUEUES = '/api/v1/queues'
+const CANNED = '/api/v1/canned-responses'
 /** 고객 표면. 이 접두사만 고객 격리를 통과한다 (auth.md 5절). */
 const PORTAL = '/api/v1/portal'
 
@@ -353,6 +428,30 @@ export function createDeskApi(client: ApiClient) {
      */
     agentTicket: (issueId: string) =>
       client.get<AgentTicketEnvelope>(`/api/v1/tickets/${issueId}`),
+
+    // ── 큐 (C3) ─────────────────────────────────────────────
+    listQueues: (projectId: string) =>
+      client.get<Queue[]>(`${QUEUES}?project_id=${encodeURIComponent(projectId)}`),
+    createQueue: (body: NewQueue) => client.post<Queue>(QUEUES, body),
+    updateQueue: (id: string, body: QueuePatch) => client.patch<Queue>(`${QUEUES}/${id}`, body),
+    deleteQueue: (id: string) => client.delete<void>(`${QUEUES}/${id}`),
+    /** 큐를 돌린다. **실행자 권한으로** 돈다 — 큐가 권한을 넓히지 않는다. */
+    runQueue: (id: string, params: { limit?: number; cursor?: string } = {}) => {
+      const query = new URLSearchParams()
+      if (params.limit !== undefined) query.set('limit', String(params.limit))
+      if (params.cursor !== undefined) query.set('cursor', params.cursor)
+      const suffix = query.size > 0 ? `?${query.toString()}` : ''
+      return client.get<QueueTicketPage>(`${QUEUES}/${id}/tickets${suffix}`)
+    },
+
+    // ── 정형 응답 (C10) ─────────────────────────────────────
+    listCannedResponses: (projectId: string) =>
+      client.get<CannedResponse[]>(`${CANNED}?project_id=${encodeURIComponent(projectId)}`),
+    createCannedResponse: (body: NewCannedResponse) =>
+      client.post<CannedResponse>(CANNED, body),
+    updateCannedResponse: (id: string, body: CannedResponsePatch) =>
+      client.patch<CannedResponse>(`${CANNED}/${id}`, body),
+    deleteCannedResponse: (id: string) => client.delete<void>(`${CANNED}/${id}`),
   }
 }
 

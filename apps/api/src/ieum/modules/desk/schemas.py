@@ -320,3 +320,89 @@ class TicketSummaryResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     request_type_name: str | None
+
+
+# ── 큐 (C3) ────────────────────────────────────────────────────
+
+
+class QueueCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+    #: IQL 원문. 서버가 저장 시점에 검증한다 — 저장되고 실행이 실패하는 큐를
+    #: 만들 수 없게 하는 것이 요점이다.
+    iql: str = Field(min_length=1, max_length=4000)
+    position: int = Field(default=0, ge=0)
+
+
+class QueueUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    iql: str | None = Field(default=None, min_length=1, max_length=4000)
+    position: int | None = Field(default=None, ge=0)
+
+
+class QueueResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    name: str
+    iql: str
+    position: int
+
+
+class QueueTicketResponse(BaseModel):
+    """큐 한 줄. 상담원이 훑는 목록이므로 우선순위까지 낸다.
+
+    고객이 보는 `TicketSummaryResponse` 와 따로 두는 이유가 그것이다 —
+    고객 목록에 우선순위를 내보내면 "내 요청은 왜 낮은가" 가 되고, 그건
+    상담원이 내부적으로 정한 값이다.
+    """
+
+    id: UUID
+    key: str
+    summary: str
+    state_name: str
+    state_category: str
+    priority: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class QueueTicketPageResponse(BaseModel):
+    items: list[QueueTicketResponse]
+    next_cursor: str | None
+    total: int | None
+
+
+# ── 정형 응답 (C10) ────────────────────────────────────────────
+
+
+class CannedResponseCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=20_000)
+    shortcut: str | None = Field(default=None, max_length=40)
+
+
+class CannedResponseUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    body: str | None = Field(default=None, min_length=1, max_length=20_000)
+    shortcut: str | None = Field(default=None, max_length=40)
+    #: 단축어를 **지운다.** `shortcut: null` 을 "지워라" 로 읽지 않는 이유는
+    #: 이름만 고치려는 요청이 단축어를 함께 날리기 때문이다 — Pydantic 은
+    #: 미포함과 null 을 구별해 주지 않으므로 손잡이를 따로 둔다.
+    clear_shortcut: bool = False
+
+
+class CannedResponseResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    name: str
+    body: str
+    shortcut: str | None

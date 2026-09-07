@@ -269,6 +269,50 @@ function dynamicKeyMatchers(sources) {
   return out
 }
 
+/**
+ * **화면이 부르는 키가 카탈로그에 있는가.**
+ *
+ * 지금까지 이 검사만 없었다. 카탈로그끼리(en↔ko)는 맞춰 보고, 소스에서
+ * 번역을 안 거친 문장을 찾고, 카탈로그에만 있고 안 쓰이는 키를 알려 주는데,
+ * **없는 키를 부르는 것**은 아무도 안 봤다. 그 결과가 어떻게 보이는지:
+ * `t('common:action.edit')` 이라고 적었고 그 키는 없었고, 화면의 버튼에
+ * `action.edit` 이 글자 그대로 찍혔다. 게이트는 통과했다. 브라우저로 몰아
+ * 보다가 접근성 트리에서 발견했다.
+ *
+ * `checkUnused` 가 이미 소스 전체를 훑으므로 방향만 뒤집으면 된다.
+ *
+ * 경고가 아니라 **실패**다. 없는 키는 사용자가 날것으로 보는 문자열이고,
+ * 그건 카탈로그가 덜 채워진 것과 다른 종류의 결함이다.
+ */
+function checkMissing(catalogs) {
+  const known = catalogs.get(SOURCE_LOCALE)
+  const files = USAGE_ROOTS.flatMap((r) => walk(r, [], USAGE_EXTENSIONS))
+  if (files.length === 0) {
+    fail('키 사용처를 하나도 못 찾았다 — USAGE_ROOTS 경로가 틀렸다')
+    return
+  }
+
+  // `t('ns:key')` 형태의 **리터럴만** 본다. 조립해 쓰는 키(`ns:a.${x}`)는
+  // 무엇이 올지 정적으로 알 수 없으므로 여기서 판단하지 않는다 — 추측으로
+  // 실패시키면 게이트를 끄게 되고, 그러면 리터럴도 같이 안 보게 된다.
+  const CALL = /\bt\(\s*(['"`])([A-Za-z][A-Za-z0-9_-]*:[A-Za-z0-9_.-]+)\1/g
+  const missing = new Map()
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8')
+    for (const [, , full] of text.matchAll(CALL)) {
+      if (known.has(full)) continue
+      missing.set(full, [...(missing.get(full) ?? []), relative(ROOT, file)])
+    }
+  }
+  if (missing.size === 0) return
+  const lines = [...missing]
+    .map(([full, where]) => `      ${full} — ${[...new Set(where)].join(', ')}`)
+    .join('\n')
+  fail(
+    `화면이 부르는데 카탈로그에 없는 키 ${missing.size}개 (사용자가 키를 날것으로 본다)\n${lines}`,
+  )
+}
+
 function checkUnused(catalogs) {
   const files = USAGE_ROOTS.flatMap((r) => walk(r, [], USAGE_EXTENSIONS))
   if (files.length === 0) return
@@ -303,6 +347,7 @@ console.log(`i18n 검사: ${[...catalogs.keys()].join(', ')} / 키 ${catalogs.ge
 checkKeySync(catalogs)
 checkIcu(catalogs)
 checkHardcoded()
+checkMissing(catalogs)
 checkUnused(catalogs)
 
 for (const w of warnings) console.warn(`  경고  ${w}`)
@@ -311,4 +356,4 @@ if (problems.length) {
   for (const p of problems) console.error(`  - ${p}`)
   process.exit(1)
 }
-console.log('  통과: 키 동기화 · ICU 문법 · 플레이스홀더 일치 · 하드코딩 없음')
+console.log('  통과: 키 동기화 · ICU 문법 · 플레이스홀더 일치 · 하드코딩 없음 · 없는 키 호출 없음')

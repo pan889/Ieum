@@ -26,6 +26,9 @@ from ieum.modules.desk.schemas import (
     AgentTicketEnvelope,
     AgentTicketResponse,
     AnswerResponse,
+    CannedResponseCreateRequest,
+    CannedResponseResponse,
+    CannedResponseUpdateRequest,
     CustomerInviteRequest,
     CustomerMemberResponse,
     CustomerOrgCreateRequest,
@@ -41,6 +44,11 @@ from ieum.modules.desk.schemas import (
     PortalResponse,
     PortalSubmitRequest,
     PortalUpdateRequest,
+    QueueCreateRequest,
+    QueueResponse,
+    QueueTicketPageResponse,
+    QueueTicketResponse,
+    QueueUpdateRequest,
     ReplyRequest,
     ReplyResponse,
     RequesterResponse,
@@ -52,12 +60,16 @@ from ieum.modules.desk.schemas import (
 )
 from ieum.modules.desk.service import (
     AgentTicketService,
+    CannedResponseService,
+    CannedResponseView,
     CustomerOrgService,
     CustomerOrgView,
     CustomerPortalService,
     PortalForm,
     PortalService,
     PortalView,
+    QueueService,
+    QueueView,
     RequestTypeView,
     TicketView,
 )
@@ -67,6 +79,9 @@ portals_router = APIRouter(prefix="/portals", tags=["desk"])
 customers_router = APIRouter(prefix="/customer-organizations", tags=["desk"])
 #: 상담원이 티켓의 데스크 정보를 읽는 자리. 내부 표면이다.
 tickets_router = APIRouter(prefix="/tickets", tags=["desk"])
+#: 큐와 정형 응답. 상담원의 작업 표면이다.
+queues_router = APIRouter(prefix="/queues", tags=["desk"])
+canned_router = APIRouter(prefix="/canned-responses", tags=["desk"])
 #: 고객이 쓰는 표면. 이 접두사만 고객 격리를 통과한다.
 portal_router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -747,3 +762,183 @@ async def portal_reply(
         created_at=row.created_at,
         edited_at=row.edited_at,
     )
+
+
+# ── 큐 (C3) ────────────────────────────────────────────────────
+
+
+def _queue(view: QueueView) -> QueueResponse:
+    return QueueResponse(
+        id=view.queue.id,
+        project_id=view.queue.project_id,
+        name=view.queue.name,
+        iql=view.queue.iql,
+        position=view.queue.position,
+    )
+
+
+@queues_router.get("", response_model=list[QueueResponse])
+async def list_queues(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, project_id: UUID
+) -> list[QueueResponse]:
+    """이 프로젝트의 큐. 순서대로 온다 — 사이드바가 그 순서로 그린다."""
+    rows = await QueueService(session, permissions).list_for(actor, project_id)
+    return [
+        QueueResponse(
+            id=row.id,
+            project_id=row.project_id,
+            name=row.name,
+            iql=row.iql,
+            position=row.position,
+        )
+        for row in rows
+    ]
+
+
+@queues_router.post("", response_model=QueueResponse, status_code=status.HTTP_201_CREATED)
+async def create_queue(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    payload: QueueCreateRequest,
+) -> QueueResponse:
+    view = await QueueService(session, permissions).create(
+        actor,
+        project_id=payload.project_id,
+        name=payload.name,
+        iql=payload.iql,
+        position=payload.position,
+    )
+    await session.commit()
+    return _queue(view)
+
+
+@queues_router.patch("/{queue_id}", response_model=QueueResponse)
+async def update_queue(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    queue_id: UUID,
+    payload: QueueUpdateRequest,
+) -> QueueResponse:
+    view = await QueueService(session, permissions).update(
+        actor, queue_id, name=payload.name, iql=payload.iql, position=payload.position
+    )
+    await session.commit()
+    return _queue(view)
+
+
+@queues_router.delete("/{queue_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_queue(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, queue_id: UUID
+) -> None:
+    await QueueService(session, permissions).delete(actor, queue_id)
+    await session.commit()
+
+
+@queues_router.get("/{queue_id}/tickets", response_model=QueueTicketPageResponse)
+async def run_queue(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    queue_id: UUID,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> QueueTicketPageResponse:
+    """큐를 돌린다. **실행자 권한으로** 돈다 — 큐가 권한을 넓히지 않는다."""
+    page = await QueueService(session, permissions).run(
+        actor, queue_id, PageRequest(limit=limit, cursor=cursor)
+    )
+    return QueueTicketPageResponse(
+        items=[
+            QueueTicketResponse(
+                id=row.id,
+                key=row.key,
+                summary=row.summary,
+                state_name=row.state_name,
+                state_category=row.state_category,
+                priority=row.priority,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+            for row in page.items
+        ],
+        next_cursor=page.next_cursor,
+        total=page.total,
+    )
+
+
+# ── 정형 응답 (C10) ────────────────────────────────────────────
+
+
+def _canned(view: CannedResponseView) -> CannedResponseResponse:
+    return CannedResponseResponse(
+        id=view.response.id,
+        project_id=view.response.project_id,
+        name=view.response.name,
+        body=view.response.body,
+        shortcut=view.response.shortcut,
+    )
+
+
+@canned_router.get("", response_model=list[CannedResponseResponse])
+async def list_canned_responses(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, project_id: UUID
+) -> list[CannedResponseResponse]:
+    rows = await CannedResponseService(session, permissions).list_for(actor, project_id)
+    return [
+        CannedResponseResponse(
+            id=row.id,
+            project_id=row.project_id,
+            name=row.name,
+            body=row.body,
+            shortcut=row.shortcut,
+        )
+        for row in rows
+    ]
+
+
+@canned_router.post("", response_model=CannedResponseResponse, status_code=status.HTTP_201_CREATED)
+async def create_canned_response(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    payload: CannedResponseCreateRequest,
+) -> CannedResponseResponse:
+    view = await CannedResponseService(session, permissions).create(
+        actor,
+        project_id=payload.project_id,
+        name=payload.name,
+        body=payload.body,
+        shortcut=payload.shortcut,
+    )
+    await session.commit()
+    return _canned(view)
+
+
+@canned_router.patch("/{response_id}", response_model=CannedResponseResponse)
+async def update_canned_response(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    response_id: UUID,
+    payload: CannedResponseUpdateRequest,
+) -> CannedResponseResponse:
+    view = await CannedResponseService(session, permissions).update(
+        actor,
+        response_id,
+        name=payload.name,
+        body=payload.body,
+        shortcut=payload.shortcut,
+        clear_shortcut=payload.clear_shortcut,
+    )
+    await session.commit()
+    return _canned(view)
+
+
+@canned_router.delete("/{response_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_canned_response(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, response_id: UUID
+) -> None:
+    await CannedResponseService(session, permissions).delete(actor, response_id)
+    await session.commit()
