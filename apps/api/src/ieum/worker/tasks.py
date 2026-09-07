@@ -41,6 +41,7 @@ from ieum.modules.desk.inbound import handle_inbound
 from ieum.modules.desk.models import EmailChannel
 from ieum.modules.desk.outbound import OutboundContext, collect_reply_mail
 from ieum.modules.desk.rules import RuleContext, handle_automation
+from ieum.modules.desk.survey import SurveyContext, collect_survey_mail
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.issues import contracts as issue_contracts
@@ -97,6 +98,13 @@ async def drain_outbox() -> int:
                 # 메일 채널의 회신 (C6). 알림과 따로 나가는 이유: 받는 사람이
                 # 우리 사용자가 아니라 **고객**이고, 인앱 알림을 볼 수 없다.
                 standalone.extend(await collect_reply_mail(desk_ctx, envelope))
+                # 만족도 조사 (C11). 회신과 같은 자리에서 모은다 — 받는 사람이
+                # 우리 사용자가 아니라 고객이고, 인앱 알림을 볼 수 없다.
+                standalone.extend(
+                    await collect_survey_mail(
+                        SurveyContext(session=session, settings=settings), envelope
+                    )
+                )
                 await enqueue_webhooks(handler_ctx, envelope)
                 # SLA 클럭 (C4). 여기서 도는 이유는 요청 경로에서 재면 아무도
                 # 열어 보지 않은 티켓이 영원히 위반이 아니게 되기 때문이다.

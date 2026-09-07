@@ -73,6 +73,8 @@ from ieum.modules.desk.schemas import (
     SlaPolicyResponse,
     SlaPolicyUpdateRequest,
     SlaStandingResponse,
+    SurveyAnswerRequest,
+    SurveyResponse,
     TicketResponse,
     TicketSummaryResponse,
     WorkflowStateOption,
@@ -83,6 +85,7 @@ from ieum.modules.desk.service import (
     AutomationService,
     CannedResponseService,
     CannedResponseView,
+    CsatService,
     CustomerOrgService,
     CustomerOrgView,
     CustomerPortalService,
@@ -571,6 +574,41 @@ async def remove_customer_member(
 # 곧 그 뜻이다 — 걸면 게스트 요청이 401 로 막힌다.
 
 
+# 만족도 조사 (C11). **`/{slug}` 보다 위에 둔다** — 아래에 두면 `surveys` 가
+# 창구 슬러그로 잡힌다. 형제가 여럿이면 "위" 는 첫째 위다.
+#
+# 로그인이 없다: 근거는 역할이 아니라 **토큰**이다. 게스트 요청에는 계정이
+# 아예 없고, 있어도 로그인부터 시키면 모은 점수는 "로그인할 의지가 있는
+# 사람들" 의 점수가 된다.
+
+
+@portal_router.get("/surveys/{token}", response_model=SurveyResponse)
+async def read_survey(session: DbSession, settings: AppSettings, token: str) -> SurveyResponse:
+    found = await CsatService(session, settings).view(token)
+    return SurveyResponse(
+        issue_key=found.issue_key,
+        summary=found.summary,
+        score=found.score,
+        comment=found.comment,
+    )
+
+
+@portal_router.post("/surveys/{token}", response_model=SurveyResponse)
+async def answer_survey(
+    session: DbSession, settings: AppSettings, token: str, payload: SurveyAnswerRequest
+) -> SurveyResponse:
+    found = await CsatService(session, settings).answer(
+        token, score=payload.score, comment=payload.comment
+    )
+    await session.commit()
+    return SurveyResponse(
+        issue_key=found.issue_key,
+        summary=found.summary,
+        score=found.score,
+        comment=found.comment,
+    )
+
+
 @portal_router.get("/{slug}", response_model=PortalInfoResponse)
 async def portal_info(
     session: DbSession, permissions: PermissionDep, slug: str
@@ -792,6 +830,7 @@ async def agent_ticket(
             ),
             organization_name=view.organization_name,
             csat_score=view.ticket.csat_score,
+            csat_comment=view.ticket.csat_comment,
             sla=[
                 SlaStandingResponse(
                     policy_name=row.policy_name,

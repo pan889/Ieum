@@ -26,7 +26,7 @@ from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
-from ieum.modules.desk import automation
+from ieum.modules.desk import automation, csat
 from ieum.modules.desk import permissions as perms
 from ieum.modules.desk.calendar import CalendarError
 from ieum.modules.desk.events import TicketSubmitted
@@ -2627,3 +2627,75 @@ class AutomationService:
             ).scalars()
             names.update({row.id: row.name for row in rows})
         return names
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyView:
+    """조사 화면이 보는 것. **티켓의 내용은 안 담는다.**
+
+    링크는 메일로 나가고 그 메일은 전달될 수 있다. 제목까지는 "무엇에 대한
+    조사인지" 를 말하는 데 필요하지만, 대화 내용은 아니다.
+    """
+
+    issue_key: str
+    summary: str
+    #: 이미 답했으면 그 점수. 화면은 그때 폼 대신 "고맙습니다" 를 보여 준다.
+    score: int | None
+    comment: str | None
+
+
+class CsatService:
+    """만족도 조사 (feature-map C11). **권한 서비스를 안 받는다.**
+
+    받을 것이 없기 때문이다: 이 표면의 근거는 역할이 아니라 **토큰**이다.
+    고객에게는 계정이 없을 수도 있고(게스트 요청), 있어도 로그인부터 시키면
+    응답률이 떨어져 모은 점수가 "로그인할 의지가 있는 사람들" 의 점수가 된다.
+
+    생성자에 `PermissionService` 를 안 두는 것이 그 사실을 코드에 적는
+    방법이다 — 두면 언젠가 누군가 `require` 를 부르고, 그날 조사는 조용히
+    죽는다.
+    """
+
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        self._s = session
+        self._settings = settings
+
+    async def view(self, token: str) -> SurveyView:
+        ticket, ref = await self._resolve(token)
+        return SurveyView(
+            issue_key=ref.key,
+            summary=ref.summary,
+            score=ticket.csat_score,
+            comment=ticket.csat_comment,
+        )
+
+    async def answer(self, token: str, *, score: object, comment: object) -> SurveyView:
+        ticket, ref = await self._resolve(token)
+        # **한 번만 받는다.** 토큰을 태우는 대신 티켓의 상태로 막는다 — 메일을
+        # 두 번 열어도 폼은 보이고, 두 번째 제출만 거절된다.
+        if ticket.csat_score is not None:
+            raise ConflictError("이미 답한 조사다.", code="desk.csat_already_answered")
+
+        clean_score, clean_comment = csat.clean_answer(score, comment)
+        ticket.csat_score = clean_score
+        ticket.csat_comment = clean_comment
+        await self._s.flush()
+        log.info("desk.csat.answered", issue_id=str(ticket.issue_id), score=clean_score)
+        return SurveyView(
+            issue_key=ref.key,
+            summary=ref.summary,
+            score=clean_score,
+            comment=clean_comment,
+        )
+
+    async def _resolve(self, token: str) -> tuple[TicketExt, issues.TicketIssue]:
+        issue_id = csat.decode_survey_token(token, self._settings)
+        ticket = await self._s.get(TicketExt, issue_id)
+        # 고객 표면이 쓰는 것과 같은 계약이다 — 키와 제목이 함께 온다.
+        found = await issues.get_tickets(self._s, [issue_id]) if ticket is not None else {}
+        ref = found.get(issue_id)
+        if ticket is None or ref is None:
+            # 토큰은 멀쩡한데 티켓이 없다. **없다고만 말한다** — 어떤 id 가
+            # 있고 없는지를 알려 주는 자리가 아니다.
+            raise NotFoundError("조사를 찾을 수 없다.")
+        return ticket, ref

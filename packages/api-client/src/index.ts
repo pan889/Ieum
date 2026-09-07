@@ -208,6 +208,7 @@ export {
   type SlaPolicy,
   type SlaPolicyPatch,
   type SlaStanding,
+  type Survey,
   type WorkflowStateOption,
   type RequestType,
   type RequestTypePatch,

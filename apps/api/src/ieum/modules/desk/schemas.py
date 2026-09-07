@@ -319,6 +319,9 @@ class AgentTicketResponse(BaseModel):
     requester: RequesterResponse | None
     organization_name: str | None
     csat_score: int | None
+    #: 고객이 남긴 한마디 (C11). **점수만 보면 왜 그런지 알 수 없다** —
+    #: 3점이 "괜찮았다" 인지 "빨랐는데 답이 틀렸다" 인지가 여기 있다.
+    csat_comment: str | None
     #: 이 티켓에 걸린 SLA 들. 비어 있으면 정책이 없거나 아직 안 걸렸다 —
     #: 화면은 그 경우 SLA 칸을 아예 그리지 않는다.
     sla: list[SlaStandingResponse] = Field(default_factory=list)
@@ -618,6 +621,29 @@ class KbSpaceResponse(BaseModel):
 
 
 # ── 자동화 규칙 (C9) ───────────────────────────────────────────
+
+
+class SurveyResponse(BaseModel):
+    """만족도 조사 화면이 보는 것 (C11).
+
+    **대화 내용을 안 담는다.** 링크는 메일로 나가고 그 메일은 전달될 수
+    있다 — 제목까지는 무엇에 대한 조사인지 말하는 데 필요하지만, 주고받은
+    글은 아니다.
+    """
+
+    issue_key: str
+    summary: str
+    #: 이미 답했으면 그 점수. 화면은 그때 폼 대신 인사를 보여 준다.
+    score: int | None
+    comment: str | None
+
+
+class SurveyAnswerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: 1~5. **필수다** — 한마디만 남기는 답을 받으면 평균의 분모를 말할 수 없다.
+    score: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class AutomationTargetOption(BaseModel):

@@ -528,6 +528,18 @@ function TicketFacts({ ticket }: { ticket: AgentTicket }) {
         </Row>
       ) : null}
       <Row label={t('desk:agent.channel')}>{t(`desk:agent.channel.${ticket.channel}`)}</Row>
+      {/* **점수와 한마디를 함께 보여 준다.** 3점이 "괜찮았다" 인지 "빨랐는데
+          답이 틀렸다" 인지는 한마디에만 있다. 조사를 아직 안 보냈거나 답이
+          안 온 티켓에는 줄 자체를 안 그린다 — 빈 칸이 늘면 위의 SLA 가
+          밀린다. */}
+      {ticket.csat_score === null ? null : (
+        <Row label={t('desk:agent.csat')}>
+          <span>{t(`desk:csat.score.${String(ticket.csat_score)}`)}</span>
+          {ticket.csat_comment ? (
+            <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{ticket.csat_comment}</p>
+          ) : null}
+        </Row>
+      )}
     </Card>
   )
 }

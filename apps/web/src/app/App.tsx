@@ -11,6 +11,7 @@ import { SAML_CALLBACK_PATH, SsoCallbackScreen } from '@/features/auth/SsoCallba
 import { stageFor } from '@/features/auth/stage'
 import { useAuthStore } from '@/features/auth/store'
 import { PortalApp } from '@/features/portal/PortalApp'
+import { SurveyScreen } from '@/features/portal/SurveyScreen'
 import { lastPortal } from '@/features/portal/routes'
 import { authApi, deskApi } from '@/shared/api'
 import { hasCode } from '@/shared/api/errors'
@@ -42,6 +43,10 @@ export function App() {
   // 성립하지 않으면 "로그인 없이 요청" 이라는 기능 자체가 없다. 그리고
   // 내부 앱 셸을 쓰지 않는다 — 고객에게 내부 메뉴가 보이면 안 된다.
   const portal = window.location.pathname.startsWith('/portal/')
+  // 만족도 조사도 로그인 **전에** 열린다. 게스트 요청에는 계정이 아예 없고,
+  // 계정이 있는 고객에게도 로그인부터 시키면 모은 점수는 "로그인할 의지가
+  // 있는 사람들" 의 점수가 된다 (C11).
+  const surveyed = window.location.pathname === '/survey'
 
   const me = useQuery({
     queryKey: ['auth', 'me'],
@@ -49,7 +54,11 @@ export function App() {
     retry: false,
     // 포털에서도 부른다. 로그인한 고객이면 "내 요청" 을 보여 줘야 하고,
     // 실패(401)는 게스트라는 뜻이지 오류가 아니다.
-    enabled: !invited && !returning && (stage === 'unknown' || stage === 'authenticated'),
+    //
+    // 조사 화면에서는 **안 부른다.** 누구인지 알 필요가 없다 — 근거는
+    // 세션이 아니라 링크의 토큰이고, 답은 로그인 여부와 무관하다.
+    enabled:
+      !invited && !returning && !surveyed && (stage === 'unknown' || stage === 'authenticated'),
   })
 
   useEffect(() => {
@@ -83,6 +92,7 @@ export function App() {
   }, [userLocale])
 
   if (invited) return <AcceptInviteScreen />
+  if (surveyed) return <SurveyScreen />
   // 세션이 열리면 stage 가 바뀌므로 이 화면은 스스로 물러난다.
   if (returning && stage !== 'authenticated') return <SsoCallbackScreen />
   // 단계와 무관하게 포털을 그린다. `unknown` 일 때 로딩 화면을 끼우면

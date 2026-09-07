@@ -204,9 +204,15 @@ class TicketExt(Base):
     email_bounced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: 1~5. 아직 응답이 없으면 NULL 이다 (C11 에서 채운다).
+    #: 1~5. 아직 응답이 없으면 NULL 이다 (C11).
     csat_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     csat_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 만족도 조사를 보낸 시각 (C11).
+    #:
+    #: **한 번만 보내는 근거다.** "아직 점수가 없음" 을 근거로 삼으면, 답하지
+    #: 않은 고객은 티켓이 다시 열렸다 닫힐 때마다 또 받는다 — 안 그래도 안
+    #: 답한 사람에게 조르는 꼴이다.
+    csat_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(channel.in_(TICKET_CHANNELS), name="ticket_ext_channel"),

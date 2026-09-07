@@ -229,6 +229,8 @@ export interface AgentTicket {
   requester: Requester | null
   organization_name: string | null
   csat_score: number | null
+  /** 고객이 남긴 한마디 (C11). 점수만 보면 왜 그런지 알 수 없다. */
+  csat_comment: string | null
   /** 이 티켓에 걸린 SLA 들. 비어 있으면 정책이 없거나 아직 안 걸렸다. */
   sla: SlaStanding[]
 }
@@ -601,6 +603,18 @@ export interface AutomationRulePatch {
   is_enabled?: boolean
 }
 
+/**
+ * 만족도 조사가 보여 주는 것 (C11). **대화 내용이 없다** — 링크는 메일로
+ * 나가고 그 메일은 전달될 수 있다.
+ */
+export interface Survey {
+  issue_key: string
+  summary: string
+  /** 이미 답했으면 그 점수. 화면은 그때 폼 대신 인사를 보여 준다. */
+  score: number | null
+  comment: string | null
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
 const QUEUES = '/api/v1/queues'
@@ -700,6 +714,17 @@ export function createDeskApi(client: ApiClient) {
      * 서버가 내주는 것은 제한 없는 공개 문서뿐이다. 빈 질의에는 빈 목록이
      * 온다: 아무 것도 안 적었는데 목록이 뜨면 추천이 아니라 스페이스 공개다.
      */
+    /**
+     * 만족도 조사 (C11). **로그인하지 않는다** — 근거는 역할이 아니라
+     * 토큰이다. 게스트 요청에는 계정이 아예 없다.
+     */
+    survey: (token: string) =>
+      client.get<Survey>(`${PORTAL}/surveys/${encodeURIComponent(token)}`, { anonymous: true }),
+    answerSurvey: (token: string, body: { score: number; comment?: string | null }) =>
+      client.post<Survey>(`${PORTAL}/surveys/${encodeURIComponent(token)}`, body, {
+        anonymous: true,
+      }),
+
     portalArticles: (slug: string, requestTypeId: string, q: string) =>
       client.get<Article[]>(
         `${PORTAL}/${slug}/request-types/${requestTypeId}/articles?q=${encodeURIComponent(q)}`,
