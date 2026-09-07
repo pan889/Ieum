@@ -266,9 +266,20 @@ jobs:
 
       - name: api 기동
         env:
-          # 브라우저가 실제로 여는 주소로 맞춘다. `localhost` 로 두면 러너에서
-          # ::1 로 풀릴 수 있고, uvicorn·vite 는 127.0.0.1 에만 묶여 있다.
-          IEUM_BASE_URL: http://127.0.0.1:5173
+          # **`localhost` 다. IP 리터럴이면 안 된다.**
+          #
+          # 이 값의 호스트가 WebAuthn 의 rp_id 가 되고(identity/webauthn.py),
+          # WebAuthn 스펙의 rp_id 는 **도메인**이어야 한다 — IP 리터럴은
+          # 유효한 rp_id 가 아니어서 브라우저가 등록을 거절한다. 한동안
+          # `127.0.0.1` 로 두었고, 패스키 스펙만 CI 에서 계속 붉었다.
+          # (한 번은 반대로 고쳤다: 스펙을 `127.0.0.1` 로 옮겨 호스트를
+          # 맞췄는데, 맞은 쪽이 애초에 쓸 수 없는 값이었다.)
+          #
+          # 서버는 127.0.0.1 에 묶여 있지만 `localhost` 는 러너에서 그 주소로
+          # 풀린다 — vite 의 API 프록시가 이미 `localhost:8000` 을 쓰고 있고
+          # API 를 타는 스펙이 전부 통과하는 것이 그 증거다. 개발 스택도
+          # `localhost:5173` 이므로 이제 양쪽이 같다(dev-setup.md).
+          IEUM_BASE_URL: http://localhost:5173
           # SAML 은 IdP 가 우리 ACS 로 **직접 POST** 한다. 화면 주소로 두면
           # 어설션이 vite 로 날아가 404 가 된다.
           IEUM_API_URL: http://127.0.0.1:8000
@@ -293,7 +304,8 @@ jobs:
         # (그래서 커밋된 것만 나간다). 워커가 없으면 초대 메일이 영원히 오지
         # 않고, 스펙은 "메일이 오지 않았다" 로 3분 뒤에 죽는다.
         env:
-          IEUM_BASE_URL: http://127.0.0.1:5173
+          # api 와 같아야 한다. 메일 본문의 링크가 이 값으로 만들어진다.
+          IEUM_BASE_URL: http://localhost:5173
           IEUM_SMTP_HOST: 127.0.0.1
           IEUM_SMTP_PORT: '1025'
           IEUM_SMTP_TLS: 'false'
@@ -339,14 +351,17 @@ jobs:
           SEED_MFA_ADMIN_TOTP_SECRET: IEUMDEVSEEDTOTPSECRET234
           E2E_IDP_URL: http://127.0.0.1:9099
           E2E_IDP_INTERNAL_URL: http://127.0.0.1:9099
-          # **패스키 스펙은 서버의 rp_id 와 같은 호스트로 열어야 한다.**
-          # 서버는 `IEUM_BASE_URL` 의 호스트를 rp_id 로 쓰고(위 api 기동),
-          # WebAuthn 자격증명은 그 호스트에 묶인다. 이 값을 비워 두면 스펙이
-          # 기본값 `localhost` 로 열어 `127.0.0.1` 짜리 rp_id 와 어긋나고,
-          # 인증기는 키를 만드는데 서버는 그것을 받지 않는다 — 목록이 빈
-          # 채로 20초를 기다리다 죽는다. CI 에서만 그랬다(개발 스택은 양쪽이
-          # `localhost` 다). 아래 `IEUM_BASE_URL` 과 항상 같아야 한다.
-          E2E_APP_URL: http://127.0.0.1:5173
+          # **브라우저는 개발 스택과 같은 호스트로 연다.**
+          #
+          # 위 `IEUM_BASE_URL` 과 같아야 한다. 서버는 그 호스트를 WebAuthn 의
+          # rp_id 로 쓰고 자격증명은 rp_id 에 묶이므로, 어긋나면 인증기는
+          # 키를 만드는데 서버는 그것을 받지 않는다 — 목록이 빈 채로 20초를
+          # 기다리다 죽는다.
+          #
+          # 그리고 그 호스트는 **IP 리터럴이면 안 된다**(위 설명). 두 조건을
+          # `test_config.py` 가 함께 고정한다.
+          E2E_BASE_URL: http://localhost:5173
+          E2E_APP_URL: http://localhost:5173
         run: pnpm --filter @ieum/web run e2e
 
       - if: failure()

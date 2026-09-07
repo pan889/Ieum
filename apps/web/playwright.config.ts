@@ -30,7 +30,14 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   use: {
-    baseURL: process.env['E2E_BASE_URL'] ?? 'http://127.0.0.1:5173',
+    // **개발 스택과 같은 호스트다** (`localhost:5173`, dev-setup.md).
+    //
+    // 한동안 여기 기본값만 `127.0.0.1` 이었다. 그 자체로는 잘 돌지만, 같은
+    // 앱을 두 호스트로 여는 상태가 만들어지고 호스트에 묶이는 것들이 조용히
+    // 갈라진다 — WebAuthn 자격증명이 그렇고(rp_id), 그래서 패스키 스펙이
+    // CI 에서만 붉었다. 게다가 `127.0.0.1` 은 **rp_id 로 쓸 수 없는 값**이다:
+    // WebAuthn 의 rp_id 는 도메인이어야 하고 IP 리터럴은 거절된다.
+    baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:5173',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

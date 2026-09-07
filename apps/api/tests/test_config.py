@@ -232,6 +232,36 @@ class TestCiUsesTheSameCorsMechanism:
             "WebAuthn 자격증명은 호스트에 묶인다 — 어긋나면 등록이 조용히 버려진다."
         )
 
+    def test_the_rp_id_host_is_not_an_ip_address(self) -> None:
+        """**rp_id 는 도메인이어야 한다. IP 리터럴은 안 된다.**
+
+        WebAuthn 의 rp_id 는 유효한 도메인이어야 하고, 브라우저는 IP 주소를
+        rp_id 로 받지 않는다 — `127.0.0.1` 짜리 origin 에서는 어떤 rp_id 로도
+        등록할 수 없다.
+
+        위 시험만으로는 부족했다. 두 값을 **맞추기만** 하면 통과하므로,
+        한 번은 스펙을 `127.0.0.1` 로 옮겨 호스트를 맞췄다 — 맞은 쪽이 애초에
+        쓸 수 없는 값이었고 패스키 스펙은 계속 붉었다. 여기서 그 값 자체를
+        본다. (개발 스택은 `localhost` 이므로 이제 CI 도 같다.)
+        """
+        from ipaddress import ip_address
+        from urllib.parse import urlparse
+
+        env: dict[str, str] = {}
+        for step in self._e2e_job()["steps"]:
+            env.update({k: str(v) for k, v in (step.get("env") or {}).items()})
+        host = urlparse(env.get("IEUM_BASE_URL", "")).hostname or ""
+        assert host, "E2E 잡에 IEUM_BASE_URL 이 없다"
+        try:
+            ip_address(host)
+        except ValueError:
+            return  # 도메인이다. 통과.
+        raise AssertionError(
+            f"IEUM_BASE_URL 의 호스트가 IP 주소다: {host}\n"
+            "이 값이 WebAuthn 의 rp_id 가 되고, IP 리터럴은 유효한 rp_id 가 "
+            "아니라서 브라우저가 등록을 거절한다. `localhost` 를 쓴다."
+        )
+
     def test_ci_storage_allows_the_browser_origin(self) -> None:
         """허용 목록이 없으면 프리사인드 PUT 이 프리플라이트에서 막힌다."""
         body = self._steps()
