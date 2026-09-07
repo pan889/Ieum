@@ -207,6 +207,31 @@ class TestCiUsesTheSameCorsMechanism:
         # `localhost` 는 ::1 로 풀릴 수 있고, 메일 상자는 127.0.0.1 에 있다.
         assert "IEUM_SMTP_HOST: 127.0.0.1" in self._raw()
 
+    def test_the_passkey_spec_opens_the_rp_id_host(self) -> None:
+        """WebAuthn 자격증명은 **호스트에 묶인다**(rp_id).
+
+        서버는 `IEUM_BASE_URL` 의 호스트를 rp_id 로 쓴다. 패스키 스펙이 다른
+        호스트로 열면 인증기는 키를 만들고 서버는 그것을 받지 않는다 —
+        자격증명 목록이 빈 채로 타임아웃까지 기다리다 죽는다. 개발 스택은
+        양쪽이 `localhost` 라 로컬에서는 통과하고 **CI 에서만** 그랬다.
+
+        두 값이 갈라지는 순간을 여기서 잡는다.
+        """
+        from urllib.parse import urlparse
+
+        env: dict[str, str] = {}
+        for step in self._e2e_job()["steps"]:
+            env.update({k: str(v) for k, v in (step.get("env") or {}).items()})
+
+        # `.get` 으로 읽는다. 빠져 있는 것이 곧 이 결함이므로, KeyError 로
+        # 죽으면 무엇이 왜 잘못됐는지가 메시지에서 사라진다.
+        base = urlparse(env.get("IEUM_BASE_URL", "")).netloc
+        app = urlparse(env.get("E2E_APP_URL", "")).netloc
+        assert app and app == base, (
+            f"패스키 스펙이 여는 주소({app})와 서버의 rp_id 호스트({base})가 다르다.\n"
+            "WebAuthn 자격증명은 호스트에 묶인다 — 어긋나면 등록이 조용히 버려진다."
+        )
+
     def test_ci_storage_allows_the_browser_origin(self) -> None:
         """허용 목록이 없으면 프리사인드 PUT 이 프리플라이트에서 막힌다."""
         body = self._steps()

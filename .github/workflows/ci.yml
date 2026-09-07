@@ -339,6 +339,14 @@ jobs:
           SEED_MFA_ADMIN_TOTP_SECRET: IEUMDEVSEEDTOTPSECRET234
           E2E_IDP_URL: http://127.0.0.1:9099
           E2E_IDP_INTERNAL_URL: http://127.0.0.1:9099
+          # **패스키 스펙은 서버의 rp_id 와 같은 호스트로 열어야 한다.**
+          # 서버는 `IEUM_BASE_URL` 의 호스트를 rp_id 로 쓰고(위 api 기동),
+          # WebAuthn 자격증명은 그 호스트에 묶인다. 이 값을 비워 두면 스펙이
+          # 기본값 `localhost` 로 열어 `127.0.0.1` 짜리 rp_id 와 어긋나고,
+          # 인증기는 키를 만드는데 서버는 그것을 받지 않는다 — 목록이 빈
+          # 채로 20초를 기다리다 죽는다. CI 에서만 그랬다(개발 스택은 양쪽이
+          # `localhost` 다). 아래 `IEUM_BASE_URL` 과 항상 같아야 한다.
+          E2E_APP_URL: http://127.0.0.1:5173
         run: pnpm --filter @ieum/web run e2e
 
       - if: failure()
