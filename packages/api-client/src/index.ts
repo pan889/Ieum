@@ -20,6 +20,9 @@ export {
   createUsersApi,
   type UserPage,
   type UsersApi,
+  createGroupsApi,
+  type GroupsApi,
+  type UserGroup,
 } from './auth'
 export {
   createProjectsApi,

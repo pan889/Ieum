@@ -19,7 +19,9 @@ import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
 import { AuditLogScreen } from '@/features/settings/AuditLogScreen'
 import { SecurityScreen } from '@/features/settings/SecurityScreen'
 import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
+import { GroupsScreen } from '@/features/settings/GroupsScreen'
 import { SsoScreen } from '@/features/settings/SsoScreen'
+import { UsersScreen } from '@/features/settings/UsersScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
@@ -117,6 +119,18 @@ const ssoRoute = createRoute({
   component: SsoScreen,
 })
 
+const peopleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/people',
+  component: UsersScreen,
+})
+
+const groupsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/groups',
+  component: GroupsScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -181,6 +195,8 @@ const routeTree = rootRoute.addChildren([
   securityRoute,
   passkeysRoute,
   ssoRoute,
+  peopleRoute,
+  groupsRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

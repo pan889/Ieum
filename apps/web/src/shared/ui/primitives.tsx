@@ -260,12 +260,18 @@ export function Badge({
   tone = 'neutral',
   className,
   ...rest
-}: HTMLAttributes<HTMLSpanElement> & { tone?: 'neutral' | 'todo' | 'in_progress' | 'done' }) {
+}: HTMLAttributes<HTMLSpanElement> & {
+  tone?: 'neutral' | 'todo' | 'in_progress' | 'done' | 'info' | 'danger'
+}) {
   const TONES: Record<string, string> = {
     neutral: 'bg-surface-raised text-muted',
     todo: 'bg-surface-raised text-muted',
     in_progress: 'bg-accent/15 text-accent',
     done: 'bg-success/15 text-success',
+    // 워크플로우 카테고리가 아닌 자리에도 배지가 필요하다(계정 상태 등).
+    // `in_progress` 를 재사용하면 색은 맞지만 이름이 거짓말을 한다.
+    info: 'bg-accent/15 text-accent',
+    danger: 'bg-danger/15 text-danger',
   }
   return (
     <span

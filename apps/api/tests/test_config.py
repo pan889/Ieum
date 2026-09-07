@@ -182,10 +182,30 @@ class TestCiUsesTheSameCorsMechanism:
     def _steps(self) -> str:
         return "\n".join(step.get("run", "") for step in self._e2e_job()["steps"])
 
+    def _raw(self) -> str:
+        """`env:` 블록은 `run:` 문자열에 없다. 파일 원문에서 본다."""
+        return (REPO_ROOT / ".github/workflows/ci.yml").read_text("utf-8")
+
     def test_ci_does_not_call_the_unimplemented_cors_api(self) -> None:
         body = self._steps()
         assert "put_bucket_cors" not in body
         assert "PutBucketCors" not in body
+
+    def test_ci_can_actually_send_mail(self) -> None:
+        """초대 스펙은 **실제로 나간 메일을 되읽는다.**
+
+        메일은 api 가 보내지 않는다 — 아웃박스에 쌓고 워커가 꺼내 보낸다.
+        그래서 E2E 잡에는 메일 상자와 워커가 **둘 다** 있어야 한다. 없으면
+        초대 스펙이 "메일이 오지 않았다" 로 3분 뒤에 죽고, 초대를 거쳐 두
+        번째 사람을 만드는 다른 스펙(패스키·관리 콘솔)도 함께 죽는다.
+        실제로 그렇게 죽었다.
+        """
+        body = self._steps()
+        assert "mailpit" in body
+        assert "arq ieum.worker.settings.WorkerSettings" in body
+        # 주소를 안 맞추면 api 가 기본값(localhost:1025)으로 던진다. 러너에서
+        # `localhost` 는 ::1 로 풀릴 수 있고, 메일 상자는 127.0.0.1 에 있다.
+        assert "IEUM_SMTP_HOST: 127.0.0.1" in self._raw()
 
     def test_ci_storage_allows_the_browser_origin(self) -> None:
         """허용 목록이 없으면 프리사인드 PUT 이 프리플라이트에서 막힌다."""

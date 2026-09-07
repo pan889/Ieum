@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import CursorResult, and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import PageRequest
@@ -248,3 +249,26 @@ async def mfa_required_for(
         .limit(1)
     )
     return (await session.execute(stmt)).first() is not None
+
+
+# ── 역할 할당 정리 ──────────────────────────────────────────────
+
+
+async def drop_principal_assignments(
+    session: AsyncSession, *, principal_kind: str, principal_id: UUID
+) -> int:
+    """이 주체에게 걸린 역할 할당을 모두 지운다. 지운 개수를 돌려준다.
+
+    `role_assignment.principal_id` 는 **FK 가 아니다** — 사용자일 수도
+    그룹일 수도 있어서 한쪽으로 걸 수 없다. 그래서 그룹을 지우면 할당 행이
+    남는다. 남은 행은 아무에게도 권한을 주지 않지만, 나중에 같은 id 가
+    다시 쓰이면(백업 복원 등) 조용히 되살아난다. 지우는 쪽이 정직하다.
+
+    identity 는 이 테이블을 직접 못 본다(모듈 경계). 그래서 여기 있다.
+    """
+    result: CursorResult[Any] = await session.execute(  # type: ignore[assignment]
+        delete(RoleAssignment)
+        .where(RoleAssignment.principal_kind == principal_kind)
+        .where(RoleAssignment.principal_id == principal_id)
+    )
+    return int(result.rowcount or 0)

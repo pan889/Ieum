@@ -20,7 +20,23 @@ export interface CurrentUser {
   timezone: string
   status: string
   is_customer: boolean
+  /** 이 사람에게만 걸린 2FA 강제. 조직 정책과 별개다. */
+  require_mfa: boolean
   last_login_at: string | null
+}
+
+/**
+ * 그룹 하나.
+ *
+ * `source` 가 `idp` 면 IdP 가 관리한다 — 이름과 멤버는 여기서 못 고친다.
+ * 화면이 그걸 모르면 편집 버튼을 그려 놓고 서버가 거절한다.
+ */
+export interface UserGroup {
+  id: string
+  name: string
+  description: string | null
+  source: string
+  member_count: number
 }
 
 /** 등록된 2차 요소 하나. **비밀은 여기에 없다.** */
@@ -54,6 +70,7 @@ export interface SessionInfo {
 
 const BASE = '/api/v1/auth'
 const USERS = '/api/v1/users'
+const GROUPS = '/api/v1/groups'
 
 export interface UserPage {
   items: CurrentUser[]
@@ -88,10 +105,52 @@ export function createUsersApi(client: ApiClient) {
      */
     acceptInvite: (body: { token: string; password: string }) =>
       client.post<CurrentUser>(`${USERS}/accept-invite`, body, { anonymous: true }),
+
+    invite: (body: { email: string; display_name: string; locale?: string }) =>
+      client.post<CurrentUser>(`${USERS}/invite`, body),
+
+    /**
+     * 계정을 잠근다. 세션도 함께 끊긴다 — 되살려도 옛 브라우저는 다시
+     * 로그인해야 한다. step-up 대상이다(관리자가 2FA 를 통과해야 한다).
+     */
+    suspend: (id: string) => client.post<CurrentUser>(`${USERS}/${id}/suspend`, {}),
+    reactivate: (id: string) => client.post<CurrentUser>(`${USERS}/${id}/reactivate`, {}),
+
+    /** 이 사람에게만 2FA 를 강제한다. 조직 전체를 켜지 않고도 걸 수 있다. */
+    setRequireMfa: (id: string, required: boolean) =>
+      client.patch<CurrentUser>(`${USERS}/${id}`, { require_mfa: required }),
+
+    /** 남의 세션을 원격으로 끊는다. 퇴사·기기 분실 때 쓴다. */
+    revokeSessions: (id: string) => client.delete<void>(`${USERS}/${id}/sessions`),
   }
 }
 
 export type UsersApi = ReturnType<typeof createUsersApi>
+
+/**
+ * 그룹 관리.
+ *
+ * 역할을 그룹에 붙이고 사람은 그룹에 넣는다 — 권한을 사람 단위로 만지지
+ * 않기 위한 자리다.
+ */
+export function createGroupsApi(client: ApiClient) {
+  return {
+    list: () => client.get<UserGroup[]>(GROUPS),
+    create: (body: { name: string; description?: string | null }) =>
+      client.post<UserGroup>(GROUPS, body),
+    update: (id: string, body: { name?: string; description?: string | null }) =>
+      client.patch<UserGroup>(`${GROUPS}/${id}`, body),
+    remove: (id: string) => client.delete<void>(`${GROUPS}/${id}`),
+
+    members: (id: string) => client.get<CurrentUser[]>(`${GROUPS}/${id}/members`),
+    addMember: (id: string, userId: string) =>
+      client.post<void>(`${GROUPS}/${id}/members`, { user_id: userId }),
+    removeMember: (id: string, userId: string) =>
+      client.delete<void>(`${GROUPS}/${id}/members/${userId}`),
+  }
+}
+
+export type GroupsApi = ReturnType<typeof createGroupsApi>
 
 export function createAuthApi(client: ApiClient) {
   return {

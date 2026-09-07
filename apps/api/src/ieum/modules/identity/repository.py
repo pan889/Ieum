@@ -125,6 +125,47 @@ class GroupRepository:
         self._s.add(member)
         return member
 
+    async def remove_member(self, group_id: UUID, user_id: UUID) -> bool:
+        """뺐으면 True. 원래 없었으면 False — 부르는 쪽이 감사 로그를 남길지
+        정한다. 없던 것을 뺐다고 기록하면 로그가 사실이 아니게 된다."""
+        result: CursorResult[Any] = await self._s.execute(  # type: ignore[assignment]
+            delete(GroupMember)
+            .where(GroupMember.group_id == group_id)
+            .where(GroupMember.user_id == user_id)
+        )
+        return bool(result.rowcount)
+
+    async def all_with_counts(self) -> list[tuple[UserGroup, int]]:
+        """그룹과 인원수. 행마다 세면 목록 한 번에 N+1 이 된다.
+
+        `outerjoin` 이라야 빈 그룹도 0 으로 나온다 — 안 나오면 방금 만든
+        그룹이 목록에 없고, 사용자는 만들기가 실패한 줄로 읽는다.
+        """
+        stmt = (
+            select(UserGroup, func.count(GroupMember.id))
+            .outerjoin(GroupMember, GroupMember.group_id == UserGroup.id)
+            .group_by(UserGroup.id)
+            .order_by(UserGroup.name)
+        )
+        return [(group, count) for group, count in (await self._s.execute(stmt)).all()]
+
+    async def members(self, group_id: UUID) -> list[User]:
+        stmt = (
+            select(User)
+            .join(GroupMember, GroupMember.user_id == User.id)
+            .where(GroupMember.group_id == group_id)
+            .order_by(User.display_name, User.id)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def delete(self, group_id: UUID) -> None:
+        """그룹을 지운다. 멤버 행은 FK 의 ON DELETE CASCADE 가 정리한다.
+
+        역할 할당은 여기서 못 지운다 — org 의 테이블이다. 부르는 쪽이
+        `org.contracts` 로 먼저 정리한다.
+        """
+        await self._s.execute(delete(UserGroup).where(UserGroup.id == group_id))
+
 
 class IdentityProviderRepository:
     def __init__(self, session: AsyncSession) -> None:

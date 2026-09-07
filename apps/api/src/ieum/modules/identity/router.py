@@ -38,6 +38,10 @@ from ieum.modules.identity.schemas import (
     AuditPageResponse,
     BackupCodesResponse,
     ChangePasswordRequest,
+    GroupCreateRequest,
+    GroupMemberRequest,
+    GroupResponse,
+    GroupUpdateRequest,
     IdpResponse,
     InviteRequest,
     LoginRequest,
@@ -55,6 +59,7 @@ from ieum.modules.identity.schemas import (
     SsoStartResponse,
     TokenResponse,
     TOTPEnrollResponse,
+    UserAdminUpdateRequest,
     UserPageResponse,
     UserResponse,
     WebAuthnOptionsResponse,
@@ -64,6 +69,7 @@ from ieum.modules.identity.service import (
     ApiTokenService,
     AuditService,
     AuthService,
+    GroupService,
     IdentityProviderService,
     IssuedTokens,
     MFAService,
@@ -76,6 +82,7 @@ from ieum.modules.identity.service import (
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
+groups_router = APIRouter(prefix="/groups", tags=["groups"])
 audit_router = APIRouter(prefix="/audit", tags=["audit"])
 #: SAML 콜백이 도착할 화면 경로. **서버가 정한다** — ACS 가 브라우저를 여기로
 #: 되돌린다. 화면 쪽 라우트와 짝이다.
@@ -627,6 +634,151 @@ async def revoke_user_sessions(
     await AuthService(session, settings).revoke_all_sessions(
         user_id=user_id, actor_id=actor.user_id
     )
+    await session.commit()
+
+
+@users_router.post("/{user_id}/suspend", response_model=UserResponse)
+async def suspend_user(
+    user_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> UserResponse:
+    """계정을 정지한다. 세션도 함께 끊는다.
+
+    step-up 이 붙어 있다(`USER_MANAGE`) — 남의 계정을 잠그는 일이라, 자리를
+    비운 관리자 화면으로는 못 하게 한다.
+    """
+    await permissions.require(session, actor, perms.USER_MANAGE, scope=Scope.global_())
+    user = await UserService(session, settings).set_status(
+        actor_id=actor.user_id, user_id=user_id, suspend=True
+    )
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
+@users_router.post("/{user_id}/reactivate", response_model=UserResponse)
+async def reactivate_user(
+    user_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> UserResponse:
+    await permissions.require(session, actor, perms.USER_MANAGE, scope=Scope.global_())
+    user = await UserService(session, settings).set_status(
+        actor_id=actor.user_id, user_id=user_id, suspend=False
+    )
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
+@users_router.patch("/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: UUID,
+    body: UserAdminUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> UserResponse:
+    """관리자가 남의 계정 설정을 바꾼다. 지금은 2FA 강제 하나뿐이다.
+
+    `/users/me` 보다 **뒤에** 선언돼 있어야 한다. 앞에 오면 `me` 가 UUID
+    로 파싱되지 않아 422 가 된다.
+    """
+    await permissions.require(session, actor, perms.USER_MANAGE, scope=Scope.global_())
+    user = await UserService(session, settings).set_require_mfa(
+        actor_id=actor.user_id, user_id=user_id, required=body.require_mfa
+    )
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
+# ── 그룹 ───────────────────────────────────────────────────────
+
+
+@groups_router.get("", response_model=list[GroupResponse])
+async def list_groups(
+    actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[GroupResponse]:
+    rows = await GroupService(session, permissions).list_all(actor)
+    return [GroupResponse.of(group, count) for group, count in rows]
+
+
+@groups_router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
+async def create_group(
+    body: GroupCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> GroupResponse:
+    group = await GroupService(session, permissions).create(
+        actor, name=body.name, description=body.description
+    )
+    await session.commit()
+    return GroupResponse.of(group, 0)
+
+
+@groups_router.patch("/{group_id}", response_model=GroupResponse)
+async def update_group(
+    group_id: UUID,
+    body: GroupUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> GroupResponse:
+    service = GroupService(session, permissions)
+    group = await service.update(actor, group_id, name=body.name, description=body.description)
+    members = await service.members(actor, group_id)
+    await session.commit()
+    return GroupResponse.of(group, len(members))
+
+
+@groups_router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(
+    group_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    await GroupService(session, permissions).delete(actor, group_id)
+    await session.commit()
+
+
+@groups_router.get("/{group_id}/members", response_model=list[UserResponse])
+async def list_group_members(
+    group_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> list[UserResponse]:
+    members = await GroupService(session, permissions).members(actor, group_id)
+    return [UserResponse.model_validate(user) for user in members]
+
+
+@groups_router.post("/{group_id}/members", status_code=status.HTTP_204_NO_CONTENT)
+async def add_group_member(
+    group_id: UUID,
+    body: GroupMemberRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    await GroupService(session, permissions).add_member(actor, group_id, body.user_id)
+    await session.commit()
+
+
+@groups_router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_group_member(
+    group_id: UUID,
+    user_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    await GroupService(session, permissions).remove_member(actor, group_id, user_id)
     await session.commit()
 
 

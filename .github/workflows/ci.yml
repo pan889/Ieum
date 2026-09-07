@@ -220,6 +220,20 @@ jobs:
           done
           echo "MinIO 가 안 떴다"; docker logs minio; exit 1
 
+      - name: 메일 상자 기동
+        # 초대 스펙은 **실제로 나간 메일을 되읽는다** — 토큰을 몰래 만들어
+        # 지름길로 가면 초대 흐름이 죽어 있어도 통과한다(실제로 한동안 죽어
+        # 있었다). 그래서 CI 에도 메일 상자가 필요하다. compose 와 같은
+        # 이미지·포트를 쓴다.
+        run: |
+          docker run -d --name mailpit -p 1025:1025 -p 8025:8025 \
+            axllent/mailpit:v1.24
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8025/readyz > /dev/null && exit 0
+            sleep 1
+          done
+          echo "mailpit 이 안 떴다"; docker logs mailpit; exit 1
+
       - name: 버킷 준비
         # 브라우저가 프리사인드 URL 로 직접 PUT 한다. CORS 가 없으면 막히는데,
         # **MinIO 는 S3 의 CORS API(`PutBucketCors`)를 구현하지 않는다** —
@@ -262,6 +276,9 @@ jobs:
           IEUM_S3_ACCESS_KEY: ieum
           IEUM_S3_SECRET_KEY: ieum-secret
           IEUM_S3_BUCKET: ieum-attachments
+          IEUM_SMTP_HOST: 127.0.0.1
+          IEUM_SMTP_PORT: '1025'
+          IEUM_SMTP_TLS: 'false'
         run: |
           uv run --project apps/api uvicorn ieum.main:app --host 127.0.0.1 --port 8000 \
             > /tmp/api.log 2>&1 &
@@ -270,6 +287,26 @@ jobs:
             sleep 1
           done
           echo "api 가 안 떴다"; cat /tmp/api.log; exit 1
+
+      - name: 워커 기동
+        # **메일은 api 가 보내지 않는다.** 아웃박스에 쌓고 워커가 꺼내 보낸다
+        # (그래서 커밋된 것만 나간다). 워커가 없으면 초대 메일이 영원히 오지
+        # 않고, 스펙은 "메일이 오지 않았다" 로 3분 뒤에 죽는다.
+        env:
+          IEUM_BASE_URL: http://127.0.0.1:5173
+          IEUM_SMTP_HOST: 127.0.0.1
+          IEUM_SMTP_PORT: '1025'
+          IEUM_SMTP_TLS: 'false'
+        run: |
+          uv run --project apps/api arq ieum.worker.settings.WorkerSettings \
+            > /tmp/worker.log 2>&1 &
+          # arq 는 HTTP 를 안 열어서 헬스 엔드포인트가 없다. 로그의 첫 줄로
+          # 기동을 확인한다 — 그냥 넘어가면 뒤에서 "메일이 안 온다" 로만 보인다.
+          for _ in $(seq 1 30); do
+            grep -q "Starting worker" /tmp/worker.log && exit 0
+            sleep 1
+          done
+          echo "워커가 안 떴다"; cat /tmp/worker.log; exit 1
 
       - name: web 기동
         run: |
@@ -312,6 +349,7 @@ jobs:
             apps/web/test-results
             /tmp/api.log
             /tmp/web.log
+            /tmp/worker.log
             /tmp/fake-idp.log
           retention-days: 7
 

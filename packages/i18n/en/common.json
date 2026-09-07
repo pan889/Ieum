@@ -63,5 +63,6 @@
   "action.loadMore": "Load more",
   "action.create": "Create",
   "nav.search": "Search",
-  "nav.searchPlaceholder": "Search issues and docs"
+  "nav.searchPlaceholder": "Search issues and docs",
+  "action.add": "Add"
 }

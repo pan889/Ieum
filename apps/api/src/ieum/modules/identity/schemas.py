@@ -49,6 +49,57 @@ class AcceptInviteRequest(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+class UserAdminUpdateRequest(BaseModel):
+    """관리자가 남의 계정에서 바꿀 수 있는 것.
+
+    정지·복구는 따로 둔다 — 토글 하나로 묶으면 "정지" 를 실수로 누른 것과
+    "2FA 강제" 를 누른 것이 같은 요청이 된다.
+    """
+
+    require_mfa: bool
+
+
+class GroupCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class GroupUpdateRequest(BaseModel):
+    """보내지 않은 항목은 그대로 둔다."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class GroupMemberRequest(BaseModel):
+    user_id: UUID
+
+
+class GroupResponse(BaseModel):
+    """그룹 하나.
+
+    `source` 를 내보낸다. IdP 가 관리하는 그룹은 손으로 못 고치는데, 화면이
+    그걸 모르면 편집 버튼을 그려 놓고 서버가 거절하게 된다.
+    """
+
+    id: UUID
+    name: str
+    description: str | None
+    source: str
+    #: 인원수. 목록에서 그룹마다 멤버를 또 부르지 않게 한다.
+    member_count: int
+
+    @classmethod
+    def of(cls, group: Any, member_count: int) -> GroupResponse:
+        return cls(
+            id=group.id,
+            name=group.name,
+            description=group.description,
+            source=group.source,
+            member_count=member_count,
+        )
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=1024)
     new_password: str = Field(min_length=1, max_length=1024)
@@ -71,6 +122,8 @@ class UserResponse(BaseModel):
     timezone: str
     status: str
     is_customer: bool
+    #: 이 사람에게만 걸린 2FA 강제. 조직 정책과 별개다 (auth.md 3절).
+    require_mfa: bool = False
     last_login_at: datetime | None = None
 
 

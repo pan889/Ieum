@@ -942,3 +942,189 @@ class TestIdpAdmin:
         )
         assert again.status_code == 409, again.text
         assert again.json()["error"]["code"] == "identity.idp_already_registered"
+
+
+class TestSuspendAndReactivate:
+    """계정 정지.
+
+    정지는 **즉시** 물어야 한다. 인증 경로가 매 요청 DB 를 치므로 정지한
+    순간부터 그 사람의 토큰은 거절된다 — JWT 를 세션으로 쓰지 않는 이유가
+    이것이다.
+    """
+
+    async def _admin(self, client: httpx.AsyncClient) -> dict[str, str]:
+        headers = _auth(await _login(client))
+        # `USER_MANAGE` 는 step-up 대상이다. 실제 2FA 통과가 필요하다.
+        await _enroll_totp(client, headers)
+        return headers
+
+    async def test_needs_step_up(self, app_client: httpx.AsyncClient, settings: Settings) -> None:
+        """2FA 를 통과하지 않은 관리자 세션으로는 못 잠근다. 자리를 비운
+        화면으로 남의 계정을 잠글 수 있으면 그건 보호가 아니다."""
+        victim = (
+            await app_client.get(
+                f"{BASE}/auth/me", headers=await _invited_user(app_client, settings)
+            )
+        ).json()
+        plain = _auth(await _login(app_client))
+
+        r = await app_client.post(f"{BASE}/users/{victim['id']}/suspend", headers=plain)
+        assert r.status_code == 403, r.text
+        assert r.json()["error"]["code"] == "auth.step_up_requires_mfa"
+
+    async def test_suspending_cuts_the_session_immediately(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        person = await _invited_user(app_client, settings)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=person)).json()
+
+        admin = await self._admin(app_client)
+        r = await app_client.post(f"{BASE}/users/{me['id']}/suspend", headers=admin)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "suspended"
+
+        # 이미 열려 있던 세션이 그 자리에서 끊긴다.
+        blocked = await app_client.get(f"{BASE}/auth/me", headers=person)
+        assert blocked.status_code == 401, blocked.text
+
+        # 다시 로그인해도 안 된다.
+        again = await app_client.post(
+            f"{BASE}/auth/login", json={"email": me["email"], "password": INVITED_PASSWORD}
+        )
+        assert again.status_code == 401, again.text
+
+    async def test_reactivating_brings_them_back(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        person = await _invited_user(app_client, settings)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=person)).json()
+        admin = await self._admin(app_client)
+
+        await app_client.post(f"{BASE}/users/{me['id']}/suspend", headers=admin)
+        back = await app_client.post(f"{BASE}/users/{me['id']}/reactivate", headers=admin)
+        assert back.status_code == 200, back.text
+        assert back.json()["status"] == "active"
+
+        # **옛 토큰은 되살아나지 않는다.** 정지가 세션을 끊었으므로 되살려도
+        # 그 브라우저는 다시 로그인해야 한다. 안 끊으면 "정지했다" 가
+        # "잠깐 쉬게 했다" 가 된다.
+        old_token = await app_client.get(f"{BASE}/auth/me", headers=person)
+        assert old_token.status_code == 401, old_token.text
+
+        signed_in = await app_client.post(
+            f"{BASE}/auth/login", json={"email": me["email"], "password": INVITED_PASSWORD}
+        )
+        assert signed_in.status_code == 200, signed_in.text
+
+    async def test_reactivating_an_unaccepted_invite_goes_back_to_invited(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """초대만 받고 수락하지 않은 사람을 `active` 로 두면 로그인할 수단이
+        없는 활성 계정이 된다 — 초대 링크는 `invited` 를 기대한다."""
+        admin = await self._admin(app_client)
+        invited = await app_client.post(
+            f"{BASE}/users/invite",
+            json={"email": f"pending-{uuid4().hex[:8]}@example.com", "display_name": "Pending"},
+            headers=admin,
+        )
+        assert invited.status_code == 201, invited.text
+        user_id = invited.json()["id"]
+        assert invited.json()["status"] == "invited"
+
+        await app_client.post(f"{BASE}/users/{user_id}/suspend", headers=admin)
+        back = await app_client.post(f"{BASE}/users/{user_id}/reactivate", headers=admin)
+        assert back.status_code == 200, back.text
+        assert back.json()["status"] == "invited"
+
+    async def test_you_cannot_suspend_yourself(self, app_client: httpx.AsyncClient) -> None:
+        """마지막 관리자였다면 그 조직은 관리 화면을 영구히 잃는다 —
+        되돌릴 사람이 없다."""
+        admin = await self._admin(app_client)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=admin)).json()
+
+        r = await app_client.post(f"{BASE}/users/{me['id']}/suspend", headers=admin)
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "identity.cannot_suspend_self"
+
+    async def test_requiring_mfa_for_one_person(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        """조직 전체를 켜지 않고 한 사람에게만 강제한다 (auth.md 3절)."""
+        person = await _invited_user(app_client, settings)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=person)).json()
+        assert me["require_mfa"] is False
+
+        admin = await self._admin(app_client)
+        r = await app_client.patch(
+            f"{BASE}/users/{me['id']}", json={"require_mfa": True}, headers=admin
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["require_mfa"] is True
+
+        again = await app_client.post(
+            f"{BASE}/auth/login", json={"email": me["email"], "password": INVITED_PASSWORD}
+        )
+        assert again.json()["mfa_enrollment_required"] is True
+
+    async def test_patching_me_still_reaches_the_profile_route(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """`/users/{user_id}` 가 `/users/me` 를 가리면 본인 설정이 422 가 된다.
+        선언 순서 하나에 달려 있어 회귀로 고정한다."""
+        headers = _auth(await _login(app_client))
+        r = await app_client.patch(f"{BASE}/users/me", json={"locale": "ko"}, headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["locale"] == "ko"
+
+
+class TestGroupsApi:
+    """그룹 관리 라우트. 배선(권한·커밋·응답 모양)만 본다 — 규칙 자체는
+    `test_admin_groups.py` 가 서비스 층에서 고정한다."""
+
+    async def test_a_group_round_trips_through_the_api(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        admin = _auth(await _login(app_client))
+        person = await _invited_user(app_client, settings)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=person)).json()
+
+        created = await app_client.post(
+            f"{BASE}/groups",
+            json={"name": "Platform", "description": "물건 굴리는 사람들"},
+            headers=admin,
+        )
+        assert created.status_code == 201, created.text
+        group = created.json()
+        assert group["source"] == "local"
+        assert group["member_count"] == 0
+
+        added = await app_client.post(
+            f"{BASE}/groups/{group['id']}/members", json={"user_id": me["id"]}, headers=admin
+        )
+        assert added.status_code == 204, added.text
+
+        listed = await app_client.get(f"{BASE}/groups", headers=admin)
+        assert listed.status_code == 200, listed.text
+        assert [(g["name"], g["member_count"]) for g in listed.json()] == [("Platform", 1)]
+
+        members = await app_client.get(f"{BASE}/groups/{group['id']}/members", headers=admin)
+        assert [u["email"] for u in members.json()] == [me["email"]]
+
+        removed = await app_client.delete(
+            f"{BASE}/groups/{group['id']}/members/{me['id']}", headers=admin
+        )
+        assert removed.status_code == 204, removed.text
+
+        gone = await app_client.delete(f"{BASE}/groups/{group['id']}", headers=admin)
+        assert gone.status_code == 204, gone.text
+        assert (await app_client.get(f"{BASE}/groups", headers=admin)).json() == []
+
+    async def test_group_management_does_not_need_step_up(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """`GROUP_MANAGE` 에는 step-up 을 붙이지 않았다 — 사람을 팀에 넣는
+        일은 매일 하는 일이고, 매번 2FA 를 요구하면 아무도 쓰지 않는다.
+        여기서 못 박는다: 정책을 나중에 바꾸려면 이 단언을 먼저 봐야 한다."""
+        admin = _auth(await _login(app_client))
+        r = await app_client.post(f"{BASE}/groups", json={"name": "Ops"}, headers=admin)
+        assert r.status_code == 201, r.text

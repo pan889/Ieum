@@ -267,6 +267,39 @@ export async function signIn(
   await page.waitForURL(/\/projects/)
 }
 
+/**
+ * 브라우저로 2FA 관리자를 들여보낸다 — 화면의 2단계 인증까지 통과해서.
+ *
+ * step-up 이 걸린 **화면**(사람·역할·워크플로우 설정)을 실제로 눌러 보려면
+ * 토큰만으로는 안 된다. `stepUpToken` 은 API 를 직접 치는 자리용이다.
+ *
+ * 코드를 계산하는 계정이 이것뿐인 이유는 `MFA_ADMIN` 주석에 있다.
+ */
+export async function signInWithMfa(page: Page): Promise<void> {
+  // `signIn` 을 못 쓴다: 그쪽은 앱 셸(로그아웃 버튼)이 뜰 때까지 기다리는데,
+  // 이 계정은 비밀번호만으로는 2단계 화면에서 멈춘다.
+  await page.goto('/')
+  const email = page.getByLabel(/email|이메일/i)
+  const out = page.getByRole('button', { name: /sign out|로그아웃/i })
+  await expect(email.or(out).first()).toBeVisible()
+  if (await out.isVisible()) {
+    await out.click()
+    await expect(email).toBeVisible()
+  }
+
+  await email.fill(MFA_ADMIN.email)
+  await page.getByLabel(/password|비밀번호/i).fill(MFA_ADMIN.password)
+  await page.getByRole('button', { name: /^(sign in|로그인)$/i }).click()
+
+  // 로그인만으로는 "미완료" 세션이다. 앱 셸이 2단계 화면을 띄운다.
+  const code = page.getByLabel(/authentication code|인증 코드/i)
+  await expect(code).toBeVisible()
+  await code.fill(await freshCode(page))
+  await page.getByRole('button', { name: /^(verify|확인)$/i }).click()
+  // 앱 셸이 뜰 때까지 기다린다. 주소만 보면 아직 검증 요청이 날아가는 중이다.
+  await expect(out).toBeVisible()
+}
+
 export async function createProject(page: Page, key: string, name = 'E2E'): Promise<void> {
   await page.getByRole('link', { name: /^projects$/i }).click()
   await page.waitForURL(/\/projects$/)

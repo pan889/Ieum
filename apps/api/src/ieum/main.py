@@ -27,6 +27,7 @@ from ieum.db.session import dispose_engine, get_session_factory, init_engine
 from ieum.modules.identity.router import (
     audit_router,
     auth_router,
+    groups_router,
     sso_admin_router,
     tokens_router,
     users_router,
@@ -139,6 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     for router in (
         auth_router,
         users_router,
+        groups_router,
         tokens_router,
         audit_router,
         sso_admin_router,

@@ -13,7 +13,6 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.core.context import Actor
 from ieum.core.exceptions import (
     ConflictError,
     NotFoundError,
@@ -26,9 +25,10 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import GroupMember, User, UserGroup
 from ieum.modules.org import permissions as perms
-from ieum.modules.org.models import Project, Role
-from ieum.modules.org.repository import OrgPermissionResolver, RoleRepository
+from ieum.modules.org.models import Project
+from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.service import ProjectService, RoleService, WorkspaceService
+from role_grants import actor_for, grant
 
 
 @pytest.fixture
@@ -42,43 +42,6 @@ async def user(session: AsyncSession) -> AsyncIterator[User]:
     session.add(row)
     await session.flush()
     yield row
-
-
-def actor_for(user: User, *, group_ids: frozenset[UUID] = frozenset()) -> Actor:
-    """step-up 이 필요한 권한도 쓰므로 MFA 를 통과한 액터로 만든다."""
-    return Actor(
-        user_id=user.id,
-        email=user.email,
-        is_active=True,
-        mfa_satisfied_at=utcnow(),
-        # 시각만으로는 부족하다 — MFA 를 등록하지 않은 계정도 로그인하면
-        # 그 값이 채워진다. 이 액터는 실제로 통과한 사람이다.
-        mfa_verified=True,
-        group_ids=group_ids,
-    )
-
-
-async def grant(
-    session: AsyncSession,
-    *,
-    principal_id: UUID,
-    permissions_granted: tuple[str, ...],
-    scope: Scope,
-    principal_kind: str = "user",
-    scope_kind: str | None = None,
-) -> Role:
-    """역할을 만들고 주체에게 할당한다."""
-    repo = RoleRepository(session)
-    role = Role(name=f"role-{new_id()}", scope_kind=scope_kind or scope.kind.value)
-    repo.add(role)
-    await session.flush()
-    for permission in permissions_granted:
-        repo.grant(role.id, permission)
-    repo.assign(
-        role_id=role.id, scope=scope, principal_kind=principal_kind, principal_id=principal_id
-    )
-    await session.flush()
-    return role
 
 
 class TestWorkspace:

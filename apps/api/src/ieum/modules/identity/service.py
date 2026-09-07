@@ -1019,6 +1019,76 @@ class UserService:
             metadata={"revoked_sessions": revoked},
         )
 
+    async def set_status(self, *, actor_id: UUID, user_id: UUID, suspend: bool) -> User:
+        """계정을 정지하거나 되살린다.
+
+        **자기 자신은 정지하지 못한다.** 관리자가 마지막 관리자였다면 그
+        조직은 그 순간 관리 화면을 영구히 잃는다 — 되돌릴 사람이 없다.
+
+        정지는 세션을 끊는다. 인증 경로가 이미 `is_active` 를 보므로 정지한
+        순간부터 요청은 거절되지만, 세션 행이 남아 있으면 되살렸을 때 옛
+        브라우저가 아무 확인 없이 그대로 이어진다. 그러면 "정지했다" 가
+        "잠깐 쉬게 했다" 가 된다.
+
+        되살릴 때 어떤 상태로 가는지는 **비밀번호가 있는지**로 갈린다.
+        초대만 받고 수락하지 않은 사람을 `active` 로 두면 로그인할 수단이
+        없는 활성 계정이 된다 — 초대 링크는 `invited` 를 기대한다.
+        """
+        if suspend and user_id == actor_id:
+            raise ConflictError("자기 계정은 정지할 수 없다.", code="identity.cannot_suspend_self")
+
+        user = await self._users.get(user_id)
+        if user is None:
+            raise NotFoundError("사용자를 찾을 수 없다.")
+
+        if suspend:
+            if user.status == "suspended":
+                return user
+            user.status = "suspended"
+            revoked = await self._sessions.revoke_all_for_user(user_id)
+            self._audit.record(
+                action=audit.USER_SUSPENDED,
+                actor_id=actor_id,
+                target_type="user",
+                target_id=user_id,
+                metadata={"email": user.email, "revoked_sessions": revoked},
+            )
+            return user
+
+        if user.status != "suspended":
+            return user
+        user.status = "active" if user.password_hash is not None else "invited"
+        self._audit.record(
+            action=audit.USER_REACTIVATED,
+            actor_id=actor_id,
+            target_type="user",
+            target_id=user_id,
+            metadata={"email": user.email, "status": user.status},
+        )
+        return user
+
+    async def set_require_mfa(self, *, actor_id: UUID, user_id: UUID, required: bool) -> User:
+        """이 사람에게만 2FA 를 강제한다(조직 정책과 별개, auth.md 3절).
+
+        끄는 것도 기록한다 — 보호를 푸는 일이 로그에 안 남으면 감사에서
+        "언제부터 안 걸려 있었나" 에 답할 수 없다.
+        """
+        user = await self._users.get(user_id)
+        if user is None:
+            raise NotFoundError("사용자를 찾을 수 없다.")
+        if user.require_mfa == required:
+            return user
+
+        user.require_mfa = required
+        self._audit.record(
+            action=audit.USER_MFA_REQUIRED_CHANGED,
+            actor_id=actor_id,
+            target_type="user",
+            target_id=user_id,
+            metadata={"email": user.email, "require_mfa": required},
+        )
+        return user
+
     def _validate_password(self, password: str) -> None:
         minimum = self._settings.password_min_length
         if len(password) < minimum:
@@ -1027,6 +1097,193 @@ class UserService:
                 code="identity.password_too_short",
                 details={"min_length": minimum},
             )
+
+
+class GroupService:
+    """그룹 관리.
+
+    그룹은 권한을 사람 단위로 만지지 않게 하는 자리다 — 역할을 그룹에 붙이고
+    사람은 그룹에 넣는다. 화면이 없으면 SSO 가 동기화한 그룹이 어디에도
+    보이지 않아, 그룹 매핑이 되고 있는지 확인할 방법조차 없다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._groups = GroupRepository(session)
+        self._users = UserRepository(session)
+        self._audit = AuditRepository(session)
+
+    async def list_all(self, actor: Actor) -> list[tuple[UserGroup, int]]:
+        """그룹과 인원수. **IdP 가 만든 것도 준다** — 그게 동기화가 돌고
+        있다는 유일한 증거다.
+
+        `list` 가 아니라 `list_all` 이다. 클래스 안에 `list` 라는 이름을 두면
+        같은 클래스의 다른 시그니처에서 `list[...]` 가 그 메서드로 해석돼
+        타입 검사가 통째로 어긋난다.
+        """
+        await self._require(actor)
+        return await self._groups.all_with_counts()
+
+    async def create(self, actor: Actor, *, name: str, description: str | None) -> UserGroup:
+        await self._require(actor)
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValidationError("그룹 이름이 필요하다.", code="identity.group_name_required")
+        if await self._groups.get_by_name(cleaned) is not None:
+            # 이름에 유일 제약이 걸려 있다. 먼저 묻지 않으면 두 번째 등록이
+            # 500 으로 떨어진다.
+            raise ConflictError(f"이미 있는 그룹이다: {cleaned}", code="identity.group_name_taken")
+
+        group = self._groups.add(UserGroup(name=cleaned, description=description, source="local"))
+        await self._s.flush()
+        self._audit.record(
+            action=audit.GROUP_CREATED,
+            actor_id=actor.user_id,
+            target_type="group",
+            target_id=group.id,
+            metadata={"name": cleaned},
+        )
+        return group
+
+    async def update(
+        self, actor: Actor, group_id: UUID, *, name: str | None, description: str | None
+    ) -> UserGroup:
+        """이름·설명을 고친다.
+
+        **IdP 가 만든 그룹은 이름을 못 바꾼다.** 그 이름은 IdP 가 보내는
+        클레임 값이다 — 바꾸면 다음 로그인에서 매칭이 실패해 원래 이름의
+        그룹이 새로 생기고, 이름을 바꾼 쪽은 사람이 빠져나가 텅 빈다.
+        조용히 그렇게 되는 것보다 거절하는 편이 낫다.
+        """
+        await self._require(actor)
+        group = await self._require_group(group_id)
+
+        if name is not None:
+            cleaned = name.strip()
+            if not cleaned:
+                raise ValidationError("그룹 이름이 필요하다.", code="identity.group_name_required")
+            if cleaned != group.name:
+                if group.source == "idp":
+                    raise ConflictError(
+                        "IdP 가 관리하는 그룹은 이름을 바꿀 수 없다.",
+                        code="identity.group_is_managed",
+                    )
+                existing = await self._groups.get_by_name(cleaned)
+                if existing is not None and existing.id != group.id:
+                    raise ConflictError(
+                        f"이미 있는 그룹이다: {cleaned}", code="identity.group_name_taken"
+                    )
+                group.name = cleaned
+
+        if description is not None:
+            group.description = description or None
+
+        self._audit.record(
+            action=audit.GROUP_UPDATED,
+            actor_id=actor.user_id,
+            target_type="group",
+            target_id=group.id,
+            metadata={"name": group.name},
+        )
+        return group
+
+    async def delete(self, actor: Actor, group_id: UUID) -> None:
+        """그룹을 지운다. **역할 할당도 함께 지운다.**
+
+        멤버 행은 FK 가 정리하지만 역할 할당은 아니다 — `principal_id` 는
+        사용자일 수도 그룹일 수도 있어 FK 를 걸 수 없다. 남겨 두면 아무에게도
+        권한을 주지 않는 유령 행이 쌓인다.
+
+        IdP 가 만든 그룹도 지울 수 있게 둔다. 다음 로그인이 다시 만들지만,
+        매핑을 끄고 정리하는 길을 막으면 IdP 설정을 바꾼 뒤 옛 그룹이 영구히
+        목록에 남는다.
+        """
+        await self._require(actor)
+        group = await self._require_group(group_id)
+        name, source = group.name, group.source
+
+        dropped = await org.drop_principal_assignments(
+            self._s, principal_kind="group", principal_id=group_id
+        )
+        await self._groups.delete(group_id)
+        self._audit.record(
+            action=audit.GROUP_DELETED,
+            actor_id=actor.user_id,
+            target_type="group",
+            target_id=group_id,
+            # 몇 개의 권한이 함께 사라졌는지 남긴다. 나중에 "왜 안 되지" 의 답이다.
+            metadata={"name": name, "source": source, "dropped_assignments": dropped},
+        )
+
+    async def members(self, actor: Actor, group_id: UUID) -> list[User]:
+        await self._require(actor)
+        await self._require_group(group_id)
+        return await self._groups.members(group_id)
+
+    async def add_member(self, actor: Actor, group_id: UUID, user_id: UUID) -> None:
+        await self._require(actor)
+        group = await self._require_group(group_id)
+        self._refuse_managed(group)
+
+        user = await self._users.get(user_id)
+        if user is None:
+            raise NotFoundError("사용자를 찾을 수 없다.")
+        if user.is_customer:
+            # 고객은 /portal/* 만 본다 (auth.md 5절). 내부 그룹에 넣으면
+            # 그 그룹에 붙은 역할로 내부 권한이 새어 나간다.
+            raise ConflictError(
+                "포털 고객은 내부 그룹에 넣을 수 없다.", code="identity.group_customer_member"
+            )
+
+        if await self._groups.add_member(group_id, user_id) is None:
+            return
+        self._audit.record(
+            action=audit.GROUP_MEMBER_ADDED,
+            actor_id=actor.user_id,
+            target_type="group",
+            target_id=group_id,
+            metadata={"group": group.name, "user": user.email},
+        )
+
+    async def remove_member(self, actor: Actor, group_id: UUID, user_id: UUID) -> None:
+        await self._require(actor)
+        group = await self._require_group(group_id)
+        self._refuse_managed(group)
+
+        if not await self._groups.remove_member(group_id, user_id):
+            return
+        user = await self._users.get(user_id)
+        self._audit.record(
+            action=audit.GROUP_MEMBER_REMOVED,
+            actor_id=actor.user_id,
+            target_type="group",
+            target_id=group_id,
+            metadata={"group": group.name, "user": user.email if user else str(user_id)},
+        )
+
+    @staticmethod
+    def _refuse_managed(group: UserGroup) -> None:
+        """IdP 가 관리하는 그룹의 멤버는 손으로 못 바꾼다.
+
+        바꿔도 다음 로그인의 동기화가 **되돌린다** (`_sync_groups` 는 클레임에
+        없는 IdP 그룹에서 사람을 뺀다). 되돌려질 변경을 받아 주면 화면은
+        성공을 보여 주고 결과는 사라진다 — 그게 가장 나쁜 실패다.
+        """
+        if group.source == "idp":
+            raise ConflictError(
+                "IdP 가 관리하는 그룹의 멤버는 여기서 바꿀 수 없다.",
+                code="identity.group_is_managed",
+            )
+
+    async def _require_group(self, group_id: UUID) -> UserGroup:
+        group = await self._groups.get(group_id)
+        if group is None:
+            raise NotFoundError("그룹을 찾을 수 없다.")
+        return group
+
+    async def _require(self, actor: Actor) -> None:
+        await self._perms.require(self._s, actor, perms.GROUP_MANAGE, scope=Scope.global_())
 
 
 def _qr_svg(uri: str) -> str:
@@ -1039,6 +1296,7 @@ def _qr_svg(uri: str) -> str:
 
 __all__ = [
     "AuthService",
+    "GroupService",
     "IssuedTokens",
     "MFAService",
     "TOTPEnrollment",

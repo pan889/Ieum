@@ -5,6 +5,7 @@ import {
   createAuditApi,
   createAuthApi,
   createBoardsApi,
+  createGroupsApi,
   createIdpApi,
   createIssuesApi,
   createNotificationsApi,
@@ -40,3 +41,4 @@ export const rolesApi = createRolesApi(apiClient)
 export const auditApi = createAuditApi(apiClient)
 export const securityApi = createSecurityApi(apiClient)
 export const idpApi = createIdpApi(apiClient)
+export const groupsApi = createGroupsApi(apiClient)

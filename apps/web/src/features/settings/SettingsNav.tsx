@@ -16,6 +16,8 @@ const TABS = [
   { to: '/settings/tokens', labelKey: 'auth:tokens.title' },
   { to: '/settings/sessions', labelKey: 'auth:sessions.title' },
   { to: '/settings/passkeys', labelKey: 'auth:passkeys.title' },
+  { to: '/settings/people', labelKey: 'admin:users.title' },
+  { to: '/settings/groups', labelKey: 'admin:groups.title' },
   { to: '/settings/audit', labelKey: 'admin:audit.title' },
   { to: '/settings/security', labelKey: 'admin:security.title' },
   { to: '/settings/sso', labelKey: 'admin:sso.title' },

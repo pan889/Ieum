@@ -42,6 +42,16 @@ USER_INVITED = "identity.user.invited"
 USER_ACTIVATED = "identity.user.activated"
 USER_LOCALE_CHANGED = "identity.user.locale_changed"
 USER_PASSWORD_CHANGED = "identity.user.password_changed"  # noqa: S105 - 행동 이름이다
+USER_SUSPENDED = "identity.user.suspended"
+USER_REACTIVATED = "identity.user.reactivated"
+USER_MFA_REQUIRED_CHANGED = "identity.user.mfa_required_changed"
+
+# ── 그룹 ────────────────────────────────────────────────────────
+GROUP_CREATED = "identity.group.created"
+GROUP_UPDATED = "identity.group.updated"
+GROUP_DELETED = "identity.group.deleted"
+GROUP_MEMBER_ADDED = "identity.group.member_added"
+GROUP_MEMBER_REMOVED = "identity.group.member_removed"
 
 # ── SSO ─────────────────────────────────────────────────────────
 SSO_LOGIN_SUCCEEDED = "auth.sso.login_succeeded"
@@ -78,6 +88,14 @@ ACTIONS = (
     USER_ACTIVATED,
     USER_LOCALE_CHANGED,
     USER_PASSWORD_CHANGED,
+    USER_SUSPENDED,
+    USER_REACTIVATED,
+    USER_MFA_REQUIRED_CHANGED,
+    GROUP_CREATED,
+    GROUP_UPDATED,
+    GROUP_DELETED,
+    GROUP_MEMBER_ADDED,
+    GROUP_MEMBER_REMOVED,
     SSO_LOGIN_SUCCEEDED,
     SSO_USER_PROVISIONED,
     SSO_ACCOUNT_LINKED,
@@ -177,6 +195,11 @@ async def _fill_emails(
 __all__ = [
     "ACTIONS",
     "COLUMNS",
+    "GROUP_CREATED",
+    "GROUP_DELETED",
+    "GROUP_MEMBER_ADDED",
+    "GROUP_MEMBER_REMOVED",
+    "GROUP_UPDATED",
     "IDP_CREATED",
     "IDP_UPDATED",
     "LOGIN_FAILED",
@@ -200,6 +223,9 @@ __all__ = [
     "USER_ACTIVATED",
     "USER_INVITED",
     "USER_LOCALE_CHANGED",
+    "USER_MFA_REQUIRED_CHANGED",
     "USER_PASSWORD_CHANGED",
+    "USER_REACTIVATED",
+    "USER_SUSPENDED",
     "stream_csv",
 ]
