@@ -732,3 +732,36 @@ class TestMFAPolicy:
         )
         assert signed_in.status_code == 200, signed_in.text
         return dict(signed_in.json())
+
+
+class TestMFACannotBeRefreshedAway:
+    """비밀번호만 통과한 세션은 리프레시해도 미완료여야 한다.
+
+    로테이션이 완료 상태를 새로 만들어 주면, 2FA 를 켜 둔 계정도 비밀번호
+    하나로 열린다 — 로그인 직후 `/auth/refresh` 한 번이면 끝이다.
+    """
+
+    async def test_rotating_a_pending_session_does_not_satisfy_mfa(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        admin = _auth(await _login(app_client))
+        assert (
+            await app_client.put(
+                f"{BASE}/admin/security", json={"require_mfa": True}, headers=admin
+            )
+        ).status_code == 200
+
+        pending = await app_client.post(
+            f"{BASE}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+        )
+        assert pending.json()["mfa_required"] is True
+
+        rotated = await app_client.post(
+            f"{BASE}/auth/refresh", json={"refresh_token": pending.json()["refresh_token"]}
+        )
+        assert rotated.status_code == 200, rotated.text
+        # 여기가 무너지면 2FA 는 장식이다.
+        assert rotated.json()["mfa_required"] is True
+
+        blocked = await app_client.get(f"{BASE}/auth/me", headers=_auth(rotated.json()))
+        assert blocked.status_code == 403, blocked.text

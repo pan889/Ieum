@@ -237,6 +237,11 @@ class AuthService:
             user_agent=user_agent,
             family_id=row.family_id,
             mfa_satisfied_at=row.mfa_satisfied_at,
+            # **미완료 상태를 그대로 물려준다.** 이 한 줄이 없으면
+            # `_issue_session` 의 기본값(True)이 로테이션마다 완료 상태를 새로
+            # 만들어 준다 — 비밀번호만 통과한 세션이 `/auth/refresh` 한 번으로
+            # 열리고, 2FA 는 장식이 된다.
+            mfa_satisfied=row.mfa_satisfied_at is not None,
         )
         row.rotated_to_id = rotated.session_id
         row.revoked_at = utcnow()
