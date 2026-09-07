@@ -41,6 +41,11 @@ ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     "issue.updated": ("issue.updated", "notifications:issue.updated"),
     "issue.transitioned": ("issue.transitioned", "notifications:issue.transitioned"),
     "issue.commented": ("issue.commented", "notifications:issue.commented"),
+    # SLA 위반 (C5). **같은 표에 둔다** — 알림 경로가 하나여야 하고, 두 길로
+    # 만들면 환경설정(메일 끄기·워치)이 한쪽만 적용된다. `_recipients` 가
+    # 페이로드의 `assignee_id` 를 이미 더하므로, 담당자는 워치하지 않아도
+    # 받는다. 담당자가 없으면 워처(= 큐를 보는 사람들)에게 간다.
+    "desk.sla.breached": ("desk.sla.breached", "notifications:sla.breached"),
 }
 
 PAGE_NOTIFICATIONS: dict[str, tuple[str, str]] = {

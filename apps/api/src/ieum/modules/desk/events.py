@@ -35,3 +35,26 @@ class TicketSubmitted(DomainEvent):
     #: 않는다 (service.py 의 `submit_as_guest`).
     guest_email: str | None = None
     organization_id: UUID | None = None
+
+
+@events.register_event
+@dataclass(frozen=True)
+class SlaBreached(DomainEvent):
+    """SLA 목표를 넘겼다 (feature-map C5).
+
+    **스윕이 낸다.** 위반은 아무 일도 일어나지 않아서 생기므로 이벤트로는 알
+    수 없다 — 시간이 지났다는 사실을 누군가 주기적으로 확인해야 한다.
+
+    알림을 여기서 직접 만들지 않고 이벤트로 내는 이유: 알림 경로가 하나여야
+    한다. 두 길로 만들면 환경설정(메일 끄기·워치)이 한쪽만 적용된다.
+    """
+
+    event_type: ClassVar[str] = "desk.sla.breached"
+    aggregate_type: ClassVar[str] = "issue"
+
+    project_id: UUID
+    issue_key: str
+    summary: str
+    policy_id: UUID
+    #: 담당자가 있으면 그 사람. 없으면 큐 전체가 볼 일이다.
+    assignee_id: UUID | None = None

@@ -276,9 +276,26 @@ class TestWebhookDelivery:
 
 
 class TestSweep:
+    """스윕이 무엇을 돌리는지 **정확한 사전으로** 못 박는다.
+
+    파이프라인을 더하면 이 시험이 붉어지는 것이 의도다 — 더한 사람이 그것을
+    보고 여기 적어야 하고, 그러면 스윕이 무엇을 하는지 한 자리에 남는다.
+    SLA 위반 스윕(C4)을 더할 때 실제로 붉어졌다.
+    """
+
     async def test_runs_both_pipelines(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
         await seed_event(worker_env, with_webhook=True)
-        assert await sweep() == {"outbox": 1, "webhooks": 1, "attachments": 0}
+        assert await sweep() == {
+            "outbox": 1,
+            "webhooks": 1,
+            "attachments": 0,
+            "sla_breaches": 0,
+        }
 
     async def test_idle_sweep_is_cheap(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
-        assert await sweep() == {"outbox": 0, "webhooks": 0, "attachments": 0}
+        assert await sweep() == {
+            "outbox": 0,
+            "webhooks": 0,
+            "attachments": 0,
+            "sla_breaches": 0,
+        }

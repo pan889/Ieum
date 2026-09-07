@@ -22,12 +22,15 @@ from ieum.config import get_settings
 from ieum.core.attachments import AttachmentService
 from ieum.core.crypto import SecretBox
 from ieum.core.logging import get_logger
-from ieum.core.outbox import dispatch, fetch_unpublished
+from ieum.core.outbox import dispatch, fetch_unpublished, publish
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import session_scope
+from ieum.modules.desk.clock import ClockContext, handle_desk_event, sweep_breaches
+from ieum.modules.desk.events import SlaBreached
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
+from ieum.modules.issues import contracts as issue_contracts
 from ieum.modules.notify import delivery as webhook_delivery
 from ieum.modules.notify import digest as digests
 from ieum.modules.notify.handlers import (
@@ -40,6 +43,7 @@ from ieum.modules.notify.mail import Mail, send_all
 from ieum.modules.notify.models import Notification, Webhook
 from ieum.modules.notify.repository import DeliveryRepository
 from ieum.modules.notify.service import NotificationService
+from ieum.modules.org import contracts as org_contracts
 
 log = get_logger(__name__)
 
@@ -77,6 +81,9 @@ async def drain_outbox() -> int:
                 notification_ids.extend(await handle_page_event(handler_ctx, envelope))
                 standalone.extend(await collect_invite_mail(identity_ctx, envelope))
                 await enqueue_webhooks(handler_ctx, envelope)
+                # SLA 클럭 (C4). 여기서 도는 이유는 요청 경로에서 재면 아무도
+                # 열어 보지 않은 티켓이 영원히 위반이 아니게 되기 때문이다.
+                await handle_desk_event(ClockContext(session=session), envelope)
             # 한 건이 실패해도 배치 전체를 멈추지 않는다.
             except Exception as exc:
                 row.attempts += 1
@@ -203,22 +210,67 @@ async def sweep_attachments() -> int:
     return removed
 
 
+async def sweep_sla() -> int:
+    """SLA 목표를 넘긴 클럭을 찾아 알린다. 알린 건수를 돌려준다.
+
+    **알림을 아웃박스로 낸다.** 여기서 직접 만들지 않는 이유는 알림 경로가
+    하나여야 하기 때문이다 — 두 길로 만들면 환경설정(메일 끄기·워치)이 한쪽만
+    적용된다.
+
+    위반을 **스윕으로** 찾는 이유: 위반은 아무 일도 일어나지 않아서 생긴다.
+    이벤트가 없으므로 이벤트로는 알 수 없고, 시간이 지났다는 사실을 누군가
+    주기적으로 확인해야 한다.
+    """
+    # 블록 밖에서 세려고 미리 둔다. `with` 안에서만 대입하면, 그 안에서
+    # 예외가 나면 아래 `len()` 이 이름을 못 찾아 원인이 바뀐다.
+    count = 0
+    async with session_scope() as session:
+        breached = await sweep_breaches(session)
+        count = len(breached)
+        for clock in breached:
+            ref = await issue_contracts.get_issue(session, clock.issue_id)
+            if ref is None:
+                continue
+            project = await org_contracts.get_project(session, ref.project_id)
+            publish(
+                session,
+                SlaBreached(
+                    aggregate_id=clock.issue_id,
+                    project_id=ref.project_id,
+                    issue_key=f"{project.key}-{ref.key_seq}" if project else "",
+                    summary=ref.summary,
+                    policy_id=clock.policy_id,
+                    assignee_id=ref.assignee_id,
+                ),
+            )
+    return count
+
+
 async def sweep() -> dict[str, int]:
     """주기 실행 진입점. 파이프라인을 한 번씩 돌린다."""
     started = utcnow()
     processed = await drain_outbox()
     delivered = await deliver_webhooks()
     attachments = await sweep_attachments()
+    # **드레인 뒤에 돈다.** 앞에서 방금 걸린 클럭이 이미 위반일 수 있다
+    # (업무 시간이 아주 짧은 목표). 순서를 바꾸면 그 위반이 한 주기 늦는다.
+    sla_breaches = await sweep_sla()
     elapsed = (utcnow() - started).total_seconds()
-    if processed or delivered or attachments:
+    if processed or delivered or attachments or sla_breaches:
         log.info(
             "worker.sweep",
             outbox=processed,
             webhooks=delivered,
             attachments=attachments,
+            sla_breaches=sla_breaches,
             duration_s=round(elapsed, 2),
         )
-    return {"outbox": processed, "webhooks": delivered, "attachments": attachments}
+    return {
+        "outbox": processed,
+        "webhooks": delivered,
+        "attachments": attachments,
+        "sla_breaches": sla_breaches,
+    }
 
 
 # ── arq 진입점 ──────────────────────────────────────────────────

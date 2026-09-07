@@ -36,5 +36,6 @@
   "webhook.autoDisabled": "Disabled automatically after repeated failures.",
   "webhook.deliveryLog": "Delivery log",
   "webhook.retryAt": "Next attempt {when}",
-  "webhook.attempts": "{count, plural, one {# attempt} other {# attempts}}"
+  "webhook.attempts": "{count, plural, one {# attempt} other {# attempts}}",
+  "sla.breached": "SLA missed on {key}: {summary}"
 }

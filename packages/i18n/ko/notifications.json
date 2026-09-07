@@ -36,5 +36,6 @@
   "webhook.autoDisabled": "연속 실패로 자동 비활성화되었습니다.",
   "webhook.deliveryLog": "전송 로그",
   "webhook.retryAt": "다음 시도 {when}",
-  "webhook.attempts": "{count}회 시도"
+  "webhook.attempts": "{count}회 시도",
+  "sla.breached": "{key} 의 SLA 를 넘겼습니다: {summary}"
 }
