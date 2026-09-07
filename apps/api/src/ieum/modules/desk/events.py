@@ -58,3 +58,37 @@ class SlaBreached(DomainEvent):
     policy_id: UUID
     #: 담당자가 있으면 그 사람. 없으면 큐 전체가 볼 일이다.
     assignee_id: UUID | None = None
+
+
+@events.register_event
+@dataclass(frozen=True)
+class SlaEscalated(DomainEvent):
+    """에스컬레이션 규칙이 실행됐다 (feature-map C5).
+
+    **위반 알림과 별개다.** 위반은 "약속을 놓쳤다" 이고, 이것은 "그래서 이걸
+    했다" 다. 하나로 묶으면 75% 에서 미리 부르는 규칙을 표현할 수 없다 — 그건
+    아직 위반이 아니다.
+
+    `to_user_id` 는 `notify` 규칙이 지목한 사람이다. `raise_priority` 에는
+    없고, 그때 알림은 담당자에게 간다(무엇이 바뀌었는지 알아야 하는 사람이다).
+    """
+
+    event_type: ClassVar[str] = "desk.sla.escalated"
+    aggregate_type: ClassVar[str] = "issue"
+
+    project_id: UUID
+    issue_key: str
+    summary: str
+    policy_id: UUID
+    #: 어느 규칙인가. `"75:notify"` 같은 이름이다.
+    rule: str
+    action: str
+    #: 목표를 몇 % 썼을 때 실행됐는가. 규칙의 조건이 아니라 **실제 값**이다 —
+    #: 워커가 밀렸으면 75% 규칙이 140% 에서 돌 수 있고, 받는 사람은 그것을
+    #: 알아야 한다.
+    at_percent: int
+    #: `notify` 가 지목한 사람.
+    to_user_id: UUID | None = None
+    #: `raise_priority` 가 올린 값.
+    priority: int | None = None
+    assignee_id: UUID | None = None

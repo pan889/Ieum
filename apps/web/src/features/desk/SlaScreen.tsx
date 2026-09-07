@@ -20,11 +20,13 @@ import { useTranslation } from 'react-i18next'
 import type {
   BusinessCalendar,
   Project,
+  SlaEscalation,
   SlaGoal,
   SlaPolicy,
   WorkflowStateOption,
 } from '@ieum/api-client'
 
+import { PersonPicker } from '@/features/settings/PersonPicker'
 import { ProjectPicker } from '@/features/settings/ProjectPicker'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { deskApi, projectsApi } from '@/shared/api'
@@ -145,6 +147,26 @@ const EMPTY_POLICY = {
   calendarId: '',
   goals: '',
   pauseStateIds: [] as string[],
+  escalations: [] as SlaEscalation[],
+}
+
+/** 새 규칙의 기본값. 대상을 고를 필요가 없는 조치로 시작한다. */
+const NEW_RULE: SlaEscalation = { at_percent: 100, action: 'raise_priority', priority: 5 }
+
+/**
+ * 저장할 수 있는 규칙들인가.
+ *
+ * **부를 사람을 안 고른 `notify` 를 막는다.** 서버도 거절하지만, 여기서
+ * 막으면 무엇이 빠졌는지 그 자리에서 보인다 — 저장을 눌러 거절당하고 나서
+ * 다섯 줄 중 어느 줄이 문제인지 찾게 두지 않는다.
+ */
+export function escalationsReady(rules: SlaEscalation[]): boolean {
+  return rules.every(
+    (rule) =>
+      rule.at_percent >= 1 &&
+      rule.at_percent <= 500 &&
+      (rule.action === 'notify' ? rule.user_id !== undefined : rule.priority !== undefined),
+  )
 }
 
 export function SlaScreen() {
@@ -343,6 +365,152 @@ function Calendars() {
   )
 }
 
+/**
+ * 에스컬레이션 규칙 편집기 (C5).
+ *
+ * **JSON 이 아니라 줄마다 손잡이다.** 조치가 둘이고 각각 다른 것을 필요로
+ * 한다(누구에게 / 몇으로). 자유 입력으로 두면 서버가 거절하는 조합을 만들 수
+ * 있고, 관리자는 무엇이 틀렸는지 모른다.
+ *
+ * `notify` 의 대상은 **고른다.** UUID 를 적게 하면 어디서도 그 값을 알 수
+ * 없다 — 멈춤 상태와 같은 판단이다.
+ */
+function Escalations({
+  rules,
+  userNames,
+  onChange,
+}: {
+  rules: SlaEscalation[]
+  /** 저장된 규칙이 지목한 사람의 이름. 서버가 규칙 옆에 함께 준다. */
+  userNames: Record<string, string>
+  onChange: (next: SlaEscalation[]) => void
+}) {
+  const { t } = useTranslation(['desk', 'common'])
+  const [adding, setAdding] = useState<number | null>(null)
+
+  const replace = (index: number, rule: SlaEscalation) => {
+    onChange(rules.map((row, at) => (at === index ? rule : row)))
+  }
+
+  return (
+    <fieldset className="flex flex-col gap-1">
+      <legend className="text-xs font-medium text-fg">{t('desk:sla.escalations')}</legend>
+      <p className="text-xs text-muted">{t('desk:sla.escalationsHint')}</p>
+
+      <ul className="flex flex-col gap-1">
+        {rules.map((rule, index) => (
+          // 규칙에는 안정된 id 가 없다(서버가 배열을 그대로 저장한다). 조건과
+          // 조치가 곧 이름이므로 그것으로 키를 만든다 — 서버도 같은 이름으로
+          // 실행 여부를 기억한다.
+          <li key={`${String(rule.at_percent)}:${rule.action}`} className="flex flex-wrap items-end gap-2">
+            <Field
+              label={t('desk:sla.atPercent')}
+              type="number"
+              min={1}
+              max={500}
+              className="w-24"
+              value={String(rule.at_percent)}
+              onChange={(event) => {
+                replace(index, { ...rule, at_percent: Number(event.target.value) })
+              }}
+            />
+            <Select
+              label={t('desk:sla.action')}
+              value={rule.action}
+              onChange={(event) => {
+                // 조치를 바꾸면 **다른 조치의 값을 버린다.** 남겨 두면 서버가
+                // "notify 는 priority 를 쓰지 않는다" 로 거절한다.
+                const action = event.target.value as SlaEscalation['action']
+                if (action === 'raise_priority') {
+                  replace(index, {
+                    at_percent: rule.at_percent,
+                    action,
+                    priority: rule.priority ?? 5,
+                  })
+                  return
+                }
+                // **`user_id` 를 넣지 않는다** — 값이 없으면 키 자체가 없어야
+                // 한다. `undefined` 를 담아 보내면 서버는 "notify 에는
+                // user_id 가 필요하다" 가 아니라 그 키를 받은 것으로 읽는다.
+                replace(
+                  index,
+                  rule.user_id === undefined
+                    ? { at_percent: rule.at_percent, action }
+                    : { at_percent: rule.at_percent, action, user_id: rule.user_id },
+                )
+              }}
+            >
+              <option value="notify">{t('desk:sla.action.notify')}</option>
+              <option value="raise_priority">{t('desk:sla.action.raisePriority')}</option>
+            </Select>
+
+            {rule.action === 'raise_priority' ? (
+              <Select
+                label={t('desk:sla.toPriority')}
+                value={String(rule.priority ?? 5)}
+                onChange={(event) => {
+                  replace(index, { ...rule, priority: Number(event.target.value) })
+                }}
+              >
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted">
+                  {t('desk:sla.notifyTarget')}:{' '}
+                  {rule.user_id ? (userNames[rule.user_id] ?? rule.user_id) : '—'}
+                </span>
+                {adding === index ? (
+                  <PersonPicker
+                    label={t('desk:sla.notifyTarget')}
+                    onPick={(userId) => {
+                      replace(index, { ...rule, user_id: userId })
+                      setAdding(null)
+                    }}
+                  />
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="text-xs"
+                    onClick={() => { setAdding(index) }}
+                  >
+                    {t('desk:sla.pickPerson')}
+                  </Button>
+                )}
+              </div>
+            )}
+
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-xs"
+              onClick={() => { onChange(rules.filter((_, at) => at !== index)) }}
+            >
+              {t('common:action.delete')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+
+      <div>
+        <Button
+          type="button"
+          variant="ghost"
+          className="text-xs"
+          onClick={() => { onChange([...rules, NEW_RULE]) }}
+        >
+          {t('desk:sla.addEscalation')}
+        </Button>
+      </div>
+    </fieldset>
+  )
+}
+
 function Policies({ projectId }: { projectId: string }) {
   const { t } = useTranslation(['desk', 'common'])
   const queryClient = useQueryClient()
@@ -372,6 +540,7 @@ function Policies({ projectId }: { projectId: string }) {
             calendar_id: form.calendarId,
             goals: goals ?? [],
             pause_state_ids: form.pauseStateIds,
+            escalations: form.escalations,
           })
         : deskApi.createSlaPolicy({
             project_id: projectId,
@@ -380,6 +549,7 @@ function Policies({ projectId }: { projectId: string }) {
             calendar_id: form.calendarId,
             goals: goals ?? [],
             pause_state_ids: form.pauseStateIds,
+            escalations: form.escalations,
           }),
     onSuccess: async () => {
       setAdding(false)
@@ -440,6 +610,13 @@ function Policies({ projectId }: { projectId: string }) {
                 {t('desk:sla.pauseStates')}: {pauseNames(row.pause_state_ids, states.data)}
               </Badge>
             ) : null}
+            {/* 규칙이 걸려 있는지 목록에서 보인다. 안 보이면 폼을 열어 봐야
+                알고, 안 걸린 정책과 구별되지 않는다. */}
+            {row.escalations.length > 0 ? (
+              <Badge tone="neutral">
+                {t('desk:sla.escalationCount', { count: row.escalations.length })}
+              </Badge>
+            ) : null}
             {row.is_enabled ? null : <Badge tone="neutral">{t('desk:sla.enabled')}: —</Badge>}
             <Button
               type="button"
@@ -454,6 +631,7 @@ function Policies({ projectId }: { projectId: string }) {
                   calendarId: row.calendar_id,
                   goals: formatGoals(row.goals),
                   pauseStateIds: [...row.pause_state_ids],
+                  escalations: row.escalations.map((rule) => ({ ...rule })),
                 })
               }}
             >
@@ -555,11 +733,21 @@ function Policies({ projectId }: { projectId: string }) {
               ))}
             </div>
           </fieldset>
+          <Escalations
+            rules={form.escalations}
+            userNames={editing?.escalation_user_names ?? {}}
+            onChange={(next) => { setForm({ ...form, escalations: next }) }}
+          />
           <div className="flex items-center gap-2">
             <Button
               type="submit"
               loading={save.isPending}
-              disabled={form.name.trim() === '' || goals === null || form.calendarId === ''}
+              disabled={
+                form.name.trim() === '' ||
+                goals === null ||
+                form.calendarId === '' ||
+                !escalationsReady(form.escalations)
+              }
             >
               {t('common:action.save')}
             </Button>

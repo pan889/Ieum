@@ -25,9 +25,13 @@ from ieum.modules.desk.calendar import BusinessCalendar, CalendarError
 from ieum.modules.desk.sla import (
     SlaError,
     TicketFacts,
+    consumed_percent,
+    due_escalations,
     goal_seconds,
     parse_calendar,
+    parse_escalation,
     remaining,
+    validate_escalations,
     validate_goals,
 )
 
@@ -249,3 +253,139 @@ class TestRemainingTime:
             completed_at=None,
         )
         assert left.seconds == 2 * HOUR
+
+
+class TestRefusingABrokenEscalation:
+    """**저장할 때 거절한다.** 실행되지 않는 규칙은 조용하다 — 밤에 아무도
+    호출되지 않았다는 사실은 아침에야, 그것도 운이 좋으면 드러난다."""
+
+    def test_an_empty_list_is_fine(self) -> None:
+        """에스컬레이션 없는 정책이 대부분이다. 목표와 달리 기본 규칙을
+        요구하지 않는다."""
+        assert validate_escalations([]) == []
+        assert validate_escalations(None) == []
+
+    def test_a_good_rule_passes_through_unchanged(self) -> None:
+        who = str(uuid4())
+        rules = [
+            {"at_percent": 75, "action": "notify", "user_id": who},
+            {"at_percent": 100, "action": "raise_priority", "priority": 5},
+        ]
+        assert validate_escalations(rules) == rules
+
+    @pytest.mark.parametrize(
+        "rule",
+        [
+            {"at_percent": 0, "action": "notify", "user_id": str(uuid4())},  # 0% 는 접수 즉시다
+            {"at_percent": 501, "action": "notify", "user_id": str(uuid4())},
+            {"at_percent": "75", "action": "notify", "user_id": str(uuid4())},
+            {"at_percent": True, "action": "notify", "user_id": str(uuid4())},  # bool 은 int 다
+            {"at_percent": 75, "action": "delete_everything"},
+            {"at_percent": 75, "action": "notify"},  # 누구에게?
+            {"at_percent": 75, "action": "notify", "user_id": "not-a-uuid"},
+            {"at_percent": 75, "action": "notify", "user_id": str(uuid4()), "priority": 5},
+            {"at_percent": 75, "action": "raise_priority"},  # 몇으로?
+            {"at_percent": 75, "action": "raise_priority", "priority": 0},
+            {"at_percent": 75, "action": "raise_priority", "priority": 6},
+            {"at_percent": 75, "action": "raise_priority", "priority": 5, "user_id": str(uuid4())},
+            {"at_percent": 75, "action": "notify", "user_id": str(uuid4()), "extra": 1},
+        ],
+    )
+    def test_a_rule_that_cannot_run_is_refused(self, rule: dict[str, object]) -> None:
+        with pytest.raises(SlaError):
+            validate_escalations([rule])
+
+    def test_two_rules_with_the_same_name_are_refused(self) -> None:
+        """실행 표시가 **내용으로 만든 이름**으로 남으므로, 이름이 겹치면
+        하나만 실행되고 나머지는 조용히 사라진다."""
+        who = str(uuid4())
+        with pytest.raises(SlaError):
+            validate_escalations(
+                [
+                    {"at_percent": 100, "action": "notify", "user_id": who},
+                    {"at_percent": 100, "action": "notify", "user_id": str(uuid4())},
+                ]
+            )
+
+    def test_the_same_percent_with_different_actions_is_fine(self) -> None:
+        """목표 시각에 알리고 우선순위도 올리는 것은 흔한 설정이다."""
+        rules = [
+            {"at_percent": 100, "action": "notify", "user_id": str(uuid4())},
+            {"at_percent": 100, "action": "raise_priority", "priority": 5},
+        ]
+        assert len(validate_escalations(rules)) == 2
+
+
+class TestConsumedPercent:
+    """**남은 시간에서 거꾸로 계산한다.** 화면에 뜨는 숫자와 같은 값을
+    써야, 상담원이 "2시간 남았는데 왜 에스컬레이션이 갔지" 를 묻지 않는다."""
+
+    @pytest.mark.parametrize(
+        ("goal", "left", "percent"),
+        [
+            (4 * HOUR, 4 * HOUR, 0),  # 아직 안 썼다
+            (4 * HOUR, 3 * HOUR, 25),
+            (4 * HOUR, 1 * HOUR, 75),
+            (4 * HOUR, 0, 100),  # 목표 시각
+            (4 * HOUR, -2 * HOUR, 150),  # 위반. 100 을 넘는다
+            (3 * HOUR, 1 * HOUR, 67),  # 66.67 → 반올림
+        ],
+    )
+    def test_it_counts_from_what_is_left(self, goal: int, left: int, percent: int) -> None:
+        assert consumed_percent(goal_seconds=goal, remaining_seconds=left) == percent
+
+    def test_a_goalless_clock_is_never_escalated(self) -> None:
+        """마이그레이션 전에 만들어진 행만 그렇다. 나누면 터지고, 100 으로
+        읽으면 지난 티켓 전부에 에스컬레이션이 한꺼번에 나간다."""
+        assert consumed_percent(goal_seconds=0, remaining_seconds=0) == 0
+
+
+class TestPickingWhatToRun:
+    def _rules(self) -> list[dict[str, object]]:
+        return [
+            {"at_percent": 50, "action": "notify", "user_id": str(uuid4())},
+            {"at_percent": 100, "action": "raise_priority", "priority": 5},
+        ]
+
+    def test_nothing_runs_before_its_percent(self) -> None:
+        assert due_escalations(self._rules(), percent=25, already=[]) == []
+
+    def test_it_runs_what_the_clock_has_passed(self) -> None:
+        due = due_escalations(self._rules(), percent=60, already=[])
+        assert [rule.at_percent for rule in due] == [50]
+
+    def test_it_runs_everything_passed_at_once(self) -> None:
+        """워커가 한동안 멈춰 있었거나 목표가 아주 짧으면 두 조건을 같은
+        주기에 지나친다. 하나만 하고 나머지를 버리면 우선순위를 올리는
+        규칙이 사라진다."""
+        due = due_escalations(self._rules(), percent=120, already=[])
+        assert [rule.at_percent for rule in due] == [50, 100]
+
+    def test_already_run_rules_do_not_run_again(self) -> None:
+        """스윕은 15초마다 돈다. 표시를 안 보면 담당자는 15초마다 호출된다."""
+        rules = self._rules()
+        first = due_escalations(rules, percent=120, already=[])
+        keys = [rule.key for rule in first]
+        assert due_escalations(rules, percent=120, already=keys) == []
+
+    def test_it_runs_in_condition_order(self) -> None:
+        """뒤에 적은 규칙이 낮은 %면 그것이 먼저다 — 순서는 조건이 정하고,
+        적은 순서가 정하지 않는다."""
+        rules = [
+            {"at_percent": 100, "action": "raise_priority", "priority": 5},
+            {"at_percent": 50, "action": "notify", "user_id": str(uuid4())},
+        ]
+        assert [rule.at_percent for rule in due_escalations(rules, percent=150, already=[])] == [
+            50,
+            100,
+        ]
+
+    def test_the_name_does_not_move_when_rules_are_reordered(self) -> None:
+        """**번호가 아니라 내용으로** 이름을 만든다. 번호로 두면 관리자가
+        순서를 바꾸는 순간 이미 실행한 것이 안 한 것으로 보인다."""
+        who = str(uuid4())
+        a = parse_escalation({"at_percent": 75, "action": "notify", "user_id": who})
+        b = parse_escalation({"at_percent": 75, "action": "notify", "user_id": str(uuid4())})
+        # 대상이 달라도 조건·조치가 같으면 같은 규칙이다 — 그래서 저장할 때
+        # 거절한다(위 시험).
+        assert a.key == b.key == "75:notify"

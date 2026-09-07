@@ -444,6 +444,115 @@ class TestPauseStates:
             await SlaAdminService(session, permissions).list_states(actor_for(nobody), project.id)
 
 
+class TestSavingEscalations:
+    """실행되지 않는 규칙은 **조용하다.** 밤에 아무도 호출되지 않았다는 사실은
+    아침에야, 그것도 운이 좋으면 드러난다 — 그래서 저장할 때 거절한다.
+
+    규칙의 계산은 `test_desk_sla.py` 가 순수 함수로 본다. 여기는 **저장
+    경로**가 그 검증을 실제로 부르는지, 그리고 에러 코드가 맞는지를 본다.
+    """
+
+    async def test_rules_save_and_come_back(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project = await _project(session)
+        rules = [
+            {"at_percent": 75, "action": "notify", "user_id": str(admin.id)},
+            {"at_percent": 100, "action": "raise_priority", "priority": 5},
+        ]
+        view = await SlaAdminService(session, permissions).create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[],
+            escalations=rules,
+        )
+        assert view.policy.escalations == rules
+
+    async def test_no_rules_is_the_normal_case(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """에스컬레이션 없는 정책이 대부분이다. 목표와 달리 기본 규칙을
+        요구하지 않는다."""
+        admin = await _admin(session)
+        project = await _project(session)
+        view = await SlaAdminService(session, permissions).create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[],
+        )
+        assert view.policy.escalations == []
+
+    async def test_a_rule_that_cannot_run_is_refused_on_create(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project = await _project(session)
+        with pytest.raises(ValidationError) as exc:
+            await SlaAdminService(session, permissions).create_policy(
+                actor_for(admin),
+                project_id=project.id,
+                name="첫 응답",
+                metric="first_response",
+                calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+                goals=[{"seconds": 4 * HOUR}],
+                pause_state_ids=[],
+                escalations=[{"at_percent": 75, "action": "delete_everything"}],
+            )
+        assert exc.value.code == "desk.sla_escalation_invalid"
+
+    async def test_a_rule_that_cannot_run_is_refused_on_update(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """만들 때만 보면 고치기로 우회할 수 있다."""
+        admin = await _admin(session)
+        project = await _project(session)
+        service = SlaAdminService(session, permissions)
+        view = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[],
+        )
+        with pytest.raises(ValidationError) as exc:
+            await service.update_policy(
+                actor_for(admin),
+                view.policy.id,
+                escalations=[{"at_percent": 999, "action": "notify", "user_id": str(admin.id)}],
+            )
+        assert exc.value.code == "desk.sla_escalation_invalid"
+
+    async def test_clearing_the_rules_is_allowed(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project = await _project(session)
+        service = SlaAdminService(session, permissions)
+        view = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[],
+            escalations=[{"at_percent": 100, "action": "raise_priority", "priority": 5}],
+        )
+        updated = await service.update_policy(actor_for(admin), view.policy.id, escalations=[])
+        assert updated.policy.escalations == []
+
+
 class TestNotBreakingPastVerdicts:
     async def test_a_calendar_in_use_cannot_be_deleted(
         self, session: AsyncSession, permissions: PermissionService

@@ -1050,6 +1050,8 @@ def _policy(view: SlaPolicyView) -> SlaPolicyResponse:
         calendar_name=view.calendar_name,
         goals=[dict(goal) for goal in view.policy.goals],
         pause_state_ids=list(view.policy.pause_state_ids),
+        escalations=[dict(rule) for rule in view.policy.escalations],
+        escalation_user_names=dict(view.escalation_user_names),
         is_enabled=view.policy.is_enabled,
     )
 
@@ -1095,6 +1097,7 @@ async def create_sla_policy(
         calendar_id=payload.calendar_id,
         goals=payload.goals,
         pause_state_ids=payload.pause_state_ids,
+        escalations=payload.escalations,
     )
     await session.commit()
     return _policy(view)
@@ -1115,6 +1118,7 @@ async def update_sla_policy(
         calendar_id=payload.calendar_id,
         goals=payload.goals,
         pause_state_ids=payload.pause_state_ids,
+        escalations=payload.escalations,
         is_enabled=payload.is_enabled,
     )
     await session.commit()

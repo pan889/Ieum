@@ -355,6 +355,23 @@ export interface SlaGoal {
   request_type_id?: string
 }
 
+/**
+ * "목표의 N% 를 썼을 때 이것을 한다" (C5).
+ *
+ * **초가 아니라 %다.** 목표 시간은 우선순위·요청 유형마다 다르므로 "3시간
+ * 남았을 때" 는 4시간 목표에서는 45분 만에, 3일 목표에서는 거의 끝에 걸린다.
+ *
+ * 100 이 목표 시각이다. 그보다 크면 위반 뒤의 조치다.
+ */
+export interface SlaEscalation {
+  at_percent: number
+  action: 'notify' | 'raise_priority'
+  /** `notify` 의 대상. */
+  user_id?: string
+  /** `raise_priority` 가 올릴 값 (1~5). */
+  priority?: number
+}
+
 export interface SlaPolicy {
   id: string
   project_id: string
@@ -365,6 +382,14 @@ export interface SlaPolicy {
   calendar_name: string
   goals: SlaGoal[]
   pause_state_ids: string[]
+  escalations: SlaEscalation[]
+  /**
+   * 규칙이 지목한 사람의 이름. id → 이름.
+   *
+   * 규칙 **안이 아니라 옆에** 온다: 저장 요청은 읽은 규칙을 그대로 되돌려
+   * 보내는데, 그 안에 이름이 섞이면 서버가 모르는 항목으로 거절한다.
+   */
+  escalation_user_names: Record<string, string>
   is_enabled: boolean
 }
 
@@ -390,6 +415,7 @@ export interface NewSlaPolicy {
   calendar_id: string
   goals: SlaGoal[]
   pause_state_ids?: string[]
+  escalations?: SlaEscalation[]
 }
 
 /**
@@ -401,6 +427,7 @@ export interface SlaPolicyPatch {
   calendar_id?: string
   goals?: SlaGoal[]
   pause_state_ids?: string[]
+  escalations?: SlaEscalation[]
   is_enabled?: boolean
 }
 

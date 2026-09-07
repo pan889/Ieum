@@ -92,6 +92,7 @@
   "desk.required_field_missing_from_form": "필수 커스텀 필드가 폼에 없습니다. 이대로면 제출이 항상 실패합니다.",
   "desk.reserved_key_mapped": "요약과 내용은 티켓 자신의 칸으로 가므로 커스텀 필드에 매핑하지 않습니다.",
   "desk.sla_calendar_missing": "그 업무 달력이 없습니다.",
+  "desk.sla_escalation_invalid": "이 에스컬레이션 규칙은 실행할 수 없습니다 — 퍼센트와 조치, 그 대상을 확인하세요.",
   "desk.sla_goals_invalid": "이 목표들로는 잴 수 없습니다 — 조건 없는 기본 목표가 하나 있어야 합니다.",
   "desk.sla_pause_state_unknown": "이 프로젝트의 티켓이 있을 수 없는 상태입니다 — 이대로면 시계가 그 상태에서 멈추지 않습니다.",
   "desk.sla_name_empty": "SLA 정책에는 이름이 필요합니다.",

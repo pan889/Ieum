@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.events import EventEnvelope
@@ -118,6 +119,11 @@ async def start_clocks(session: AsyncSession, issue_id: UUID) -> int:
                 policy_id=policy.id,
                 started_at=started,
                 target_at=add_working_seconds(calendar, started, seconds),
+                # **약속의 크기를 적어 둔다.** `target_at` 에서 거꾸로 계산
+                # 하려면 달력이 필요하고, 멈춤으로 목표가 밀린 뒤에는 원래
+                # 약속이 얼마였는지 알 수 없게 된다 — 에스컬레이션이 "목표의
+                # 몇 %" 를 재려면 이 값이 있어야 한다.
+                goal_seconds=seconds,
             )
         )
         made += 1
@@ -223,6 +229,88 @@ async def sweep_breaches(session: AsyncSession, *, limit: int = 200) -> list[Sla
         row.breached_at = now
     await session.flush()
     return rows
+
+
+@dataclass(frozen=True, slots=True)
+class Escalation:
+    """실행한 규칙 하나. 워커가 이것을 보고 이벤트를 낸다.
+
+    `clock.py` 가 직접 발행하지 않는 이유는 `sweep_breaches` 와 같다: 이벤트에
+    담을 이슈 키·프로젝트 이름은 다른 모듈에서 와야 하고, 그 조회를 여기
+    넣으면 이 층이 세 모듈을 알게 된다.
+    """
+
+    clock: SlaClock
+    rule: sla.EscalationRule
+    #: 실제로 몇 %에서 돌았는가. 규칙의 조건이 아니다 — 워커가 밀렸으면
+    #: 75% 규칙이 140% 에서 돈다.
+    at_percent: int
+
+
+async def sweep_escalations(session: AsyncSession, *, limit: int = 200) -> list[Escalation]:
+    """조건을 지난 에스컬레이션 규칙을 실행한다.
+
+    **스윕이다.** 위반과 같은 이유로 이벤트로는 알 수 없다 — "목표의 75% 를
+    썼다" 는 아무 일도 일어나지 않아서 생기는 사실이다.
+
+    멈춘 클럭은 건드리지 않는다. 고객 답변을 기다리는 동안 %가 오르면, 우리가
+    안 한 일이 아닌데 담당자가 호출된다.
+
+    **끝난 클럭도 건드리지 않는다.** 이미 응답한 티켓에 "응답이 늦습니다" 가
+    가면 그 알림은 다음부터 무시된다.
+    """
+    now = utcnow()
+    rows = (
+        await session.execute(
+            select(SlaClock, SlaPolicy)
+            .join(SlaPolicy, SlaPolicy.id == SlaClock.policy_id)
+            .where(
+                SlaClock.completed_at.is_(None),
+                SlaClock.paused_at.is_(None),
+                # 규칙이 없는 정책은 아예 안 집는다. 티켓이 쌓이면 이 조건이
+                # 없는 스윕은 클럭 전체를 읽고 달력을 파싱한다.
+                SlaPolicy.escalations != cast("[]", JSONB),
+            )
+            .order_by(SlaClock.target_at)
+            .limit(limit)
+        )
+    ).all()
+
+    done: list[Escalation] = []
+    for clock, policy in rows:
+        calendar = await _calendar_of(session, policy)
+        if calendar is None:
+            continue
+        left = sla.remaining(
+            calendar,
+            target_at=sla.utc(clock.target_at),
+            now=now,
+            paused_at=None,
+            completed_at=None,
+        )
+        percent = sla.consumed_percent(
+            goal_seconds=clock.goal_seconds, remaining_seconds=left.seconds
+        )
+        due = sla.due_escalations(
+            list(policy.escalations), percent=percent, already=list(clock.escalated)
+        )
+        if not due:
+            continue
+        for rule in due:
+            if rule.action == "raise_priority" and rule.priority is not None:
+                await issues.raise_priority(session, clock.issue_id, to=rule.priority)
+            done.append(Escalation(clock=clock, rule=rule, at_percent=percent))
+        # **표시를 먼저 확실히 한다.** 같은 트랜잭션에서 커밋되므로 이벤트와
+        # 함께 남거나 함께 사라진다 — 표시만 남고 알림이 사라지는 반쪽은
+        # 생기지 않는다.
+        #
+        # 새 목록을 **대입한다.** `ARRAY` 컬럼은 제자리 변경을 추적하지
+        # 않으므로 `list.append` 는 저장되지 않는다 — 되돌려 확인했다:
+        # append 로 바꾸면 "한 번만 실행된다" 시험이 붉어지고, 규칙이 스윕마다
+        # 다시 돈다.
+        clock.escalated = [*clock.escalated, *(rule.key for rule in due)]
+    await session.flush()
+    return done
 
 
 # ── 내부 ────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  escalationsReady,
   formatDuration,
   formatGoals,
   formatWorkingHours,
@@ -143,5 +144,37 @@ describe('pauseNames', () => {
 
   it('목록이 아직 안 왔으면 id 를 보여 준다 — 조용히 비우지 않는다', () => {
     expect(pauseNames(['a'], undefined)).toBe('a')
+  })
+})
+
+describe('escalationsReady', () => {
+  it('빈 목록은 저장할 수 있다 — 에스컬레이션 없는 정책이 대부분이다', () => {
+    expect(escalationsReady([])).toBe(true)
+  })
+
+  it('대상을 고른 notify 는 저장할 수 있다', () => {
+    expect(escalationsReady([{ at_percent: 75, action: 'notify', user_id: 'u1' }])).toBe(true)
+  })
+
+  it('부를 사람을 안 고른 notify 로는 저장을 막는다', () => {
+    // 서버도 거절하지만, 여기서 막으면 어느 줄이 문제인지 그 자리에서 보인다.
+    expect(escalationsReady([{ at_percent: 75, action: 'notify' }])).toBe(false)
+  })
+
+  it('우선순위를 안 정한 raise_priority 로는 저장을 막는다', () => {
+    expect(escalationsReady([{ at_percent: 100, action: 'raise_priority' }])).toBe(false)
+  })
+
+  it.each([0, 501])('%i%% 는 서버가 거절하는 값이라 여기서 막는다', (at_percent) => {
+    expect(escalationsReady([{ at_percent, action: 'raise_priority', priority: 5 }])).toBe(false)
+  })
+
+  it('한 줄만 모자라도 전체를 막는다', () => {
+    expect(
+      escalationsReady([
+        { at_percent: 50, action: 'raise_priority', priority: 4 },
+        { at_percent: 100, action: 'notify' },
+      ]),
+    ).toBe(false)
   })
 })

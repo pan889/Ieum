@@ -37,5 +37,8 @@
   "webhook.deliveryLog": "Delivery log",
   "webhook.retryAt": "Next attempt {when}",
   "webhook.attempts": "{count, plural, one {# attempt} other {# attempts}}",
-  "sla.breached": "SLA missed on {key}: {summary}"
+  "sla.breached": "SLA missed on {key}: {summary}",
+  "sla.escalated": "SLA escalation on {key}: past {percent}% of the target",
+  "sla.escalated.notify": "SLA deadline approaching on {key} ({percent}% of target): {summary}",
+  "sla.escalated.raisePriority": "Priority on {key} raised to {priority} — {percent}% of the SLA target"
 }

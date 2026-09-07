@@ -498,3 +498,28 @@ async def get_project_states(session: AsyncSession, project_id: UUID) -> list[St
         )
         for state, workflow_name in rows
     ]
+
+
+async def raise_priority(session: AsyncSession, issue_id: UUID, *, to: int) -> int | None:
+    """우선순위를 올린다. 올렸으면 새 값을, 안 올렸으면 `None`.
+
+    **내리지 않는다.** SLA 에스컬레이션(desk C5)이 부르는데, 이미 사람이 더
+    높게 올려 둔 티켓을 규칙이 끌어내리면 그 사람의 판단이 조용히 뒤집힌다.
+    규칙은 "적어도 이만큼" 을 뜻한다.
+
+    이력을 **남긴다**(`actor_id` 는 비운다 — 사람이 한 일이 아니다). 안 남기면
+    담당자는 자기가 안 만진 값이 바뀐 것을 보고 이유를 찾을 수 없다.
+    """
+    from ieum.modules.issues.repository import HistoryRepository
+
+    issue = await session.get(Issue, issue_id)
+    if issue is None or issue.priority >= to:
+        return None
+    HistoryRepository(session).record(
+        issue_id=issue_id,
+        actor_id=None,
+        changes=[{"field": "priority", "from": str(issue.priority), "to": str(to)}],
+    )
+    issue.priority = to
+    await session.flush()
+    return to

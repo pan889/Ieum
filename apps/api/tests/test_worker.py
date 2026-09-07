@@ -185,6 +185,104 @@ class TestDrainOutbox:
         assert notifications == []  # archived 는 알림 대상이 아니다
 
 
+class TestEscalationNotification:
+    """규칙이 **지목한 사람**에게 알림이 간다 (C5).
+
+    이 배선이 이 기능의 전부다: `notify` 규칙이 하는 일은 사람을 부르는 것
+    하나뿐이고, `_recipients` 가 `to_user_id` 를 안 읽으면 규칙은 아무 일도
+    하지 않는다 — 워처도 담당자도 아닌 사람이 지목된 경우가 그렇다.
+    """
+
+    async def test_the_named_person_gets_it(
+        self, worker_env: async_sessionmaker[AsyncSession]
+    ) -> None:
+        async with worker_env() as s:
+            called = User(
+                email=f"esc-{new_id()}@e.com",
+                display_name="팀장",
+                status="active",
+                locale="ko",
+            )
+            project = Project(key=f"E{secrets.token_hex(3).upper()}", name="Escalation")
+            s.add_all([called, project])
+            await s.flush()
+            issue_id = new_id()
+            s.add(
+                OutboxEvent(
+                    aggregate_type="issue",
+                    aggregate_id=issue_id,
+                    event_type="desk.sla.escalated",
+                    payload={
+                        "project_id": str(project.id),
+                        "issue_key": f"{project.key}-1",
+                        "summary": "에스컬레이션 확인",
+                        "policy_id": str(new_id()),
+                        "rule": "75:notify",
+                        "action": "notify",
+                        "at_percent": 80,
+                        # 워처도 담당자도 아니다. 규칙이 지목했을 뿐이다.
+                        "to_user_id": str(called.id),
+                    },
+                )
+            )
+            await s.commit()
+            called_id = called.id
+
+        assert await drain_outbox() == 1
+        async with worker_env() as s:
+            rows = list((await s.execute(select(Notification))).scalars().all())
+        assert [row.user_id for row in rows] == [called_id]
+        # 조치마다 제목이 다르다 — "마감이 다가온다" 와 "우선순위를 올렸다" 는
+        # 받는 사람이 해야 하는 일이 다르다.
+        assert "다가옵니다" in rows[0].title
+        # 실제로 몇 %에서 돌았는지가 제목에 있다. 워커가 밀렸으면 75% 규칙이
+        # 80% 에서 돈다.
+        assert "80" in rows[0].title
+
+    async def test_raising_the_priority_tells_the_assignee(
+        self, worker_env: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """`raise_priority` 에는 지목된 사람이 없다. 무엇이 바뀌었는지 알아야
+        하는 사람은 담당자다."""
+        async with worker_env() as s:
+            assignee = User(
+                email=f"as-{new_id()}@e.com",
+                display_name="담당자",
+                status="active",
+                locale="ko",
+            )
+            project = Project(key=f"R{secrets.token_hex(3).upper()}", name="Raise")
+            s.add_all([assignee, project])
+            await s.flush()
+            s.add(
+                OutboxEvent(
+                    aggregate_type="issue",
+                    aggregate_id=new_id(),
+                    event_type="desk.sla.escalated",
+                    payload={
+                        "project_id": str(project.id),
+                        "issue_key": f"{project.key}-2",
+                        "summary": "우선순위 확인",
+                        "policy_id": str(new_id()),
+                        "rule": "100:raise_priority",
+                        "action": "raise_priority",
+                        "at_percent": 100,
+                        "priority": 5,
+                        "assignee_id": str(assignee.id),
+                    },
+                )
+            )
+            await s.commit()
+            assignee_id = assignee.id
+
+        await drain_outbox()
+        async with worker_env() as s:
+            rows = list((await s.execute(select(Notification))).scalars().all())
+        assert [row.user_id for row in rows] == [assignee_id]
+        assert "올렸습니다" in rows[0].title
+        assert "5" in rows[0].title
+
+
 class TestWebhookQueueing:
     async def test_delivery_row_created_for_subscriber(
         self, worker_env: async_sessionmaker[AsyncSession]
@@ -280,7 +378,7 @@ class TestSweep:
 
     파이프라인을 더하면 이 시험이 붉어지는 것이 의도다 — 더한 사람이 그것을
     보고 여기 적어야 하고, 그러면 스윕이 무엇을 하는지 한 자리에 남는다.
-    SLA 위반 스윕(C4)을 더할 때 실제로 붉어졌다.
+    SLA 위반 스윕(C4)과 에스컬레이션 스윕(C5)을 더할 때 실제로 붉어졌다.
     """
 
     async def test_runs_both_pipelines(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
@@ -290,6 +388,7 @@ class TestSweep:
             "webhooks": 1,
             "attachments": 0,
             "sla_breaches": 0,
+            "sla_escalations": 0,
         }
 
     async def test_idle_sweep_is_cheap(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
@@ -298,4 +397,5 @@ class TestSweep:
             "webhooks": 0,
             "attachments": 0,
             "sla_breaches": 0,
+            "sla_escalations": 0,
         }

@@ -145,6 +145,51 @@ test.describe('SLA 정책', () => {
     await expect(page.getByRole('checkbox', { name: /In Progress/ })).toBeChecked()
     await expect(page.getByRole('checkbox', { name: /^Open/ })).not.toBeChecked()
   })
+
+  test('에스컬레이션 규칙을 손잡이로 적고, 목록에 남는다', async ({ page }) => {
+    // **JSON 이 아니라 손잡이다.** 조치가 둘이고 각각 다른 것을 필요로 한다
+    // (누구에게 / 몇으로) — 자유 입력으로 두면 서버가 거절하는 조합을 만들 수
+    // 있고, 관리자는 무엇이 틀렸는지 모른다.
+    await openSla(page)
+    await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
+
+    await page.getByRole('button', { name: /new policy/i }).click()
+    await page.getByLabel(/^name$/i).fill('에스컬레이션 확인용')
+    await page.getByLabel(/^targets$/i).fill('4h')
+
+    await page.getByRole('button', { name: /add rule/i }).click()
+    await page.getByLabel(/% of target/i).fill('120')
+    await page.getByLabel(/^raise to$/i).selectOption('5')
+    await page.getByRole('button', { name: /^save$/i }).click()
+
+    const row = page.locator('li').filter({ hasText: '에스컬레이션 확인용' })
+    await expect(row).toBeVisible()
+    await expect(row.getByText(/1 escalations/i)).toBeVisible()
+
+    // 다시 열면 적은 값이 그대로 있다.
+    await row.getByRole('button', { name: /^edit$/i }).click()
+    await expect(page.getByLabel(/% of target/i)).toHaveValue('120')
+    await expect(page.getByLabel(/^action$/i)).toHaveValue('raise_priority')
+  })
+
+  test('부를 사람을 안 고른 규칙으로는 저장을 막는다', async ({ page }) => {
+    // 서버도 거절한다. 여기서 막으면 어느 줄이 문제인지 그 자리에서 보인다 —
+    // 저장을 눌러 거절당하고 나서 다섯 줄 중 어디인지 찾게 두지 않는다.
+    await openSla(page)
+    await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
+
+    await page.getByRole('button', { name: /new policy/i }).click()
+    await page.getByLabel(/^name$/i).fill('사람 없는 규칙')
+    await page.getByLabel(/^targets$/i).fill('4h')
+    await page.getByRole('button', { name: /add rule/i }).click()
+    // 기본 조치는 우선순위 올리기다 — 그것만으로는 저장할 수 있다.
+    await expect(page.getByRole('button', { name: /^save$/i })).toBeEnabled()
+
+    await page.getByLabel(/^action$/i).selectOption('notify')
+    // 이제 부를 사람이 없다.
+    await expect(page.getByRole('button', { name: /^save$/i })).toBeDisabled()
+    await expect(page.getByText(/who to call/i).first()).toBeVisible()
+  })
 })
 
 test.describe('step-up', () => {

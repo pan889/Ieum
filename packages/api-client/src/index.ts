@@ -187,6 +187,7 @@ export {
   type QueueTicketPage,
   type Reply,
   type Requester,
+  type SlaEscalation,
   type SlaGoal,
   type SlaPolicy,
   type SlaPolicyPatch,

@@ -52,7 +52,12 @@ from ieum.modules.desk.repository import (
     normalize_domain,
     normalize_slug,
 )
-from ieum.modules.desk.sla import SlaError, parse_calendar, validate_goals
+from ieum.modules.desk.sla import (
+    SlaError,
+    parse_calendar,
+    validate_escalations,
+    validate_goals,
+)
 from ieum.modules.desk.sla import remaining as sla_remaining
 from ieum.modules.desk.sla import utc as sla_utc
 from ieum.modules.identity import contracts as identity
@@ -1662,6 +1667,12 @@ class SlaPolicyView:
     #: id 만 주면 화면이 달력 목록을 또 받아 짜맞춰야 하고, 목록에 없는
     #: 달력을 쓰는 정책은 영영 이름이 안 뜬다.
     calendar_name: str
+    #: 에스컬레이션 규칙이 지목한 사람의 이름. id → 이름.
+    #:
+    #: **규칙 안에 넣지 않는다.** 저장 요청은 읽은 규칙을 그대로 되돌려
+    #: 보내는데, 그 안에 이름이 섞여 있으면 `extra="forbid"` 가 거절한다 —
+    #: 화면이 읽은 것을 그대로 저장할 수 없게 된다.
+    escalation_user_names: dict[UUID, str] = field(default_factory=dict)
 
 
 class SlaAdminService:
@@ -1800,7 +1811,14 @@ class SlaAdminService:
             .where(SlaPolicy.project_id == project_id, SlaPolicy.archived_at.is_(None))
             .order_by(SlaPolicy.name)
         )
-        return [SlaPolicyView(policy=policy, calendar_name=name) for policy, name in rows.all()]
+        found = list(rows.all())
+        # **이름을 한 번에 모은다.** 행마다 조회하면 정책 열 개짜리 프로젝트가
+        # 열 번 왕복한다 — 큐 목록에서 이미 겪은 N+1 이다.
+        names = await self._escalation_names([policy for policy, _ in found])
+        return [
+            SlaPolicyView(policy=policy, calendar_name=name, escalation_user_names=names)
+            for policy, name in found
+        ]
 
     async def create_policy(
         self,
@@ -1812,6 +1830,7 @@ class SlaAdminService:
         calendar_id: UUID,
         goals: list[dict[str, Any]],
         pause_state_ids: list[UUID],
+        escalations: list[dict[str, Any]] | None = None,
     ) -> SlaPolicyView:
         await self._perms.require(self._s, actor, perms.SLA_MANAGE)
         clean_name = name.strip()
@@ -1826,6 +1845,10 @@ class SlaAdminService:
             checked = validate_goals(goals)
         except SlaError as exc:
             raise ValidationError(str(exc), code="desk.sla_goals_invalid") from exc
+        try:
+            checked_rules = validate_escalations(escalations)
+        except SlaError as exc:
+            raise ValidationError(str(exc), code="desk.sla_escalation_invalid") from exc
         if await self._policy_name_taken(project_id, clean_name):
             raise ConflictError("같은 이름의 정책이 있다.", code="desk.sla_name_taken")
         await self._validated_pause_states(project_id, pause_state_ids)
@@ -1836,10 +1859,15 @@ class SlaAdminService:
             calendar_id=calendar_id,
             goals=checked,
             pause_state_ids=list(pause_state_ids),
+            escalations=checked_rules,
         )
         self._s.add(row)
         await self._s.flush()
-        return SlaPolicyView(policy=row, calendar_name=calendar.name)
+        return SlaPolicyView(
+            policy=row,
+            calendar_name=calendar.name,
+            escalation_user_names=await self._escalation_names([row]),
+        )
 
     async def update_policy(
         self,
@@ -1850,6 +1878,7 @@ class SlaAdminService:
         calendar_id: UUID | None = None,
         goals: list[dict[str, Any]] | None = None,
         pause_state_ids: list[UUID] | None = None,
+        escalations: list[dict[str, Any]] | None = None,
         is_enabled: bool | None = None,
     ) -> SlaPolicyView:
         """정책을 고친다.
@@ -1882,11 +1911,20 @@ class SlaAdminService:
         if pause_state_ids is not None:
             await self._validated_pause_states(row.project_id, pause_state_ids)
             row.pause_state_ids = list(pause_state_ids)
+        if escalations is not None:
+            try:
+                row.escalations = validate_escalations(escalations)
+            except SlaError as exc:
+                raise ValidationError(str(exc), code="desk.sla_escalation_invalid") from exc
         if is_enabled is not None:
             row.is_enabled = is_enabled
         await self._s.flush()
         name_of = await self._s.get(BusinessCalendarRow, row.calendar_id)
-        return SlaPolicyView(policy=row, calendar_name=name_of.name if name_of else "")
+        return SlaPolicyView(
+            policy=row,
+            calendar_name=name_of.name if name_of else "",
+            escalation_user_names=await self._escalation_names([row]),
+        )
 
     async def delete_policy(self, actor: Actor, policy_id: UUID) -> None:
         """보관한다. **이미 걸린 클럭은 그대로 둔다** — 지난 티켓의 판정이
@@ -1899,6 +1937,24 @@ class SlaAdminService:
         await self._s.flush()
 
     # ── 내부 ────────────────────────────────────────────────────
+
+    async def _escalation_names(self, policies: list[SlaPolicy]) -> dict[UUID, str]:
+        """규칙이 지목한 사람들의 이름. 없으면 빈 사전.
+
+        지워진 계정은 **빠진다.** 그러면 화면이 id 를 그대로 보여 주는데,
+        조용히 규칙을 감추는 것보다 낫다 — "누구를 부르기로 했는지 모르는
+        규칙" 이 남아 있다는 사실 자체가 보여야 고칠 수 있다.
+        """
+        wanted = {
+            UUID(str(rule["user_id"]))
+            for policy in policies
+            for rule in policy.escalations
+            if rule.get("user_id")
+        }
+        if not wanted:
+            return {}
+        found = await identity.get_users(self._s, wanted)
+        return {user_id: ref.display_name for user_id, ref in found.items()}
 
     async def _validated_pause_states(self, project_id: UUID, state_ids: Sequence[UUID]) -> None:
         """멈춤 상태가 **이 프로젝트에 실제로 있는 상태**인지 본다.

@@ -467,6 +467,13 @@ class SlaPolicyResponse(BaseModel):
     calendar_name: str
     goals: list[dict[str, Any]]
     pause_state_ids: list[UUID]
+    #: `[{"at_percent": 75, "action": "notify", "user_id": "..."}]`.
+    escalations: list[dict[str, Any]]
+    #: 규칙이 지목한 사람의 이름. id → 이름.
+    #:
+    #: **규칙 안에 넣지 않는다.** 저장 요청은 읽은 규칙을 그대로 되돌려
+    #: 보내는데, 그 안에 이름이 섞여 있으면 `extra="forbid"` 가 거절한다.
+    escalation_user_names: dict[UUID, str]
     is_enabled: bool
 
 
@@ -494,6 +501,8 @@ class SlaPolicyCreateRequest(BaseModel):
     #: 하고, 없으면 서버가 거절한다.
     goals: list[dict[str, Any]]
     pause_state_ids: list[UUID] = Field(default_factory=list)
+    #: 목표를 얼마나 썼을 때 무엇을 하는가. 빈 목록이 정상이다.
+    escalations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SlaPolicyUpdateRequest(BaseModel):
@@ -506,4 +515,5 @@ class SlaPolicyUpdateRequest(BaseModel):
     calendar_id: UUID | None = None
     goals: list[dict[str, Any]] | None = None
     pause_state_ids: list[UUID] | None = None
+    escalations: list[dict[str, Any]] | None = None
     is_enabled: bool | None = None

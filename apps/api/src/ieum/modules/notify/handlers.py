@@ -46,6 +46,16 @@ ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     # 페이로드의 `assignee_id` 를 이미 더하므로, 담당자는 워치하지 않아도
     # 받는다. 담당자가 없으면 워처(= 큐를 보는 사람들)에게 간다.
     "desk.sla.breached": ("desk.sla.breached", "notifications:sla.breached"),
+    # 에스컬레이션 (C5). 제목은 **조치마다 다르다** — `_escalation_title` 이
+    # 고른다. 표에는 기본값을 둔다: 조치를 늘리면서 제목을 안 더해도 알림
+    # 자체는 나가야 한다(빠진 것은 문구이고, 사람을 부르는 일 자체가 아니다).
+    "desk.sla.escalated": ("desk.sla.escalated", "notifications:sla.escalated"),
+}
+
+#: 조치별 제목. 없으면 위 표의 기본값을 쓴다.
+ESCALATION_TITLES: dict[str, str] = {
+    "notify": "notifications:sla.escalated.notify",
+    "raise_priority": "notifications:sla.escalated.raisePriority",
 }
 
 PAGE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
@@ -92,7 +102,12 @@ async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> li
         "key": issue_key,
         "summary": str(envelope.get("summary", "")),
         "state": str(envelope.get("to_state", "")),
+        # 에스컬레이션만 쓴다. 다른 알림의 제목은 이 값을 참조하지 않는다.
+        "percent": str(envelope.get("at_percent", "")),
+        "priority": str(envelope.get("priority", "")),
     }
+    if envelope.event_type == "desk.sla.escalated":
+        title_key = ESCALATION_TITLES.get(str(envelope.get("action", "")), title_key)
     service = NotificationService(ctx.session, ctx.settings)
     created = []
 
@@ -138,7 +153,10 @@ async def _recipients(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]
     watchers = await WatchService(ctx.session).watchers_of(
         WATCH_TARGET_ISSUE, envelope.aggregate_id
     )
-    for key in ("assignee_id", "reporter_id"):
+    # `to_user_id` 는 SLA 에스컬레이션 규칙이 **지목한 사람**이다. 워처도
+    # 담당자도 아닐 수 있고, 그래서 이 키를 안 읽으면 규칙이 부른 사람에게만
+    # 알림이 안 간다 — 규칙 전체가 하는 일이 그것뿐인데.
+    for key in ("assignee_id", "reporter_id", "to_user_id"):
         found = envelope.uuid(key)
         if found is not None:
             watchers.add(found)

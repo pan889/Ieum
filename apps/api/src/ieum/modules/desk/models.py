@@ -344,6 +344,18 @@ class SlaPolicy(Entity, Archivable):
     pause_state_ids: Mapped[list[UUID]] = mapped_column(
         ARRAY(Uuid), nullable=False, default=list, server_default="{}"
     )
+    #: 목표를 얼마나 썼을 때 무엇을 하는가 (C5):
+    #: `[{"at_percent": 75, "action": "notify", "user_id": "..."}]`.
+    #:
+    #: **초가 아니라 %로 적는다.** 목표 시간은 우선순위·요청 유형마다 다르다 —
+    #: "3시간 남았을 때" 는 4시간 목표에서는 45분 만에, 3일 목표에서는 거의
+    #: 끝에 걸린다. 관리자가 뜻한 것은 둘 중 하나뿐이다.
+    #:
+    #: 조치는 **등록된 이름 + 파라미터**로만 저장한다. 워크플로우 엔진과 같은
+    #: 규약이다 — 임의 코드를 저장하고 실행하는 길을 만들지 않는다.
+    escalations: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     #: 켜져 있는 정책만 새 티켓에 클럭을 건다. 끄면 **이미 걸린 클럭은
     #: 그대로 둔다** — 지난 티켓의 판정이 정책을 끄는 것으로 바뀌면 안 된다.
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -396,6 +408,22 @@ class SlaClock(Base):
     #: 위반을 **알린** 시각. 알림을 두 번 보내지 않으려고 남긴다 —
     #: "위반인가" 는 `target_at` 과 지금을 비교하면 언제든 알 수 있다.
     breached_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 이 티켓에 한 약속의 크기(업무 초). **클럭을 걸 때 정하고 그대로 둔다.**
+    #:
+    #: `target_at` 에서 거꾸로 계산할 수도 있지만 그러려면 달력이 필요하고,
+    #: 멈춤으로 목표가 밀린 뒤에는 원래 약속이 얼마였는지 알 수 없게 된다.
+    #: 에스컬레이션이 "목표의 몇 %" 를 재려면 이 값이 있어야 한다.
+    goal_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: 이미 실행한 에스컬레이션 규칙의 이름(`"75:notify"`).
+    #:
+    #: **스윕은 15초마다 돈다.** 표시를 안 남기면 담당자는 15초마다 호출된다.
+    #: 이름을 번호가 아니라 내용으로 만드는 이유는 `sla.EscalationRule.key`
+    #: 에 적었다 — 순서를 바꾸면 이미 한 일이 안 한 것으로 보인다.
+    escalated: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, default=list, server_default="{}"
+    )
 
     __table_args__ = (
         # 스윕이 "안 끝났고 안 알린" 것만 훑는다. 티켓이 쌓이면 이 인덱스가
@@ -404,6 +432,13 @@ class SlaClock(Base):
             "ix_sla_clock_pending",
             "target_at",
             postgresql_where=text("completed_at IS NULL AND breached_at IS NULL"),
+        ),
+        # 에스컬레이션 스윕은 "안 끝났고 안 멈춘" 것을 훑는다. 위반 스윕과
+        # 조건이 다르다(`breached_at` 을 안 본다 — 위반 뒤의 조치도 있다).
+        Index(
+            "ix_sla_clock_running",
+            "target_at",
+            postgresql_where=text("completed_at IS NULL AND paused_at IS NULL"),
         ),
         Index("ix_sla_clock_policy_id", "policy_id"),
     )

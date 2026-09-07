@@ -141,6 +141,144 @@ def goal_seconds(goals: list[dict[str, Any]], facts: TicketFacts) -> int | None:
     return None
 
 
+# ── 에스컬레이션 (C5) ───────────────────────────────────────────
+#
+# **등록된 이름 + 파라미터로만 저장한다.** 워크플로우 엔진과 같은 규약이다
+# (module-guide) — 임의 코드를 저장하고 실행하는 길을 만들지 않는다.
+
+#: 무엇을 할 수 있는가. 늘릴 때는 `validate_escalations` 의 검사도 늘린다.
+ESCALATION_ACTIONS = ("notify", "raise_priority")
+
+#: `at_percent` 의 상한. 목표의 다섯 배까지 — 그 뒤에 무언가 더 하는 것은
+#: 자동화 규칙(C9)의 일이고, 여기서 무한정 받으면 오타가 그대로 저장된다.
+MAX_ESCALATION_PERCENT = 500
+
+
+@dataclass(frozen=True, slots=True)
+class EscalationRule:
+    """ "목표의 N% 를 썼을 때 이것을 한다".
+
+    `at_percent` 로 적는 이유: 목표 시간은 우선순위·요청 유형마다 다르다.
+    "3시간 남았을 때" 로 적으면 4시간 목표에서는 45분 만에, 3일 목표에서는
+    거의 끝에 걸린다 — 관리자가 뜻한 것은 둘 중 하나뿐이다.
+
+    100 이 목표 시각이다. 그보다 크면 위반 뒤의 조치다.
+    """
+
+    at_percent: int
+    action: str
+    #: `notify` 의 대상. 다른 액션에서는 `None`.
+    user_id: UUID | None = None
+    #: `raise_priority` 가 올릴 값. 다른 액션에서는 `None`.
+    priority: int | None = None
+
+    @property
+    def key(self) -> str:
+        """같은 규칙을 두 번 실행하지 않으려고 클럭에 적어 두는 이름.
+
+        **번호(인덱스)가 아니라 내용으로 만든다.** 인덱스로 두면 관리자가
+        규칙 순서를 바꾸는 순간 이미 실행한 것이 안 한 것으로 보인다 — 밤에
+        두 번 호출되는 사람이 생긴다.
+        """
+        return f"{self.at_percent}:{self.action}"
+
+
+def validate_escalations(rules: Any) -> list[dict[str, Any]]:
+    """에스컬레이션 규칙을 검증해 그대로 돌려준다. 저장할 때 부른다.
+
+    빈 목록은 정상이다 — 에스컬레이션 없는 정책이 대부분이다. 목표
+    (`validate_goals`)와 달리 "기본 규칙" 을 요구하지 않는 이유가 그것이다.
+    """
+    if rules is None:
+        return []
+    if not isinstance(rules, list):
+        raise SlaError("에스컬레이션 규칙이 목록이 아니다")
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise SlaError("에스컬레이션 규칙은 사전이어야 한다")
+        unknown = set(rule) - {"at_percent", "action", "user_id", "priority"}
+        if unknown:
+            raise SlaError(f"모르는 항목: {sorted(unknown)}")
+        percent = rule.get("at_percent")
+        if not isinstance(percent, int) or isinstance(percent, bool):
+            raise SlaError("at_percent 는 정수여야 한다")
+        if not 1 <= percent <= MAX_ESCALATION_PERCENT:
+            raise SlaError(f"at_percent 는 1..{MAX_ESCALATION_PERCENT} 여야 한다")
+        action = rule.get("action")
+        if action not in ESCALATION_ACTIONS:
+            raise SlaError(f"모르는 조치: {action!r}")
+        if action == "notify":
+            if "user_id" not in rule:
+                raise SlaError("notify 에는 user_id 가 필요하다")
+            try:
+                UUID(str(rule["user_id"]))
+            except ValueError as exc:
+                raise SlaError("user_id 가 UUID 가 아니다") from exc
+            if "priority" in rule:
+                raise SlaError("notify 는 priority 를 쓰지 않는다")
+        if action == "raise_priority":
+            value = rule.get("priority")
+            if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 5:
+                raise SlaError("raise_priority 의 priority 는 1..5 여야 한다")
+            if "user_id" in rule:
+                raise SlaError("raise_priority 는 user_id 를 쓰지 않는다")
+        # **같은 이름의 규칙을 둘 두지 않는다.** 실행 표시가 이름으로
+        # 남으므로, 이름이 겹치면 하나만 실행되고 나머지는 조용히 사라진다.
+        parsed = parse_escalation(rule)
+        if parsed.key in seen:
+            raise SlaError(f"같은 조건·조치의 규칙이 둘 있다: {parsed.key}")
+        seen.add(parsed.key)
+        out.append(dict(rule))
+    return out
+
+
+def parse_escalation(rule: dict[str, Any]) -> EscalationRule:
+    """저장된 사전을 규칙 객체로. 검증을 통과한 것만 넘긴다."""
+    raw_user = rule.get("user_id")
+    raw_priority = rule.get("priority")
+    return EscalationRule(
+        at_percent=int(rule["at_percent"]),
+        action=str(rule["action"]),
+        user_id=UUID(str(raw_user)) if raw_user is not None else None,
+        priority=int(raw_priority) if raw_priority is not None else None,
+    )
+
+
+def consumed_percent(*, goal_seconds: int, remaining_seconds: int) -> int:
+    """목표의 몇 %를 썼는가. 위반이면 100 을 넘는다.
+
+    남은 시간에서 거꾸로 계산하는 이유: 남은 시간은 `remaining()` 이 이미
+    달력으로 정확히 재고, 그 값이 화면에 뜨는 값이다. 여기서 따로 세면 화면의
+    숫자와 에스컬레이션의 판단이 어긋날 수 있다 — 상담원은 "2시간 남았는데
+    왜 에스컬레이션이 갔지" 를 묻게 된다.
+    """
+    if goal_seconds <= 0:
+        # 목표가 0 이하인 클럭은 없다(`validate_goals` 가 양수를 요구한다).
+        # 마이그레이션 전에 만들어진 행만 그럴 수 있어서, 나누지 않고 0 을
+        # 돌려준다 — 그 클럭은 에스컬레이션 대상이 아니게 된다.
+        return 0
+    return round(100 * (goal_seconds - remaining_seconds) / goal_seconds)
+
+
+def due_escalations(
+    rules: list[dict[str, Any]], *, percent: int, already: list[str]
+) -> list[EscalationRule]:
+    """지금 실행할 규칙들. 이미 실행한 것은 빼고, **조건 순서대로** 돌려준다.
+
+    한 스윕에서 여러 규칙이 함께 걸릴 수 있다: 워커가 한동안 멈춰 있었거나,
+    목표가 아주 짧으면 75% 와 100% 를 같은 주기에 지나친다. 그때 **둘 다**
+    실행한다 — 하나만 하고 나머지를 버리면 담당자를 올리는 규칙이 사라진다.
+    """
+    done = set(already)
+    picked = [parse_escalation(rule) for rule in rules]
+    return sorted(
+        (rule for rule in picked if rule.at_percent <= percent and rule.key not in done),
+        key=lambda rule: rule.at_percent,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Remaining:
     """화면에 그릴 값. 서버가 계산해 내려 준다.

@@ -26,8 +26,13 @@ from ieum.core.outbox import dispatch, fetch_unpublished, publish
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import session_scope
-from ieum.modules.desk.clock import ClockContext, handle_desk_event, sweep_breaches
-from ieum.modules.desk.events import SlaBreached
+from ieum.modules.desk.clock import (
+    ClockContext,
+    handle_desk_event,
+    sweep_breaches,
+    sweep_escalations,
+)
+from ieum.modules.desk.events import SlaBreached, SlaEscalated
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.issues import contracts as issue_contracts
@@ -246,6 +251,41 @@ async def sweep_sla() -> int:
     return count
 
 
+async def sweep_sla_escalations() -> int:
+    """조건을 지난 에스컬레이션 규칙을 실행하고 알린다. 실행 건수를 돌려준다.
+
+    `sweep_sla` 와 나누는 이유: 위반은 "약속을 놓쳤다" 이고 에스컬레이션은
+    "그래서 이걸 했다" 다. 하나로 묶으면 75% 에서 미리 부르는 규칙을 표현할
+    수 없다 — 그건 아직 위반이 아니다.
+    """
+    count = 0
+    async with session_scope() as session:
+        done = await sweep_escalations(session)
+        count = len(done)
+        for item in done:
+            ref = await issue_contracts.get_issue(session, item.clock.issue_id)
+            if ref is None:
+                continue
+            project = await org_contracts.get_project(session, ref.project_id)
+            publish(
+                session,
+                SlaEscalated(
+                    aggregate_id=item.clock.issue_id,
+                    project_id=ref.project_id,
+                    issue_key=f"{project.key}-{ref.key_seq}" if project else "",
+                    summary=ref.summary,
+                    policy_id=item.clock.policy_id,
+                    rule=item.rule.key,
+                    action=item.rule.action,
+                    at_percent=item.at_percent,
+                    to_user_id=item.rule.user_id,
+                    priority=item.rule.priority,
+                    assignee_id=ref.assignee_id,
+                ),
+            )
+    return count
+
+
 async def sweep() -> dict[str, int]:
     """주기 실행 진입점. 파이프라인을 한 번씩 돌린다."""
     started = utcnow()
@@ -255,14 +295,19 @@ async def sweep() -> dict[str, int]:
     # **드레인 뒤에 돈다.** 앞에서 방금 걸린 클럭이 이미 위반일 수 있다
     # (업무 시간이 아주 짧은 목표). 순서를 바꾸면 그 위반이 한 주기 늦는다.
     sla_breaches = await sweep_sla()
+    # **위반 뒤에 돈다.** 목표 시각에 알림과 조치를 함께 두는 설정이 흔하고,
+    # 그때 아웃박스에 "위반했다" 가 "그래서 이걸 했다" 보다 먼저 들어가야
+    # 읽는 순서가 일어난 순서와 같다.
+    sla_escalations = await sweep_sla_escalations()
     elapsed = (utcnow() - started).total_seconds()
-    if processed or delivered or attachments or sla_breaches:
+    if processed or delivered or attachments or sla_breaches or sla_escalations:
         log.info(
             "worker.sweep",
             outbox=processed,
             webhooks=delivered,
             attachments=attachments,
             sla_breaches=sla_breaches,
+            sla_escalations=sla_escalations,
             duration_s=round(elapsed, 2),
         )
     return {
@@ -270,6 +315,7 @@ async def sweep() -> dict[str, int]:
         "webhooks": delivered,
         "attachments": attachments,
         "sla_breaches": sla_breaches,
+        "sla_escalations": sla_escalations,
     }
 
 

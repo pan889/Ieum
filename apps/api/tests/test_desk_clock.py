@@ -14,6 +14,8 @@
 - **같은 이벤트를 두 번 받아도 목표가 다시 계산되지 않는다.**
 - **멈춰 있는 클럭은 위반으로 잡히지 않는다.** 고객 답변을 기다리는 티켓이
   저절로 위반되면 그건 아무도 잘못하지 않은 위반이다.
+- **에스컬레이션은 한 번만 실행된다.** 스윕은 15초마다 돈다 — 표시를 안 남기면
+  담당자는 15초마다 호출된다.
 """
 
 from __future__ import annotations
@@ -109,6 +111,7 @@ async def _policy(
     seconds: int = 4 * HOUR,
     calendar: BusinessCalendarRow | None = None,
     pause_state_ids: list[object] | None = None,
+    escalations: list[dict[str, object]] | None = None,
 ) -> SlaPolicy:
     row = SlaPolicy(
         project_id=project.id,
@@ -117,6 +120,7 @@ async def _policy(
         calendar_id=(calendar or await _calendar(session)).id,
         goals=[{"seconds": seconds}],
         pause_state_ids=pause_state_ids or [],
+        escalations=escalations or [],
     )
     session.add(row)
     await session.flush()
@@ -411,3 +415,193 @@ async def _workflow_id(session: AsyncSession, issue: Issue) -> object:
 
 async def _count_clocks(session: AsyncSession) -> int:
     return len(list((await session.execute(select(SlaClock))).scalars().all()))
+
+
+class TestEscalation:
+    """조건을 지난 규칙을 실행한다 (C5).
+
+    **이 층이 붙잡는 것은 "한 번만" 이다.** 규칙을 고르는 계산은
+    `test_desk_sla.py` 가 순수 함수로 이미 본다 — 여기는 표시가 실제로
+    저장되는지, 그래서 다음 스윕이 같은 규칙을 다시 돌리지 않는지를 본다.
+    """
+
+    async def _overdue(
+        self,
+        session: AsyncSession,
+        escalations: list[dict[str, object]],
+        *,
+        consumed_ratio: float = 1.5,
+    ) -> tuple[Issue, SlaPolicy, SlaClock]:
+        """목표를 `consumed_ratio` 배 쓴 클럭 하나. 달력은 항상 열려 있다.
+
+        시계를 기다리지 않고 목표 시각을 당긴다 — 소비율은 남은 시간에서
+        거꾸로 나오므로 목표 시각을 옮기는 것으로 만들 수 있다.
+        """
+        project, issue, _ = await _ticket(session)
+        policy = await _policy(session, project, escalations=escalations)
+        await desk_clock.start_clocks(session, issue.id)
+        row = await _clock(session, issue, policy)
+        assert row is not None
+        goal = row.goal_seconds
+        row.target_at = datetime.now(UTC) - timedelta(seconds=goal * (consumed_ratio - 1))
+        await session.flush()
+        return issue, policy, row
+
+    async def test_the_clock_records_the_promise_it_was_given(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """`goal_seconds` 가 없으면 "목표의 몇 %" 를 잴 수 없다. `target_at`
+        에서 거꾸로 계산하려면 달력이 필요하고, 멈춤으로 목표가 밀린 뒤에는
+        원래 약속이 얼마였는지 알 수 없다."""
+        project, issue, _ = await _ticket(session)
+        policy = await _policy(session, project, seconds=4 * HOUR)
+        await desk_clock.start_clocks(session, issue.id)
+        row = await _clock(session, issue, policy)
+        assert row is not None
+        assert row.goal_seconds == 4 * HOUR
+
+    async def test_a_passed_rule_runs(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        who = await _person(session)
+        _, _, clock = await self._overdue(
+            session, [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}]
+        )
+        done = await desk_clock.sweep_escalations(session)
+        assert [item.rule.key for item in done] == ["100:notify"]
+        # 실제로 몇 %에서 돌았는가. 규칙의 조건이 아니다.
+        assert done[0].at_percent >= 100
+        assert clock.escalated == ["100:notify"]
+
+    async def test_it_runs_only_once(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**이 시험이 이 클래스의 이유다.** 스윕은 15초마다 돈다."""
+        who = await _person(session)
+        await self._overdue(
+            session, [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}]
+        )
+        assert len(await desk_clock.sweep_escalations(session)) == 1
+        assert await desk_clock.sweep_escalations(session) == []
+
+    async def test_a_rule_that_has_not_come_yet_does_not_run(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        who = await _person(session)
+        await self._overdue(
+            session,
+            [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}],
+            consumed_ratio=0.1,
+        )
+        assert await desk_clock.sweep_escalations(session) == []
+
+    async def test_a_paused_clock_is_not_escalated(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """고객 답변을 기다리는 동안 %가 올라 담당자가 호출되면, 우리가 안 한
+        일이 아닌데 부르는 것이다."""
+        who = await _person(session)
+        _, _, clock = await self._overdue(
+            session, [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}]
+        )
+        clock.paused_at = datetime.now(UTC)
+        await session.flush()
+        assert await desk_clock.sweep_escalations(session) == []
+
+    async def test_a_completed_clock_is_not_escalated(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """이미 응답한 티켓에 "응답이 늦습니다" 가 가면 그 알림은 다음부터
+        무시된다."""
+        who = await _person(session)
+        _, _, clock = await self._overdue(
+            session, [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}]
+        )
+        clock.completed_at = datetime.now(UTC)
+        await session.flush()
+        assert await desk_clock.sweep_escalations(session) == []
+
+    async def test_raise_priority_actually_raises_it(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        issue, _, _ = await self._overdue(
+            session, [{"at_percent": 100, "action": "raise_priority", "priority": 5}]
+        )
+        assert len(await desk_clock.sweep_escalations(session)) == 1
+        await session.refresh(issue)
+        assert issue.priority == 5
+
+    async def test_it_never_lowers_a_priority_someone_raised(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """규칙은 "적어도 이만큼" 을 뜻한다. 사람이 더 높게 올려 둔 티켓을
+        규칙이 끌어내리면 그 판단이 조용히 뒤집힌다."""
+        project, issue, _ = await _ticket(session, priority=5)
+        policy = await _policy(
+            session,
+            project,
+            escalations=[{"at_percent": 100, "action": "raise_priority", "priority": 4}],
+        )
+        await desk_clock.start_clocks(session, issue.id)
+        row = await _clock(session, issue, policy)
+        assert row is not None
+        row.target_at = datetime.now(UTC) - timedelta(hours=1)
+        await session.flush()
+
+        await desk_clock.sweep_escalations(session)
+        await session.refresh(issue)
+        assert issue.priority == 5
+
+    async def test_raising_the_priority_leaves_a_trace(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """안 남기면 담당자는 자기가 안 만진 값이 바뀐 것을 보고 이유를 찾을
+        수 없다. `actor_id` 는 비운다 — 사람이 한 일이 아니다."""
+        from ieum.modules.issues.models import IssueHistory
+
+        project, issue, _ = await _ticket(session, priority=2)
+        policy = await _policy(
+            session,
+            project,
+            escalations=[{"at_percent": 100, "action": "raise_priority", "priority": 5}],
+        )
+        await desk_clock.start_clocks(session, issue.id)
+        row = await _clock(session, issue, policy)
+        assert row is not None
+        row.target_at = datetime.now(UTC) - timedelta(hours=1)
+        await session.flush()
+        await desk_clock.sweep_escalations(session)
+
+        entries = list(
+            (await session.execute(select(IssueHistory).where(IssueHistory.issue_id == issue.id)))
+            .scalars()
+            .all()
+        )
+        changes = [c for entry in entries for c in entry.changes if c.get("field") == "priority"]
+        assert changes == [{"field": "priority", "from": "2", "to": "5"}]
+        assert all(entry.actor_id is None for entry in entries)
+
+    async def test_two_passed_rules_both_run_in_one_sweep(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """워커가 한동안 멈춰 있었으면 두 조건을 같은 주기에 지나친다. 하나만
+        하고 나머지를 버리면 우선순위를 올리는 규칙이 사라진다."""
+        who = await _person(session)
+        await self._overdue(
+            session,
+            [
+                {"at_percent": 50, "action": "notify", "user_id": str(who.id)},
+                {"at_percent": 100, "action": "raise_priority", "priority": 5},
+            ],
+            consumed_ratio=2.0,
+        )
+        done = await desk_clock.sweep_escalations(session)
+        assert [item.rule.at_percent for item in done] == [50, 100]
+
+    async def test_a_policy_without_rules_is_not_even_looked_at(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """티켓이 쌓이면 이 조건이 없는 스윕은 클럭 전체를 읽고 달력을
+        파싱한다."""
+        await self._overdue(session, [])
+        assert await desk_clock.sweep_escalations(session) == []
