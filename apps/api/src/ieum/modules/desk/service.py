@@ -118,6 +118,36 @@ class Answer:
 
 
 @dataclass(frozen=True, slots=True)
+class Requester:
+    """요청을 낸 사람. 계정이 있으면 이름과 주소, 게스트면 적어 낸 값이다.
+
+    `verified` 가 요점이다: 게스트가 적은 주소는 **검증되지 않았다.** 상담원
+    화면이 그 사실을 보여 줘야 한다 — 아니면 게스트 주소를 계정 주소처럼
+    믿고 그 주소로 확인 없이 무엇이든 보낸다.
+    """
+
+    user_id: UUID | None
+    display_name: str
+    email: str
+    verified: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTicketView:
+    """상담원이 티켓 화면에서 필요한 데스크 정보.
+
+    이슈 응답에 이걸 섞지 않는다 — `issues` 가 `desk` 를 알게 되고, 그건
+    의존 그래프에 없는 화살표다(ADR-0010). 화면이 조회를 하나 더 한다.
+    """
+
+    ticket: TicketExt
+    request_type_name: str | None
+    portal_slug: str | None
+    requester: Requester | None
+    organization_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class TicketView:
     ticket: TicketExt
     issue: issues.TicketIssue
@@ -777,6 +807,96 @@ AUDIT_CUSTOMER_ORG_CREATED = "desk.customer_org.created"
 AUDIT_CUSTOMER_MEMBERSHIP_CHANGED = "desk.customer_membership.changed"
 
 
+# ── 상담원이 보는 티켓 ─────────────────────────────────────────
+
+
+class AgentTicketService:
+    """상담원 화면이 쓰는 데스크 정보. 큐 작업 권한을 요구한다."""
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._tickets = TicketRepository(session)
+        self._types = RequestTypeRepository(session)
+        self._portals = PortalRepository(session)
+        self._orgs = CustomerOrganizationRepository(session)
+
+    async def get(self, actor: Actor, issue_id: UUID) -> AgentTicketView | None:
+        """이 이슈의 데스크 정보. **티켓이 아니면 `None` 이다 — 오류가 아니다.**
+
+        처음에는 404 로 답했다. 화면이 "이슈인가 티켓인가" 를 이 응답으로
+        가르므로 그게 자연스러워 보였고, 빈 값을 200 으로 주면 화면이 모든
+        이슈에 고객 회신 손잡이를 그릴 수 있다는 것이 이유였다.
+
+        **그런데 상담원이 평범한 이슈를 열 때마다 콘솔에 404 가 찍혔다.**
+        이슈 상세는 이 제품에서 가장 많이 열리는 화면이고, 거기서 매번
+        오류가 나면 사람은 콘솔을 안 보게 된다 — 그러면 진짜 오류가 가장
+        오래 살아남는다. E2E 의 `consoleErrors` 픽스처가 이 판단을 이미
+        코드로 갖고 있어서, 이슈 스펙 넷이 붉어져 드러났다. 그 픽스처의
+        예외 목록에 이 경로를 더하는 것으로 고치지 않는다: 예외 목록은
+        어쩔 수 없는 것(익명의 `/auth/me` 401)을 담는 자리이고, 내가 고른
+        설계를 담는 자리가 아니다.
+
+        빈 값을 주면서도 구조로 막을 수 있다. 응답의 `ticket` 이
+        **널 가능**이므로 화면은 확인 없이 `TicketFacts` 를 그릴 수 없다 —
+        `tsc` 가 거절한다. 404 가 사 주던 보장을 타입이 대신 산다.
+
+        `desk.queue.work` 가 없는 사람에게도 `None` 이다. 그 사람에게 이
+        화면이 할 일은 "데스크 정보를 그리지 않는다" 로 똑같고, 403 으로
+        답하면 그것도 콘솔 오류가 된다 — 그리고 이슈를 볼 수는 있는 사람에게
+        "이건 티켓인데 너는 볼 수 없다" 를 알려 줄 이유가 없다.
+        """
+        ticket = await self._tickets.get(issue_id)
+        if ticket is None:
+            return None
+        issue = await issues.get_issue(self._s, issue_id)
+        if issue is None:
+            # **데이터베이스가 허용하지 않는 상태다.** `ticket_ext.issue_id` 는
+            # `issue.id` 를 가리키는 PK 겸 FK(`ON DELETE CASCADE`)이므로 티켓이
+            # 있으면 이슈도 있다. 타입을 좁히려고 남긴 줄이고, 여기 왔다면
+            # 그건 제약이 깨졌다는 뜻이라 조용히 넘기지 않는다.
+            raise NotFoundError("요청을 찾을 수 없다.")
+        if not await self._perms.has(
+            self._s, actor, perms.QUEUE_WORK, scope=Scope.project(issue.project_id)
+        ):
+            return None
+
+        request_type = (
+            await self._types.get(ticket.request_type_id) if ticket.request_type_id else None
+        )
+        portal = await self._portals.get(request_type.portal_id) if request_type else None
+        organization = (
+            await self._orgs.get(ticket.organization_id) if ticket.organization_id else None
+        )
+        return AgentTicketView(
+            ticket=ticket,
+            request_type_name=request_type.name if request_type else None,
+            portal_slug=portal.slug if portal else None,
+            requester=await self._requester(ticket),
+            organization_name=organization.name if organization else None,
+        )
+
+    async def _requester(self, ticket: TicketExt) -> Requester | None:
+        if ticket.reporter_customer_id is not None:
+            user = await identity.get_user(self._s, ticket.reporter_customer_id)
+            if user is not None:
+                return Requester(
+                    user_id=user.id,
+                    display_name=user.display_name,
+                    email=user.email,
+                    # 계정 주소는 초대 메일을 받아 비밀번호를 정한 주소다.
+                    verified=True,
+                )
+        if ticket.guest_email is not None:
+            return Requester(
+                user_id=None,
+                display_name=ticket.guest_name or "",
+                email=ticket.guest_email,
+                verified=False,
+            )
+        return None
+
+
 # ── 포털 (고객이 쓰는 쪽) ──────────────────────────────────────
 
 
@@ -1016,6 +1136,27 @@ class CustomerPortalService:
         if not views:
             raise NotFoundError("요청을 찾을 수 없다.")
         return views[0]
+
+    # ── 대화 (C7) ───────────────────────────────────────────────
+
+    async def list_replies(
+        self, actor: Actor, slug: str, issue_id: UUID
+    ) -> list[issues.PublicComment]:
+        """이 요청의 대화. **내부 노트는 여기 오지 않는다.**
+
+        보장이 두 겹이다: 먼저 이 티켓이 이 고객의 것인지 확인하고(아니면
+        404), 그 다음 공개 코멘트만 읽는 계약을 쓴다 — 그 계약에는
+        `include_internal` 매개변수가 아예 없다.
+        """
+        await self.get_my_ticket(actor, slug, issue_id)
+        return await issues.list_public_comments(self._s, issue_id)
+
+    async def reply(
+        self, actor: Actor, slug: str, issue_id: UUID, body: str
+    ) -> issues.PublicComment:
+        """고객의 회신. 자기 티켓(또는 자기 조직 티켓)에만 쓸 수 있다."""
+        await self.get_my_ticket(actor, slug, issue_id)
+        return await issues.add_public_comment(self._s, actor, issue_id, body)
 
     # ── 내부 ────────────────────────────────────────────────────
 

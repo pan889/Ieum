@@ -187,6 +187,50 @@ export interface TicketPage {
   next_cursor: string | null
 }
 
+/**
+ * 대화 한 줄. **`is_internal` 이 없다.**
+ *
+ * 이 표면에 오는 것은 언제나 공개 코멘트다. 필드를 두면 화면이 그 값을
+ * 보고 무언가를 그리게 되고, 언젠가 True 가 실려 나간다. 내부 노트는
+ * 상담원 화면의 `issuesApi.comments` 로만 온다.
+ */
+export interface Reply {
+  id: string
+  author_id: string | null
+  body: string
+  created_at: string
+  edited_at: string | null
+}
+
+/** 요청을 낸 사람. `verified=false` 면 게스트가 적어 낸, 검증되지 않은 주소다. */
+export interface Requester {
+  user_id: string | null
+  display_name: string
+  email: string
+  verified: boolean
+}
+
+/** 상담원 화면이 쓰는 데스크 정보. */
+export interface AgentTicket {
+  issue_id: string
+  channel: string
+  request_type_name: string | null
+  portal_slug: string | null
+  requester: Requester | null
+  organization_name: string | null
+  csat_score: number | null
+}
+
+/**
+ * `ticket` 이 `null` 이면 이 이슈는 티켓이 아니다 — **오류가 아니라 답이다.**
+ *
+ * 봉투로 감싸는 것은 화면이 확인을 건너뛸 수 없게 하려는 것이다. 필드가
+ * 널 가능이므로 `ticket.requester` 를 바로 읽는 코드는 `tsc` 가 거절한다.
+ */
+export interface AgentTicketEnvelope {
+  ticket: AgentTicket | null
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
 /** 고객 표면. 이 접두사만 고객 격리를 통과한다 (auth.md 5절). */
@@ -296,6 +340,19 @@ export function createDeskApi(client: ApiClient) {
     },
     myTicket: (slug: string, issueId: string) =>
       client.get<Ticket>(`${PORTAL}/${slug}/requests/${issueId}`),
+    replies: (slug: string, issueId: string) =>
+      client.get<Reply[]>(`${PORTAL}/${slug}/requests/${issueId}/replies`),
+    reply: (slug: string, issueId: string, body: string) =>
+      client.post<Reply>(`${PORTAL}/${slug}/requests/${issueId}/replies`, { body }),
+
+    /**
+     * 이 이슈의 데스크 정보. **티켓이 아니면 `ticket: null` 이다.**
+     *
+     * 200 이다. 상담원은 평범한 이슈를 하루에 수십 번 열고, 그 때마다
+     * 404 가 찍히면 콘솔은 못 읽는 것이 된다.
+     */
+    agentTicket: (issueId: string) =>
+      client.get<AgentTicketEnvelope>(`/api/v1/tickets/${issueId}`),
   }
 }
 

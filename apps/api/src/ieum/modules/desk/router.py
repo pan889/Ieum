@@ -23,6 +23,8 @@ from fastapi import APIRouter, Query, status
 from ieum.core.deps import AppSettings, CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.modules.desk.schemas import (
+    AgentTicketEnvelope,
+    AgentTicketResponse,
     AnswerResponse,
     CustomerInviteRequest,
     CustomerMemberResponse,
@@ -39,6 +41,9 @@ from ieum.modules.desk.schemas import (
     PortalResponse,
     PortalSubmitRequest,
     PortalUpdateRequest,
+    ReplyRequest,
+    ReplyResponse,
+    RequesterResponse,
     RequestTypeCreateRequest,
     RequestTypeResponse,
     RequestTypeUpdateRequest,
@@ -46,6 +51,7 @@ from ieum.modules.desk.schemas import (
     TicketSummaryResponse,
 )
 from ieum.modules.desk.service import (
+    AgentTicketService,
     CustomerOrgService,
     CustomerOrgView,
     CustomerPortalService,
@@ -59,6 +65,8 @@ from ieum.modules.desk.service import (
 #: 내부 관리 표면. 상담원·관리자가 쓴다.
 portals_router = APIRouter(prefix="/portals", tags=["desk"])
 customers_router = APIRouter(prefix="/customer-organizations", tags=["desk"])
+#: 상담원이 티켓의 데스크 정보를 읽는 자리. 내부 표면이다.
+tickets_router = APIRouter(prefix="/tickets", tags=["desk"])
 #: 고객이 쓰는 표면. 이 접두사만 고객 격리를 통과한다.
 portal_router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -649,3 +657,93 @@ async def my_portals(
         )
         for portal in portals
     ]
+
+
+# ── 상담원이 보는 티켓 ─────────────────────────────────────────
+
+
+@tickets_router.get("/{issue_id}", response_model=AgentTicketEnvelope)
+async def agent_ticket(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, issue_id: UUID
+) -> AgentTicketEnvelope:
+    """이 이슈의 데스크 정보. **티켓이 아니면 `ticket: null` 이다.**
+
+    200 으로 답하는 것이 중요하다. 상담원은 평범한 이슈를 하루에 수십 번
+    열고, 그 때마다 404 가 찍히면 콘솔은 못 읽는 것이 된다 — 그러면 진짜
+    오류가 가장 오래 살아남는다. 봉투로 감싸는 이유는 화면이 확인 없이
+    그릴 수 없게 하려는 것이다: `ticket` 이 널 가능이므로 `tsc` 가 막는다.
+    """
+    view = await AgentTicketService(session, permissions).get(actor, issue_id)
+    if view is None:
+        return AgentTicketEnvelope(ticket=None)
+    return AgentTicketEnvelope(
+        ticket=AgentTicketResponse(
+            issue_id=view.ticket.issue_id,
+            channel=view.ticket.channel,
+            request_type_name=view.request_type_name,
+            portal_slug=view.portal_slug,
+            requester=(
+                RequesterResponse(
+                    user_id=view.requester.user_id,
+                    display_name=view.requester.display_name,
+                    email=view.requester.email,
+                    verified=view.requester.verified,
+                )
+                if view.requester
+                else None
+            ),
+            organization_name=view.organization_name,
+            csat_score=view.ticket.csat_score,
+        )
+    )
+
+
+# ── 고객의 대화 (C7) ───────────────────────────────────────────
+
+
+@portal_router.get("/{slug}/requests/{issue_id}/replies", response_model=list[ReplyResponse])
+async def portal_replies(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    slug: str,
+    issue_id: UUID,
+) -> list[ReplyResponse]:
+    """이 요청의 대화. 내부 노트는 오지 않는다."""
+    rows = await CustomerPortalService(session, permissions).list_replies(actor, slug, issue_id)
+    return [
+        ReplyResponse(
+            id=row.id,
+            author_id=row.author_id,
+            body=row.body,
+            created_at=row.created_at,
+            edited_at=row.edited_at,
+        )
+        for row in rows
+    ]
+
+
+@portal_router.post(
+    "/{slug}/requests/{issue_id}/replies",
+    response_model=ReplyResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def portal_reply(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    slug: str,
+    issue_id: UUID,
+    payload: ReplyRequest,
+) -> ReplyResponse:
+    row = await CustomerPortalService(session, permissions).reply(
+        actor, slug, issue_id, payload.body
+    )
+    await session.commit()
+    return ReplyResponse(
+        id=row.id,
+        author_id=row.author_id,
+        body=row.body,
+        created_at=row.created_at,
+        edited_at=row.edited_at,
+    )

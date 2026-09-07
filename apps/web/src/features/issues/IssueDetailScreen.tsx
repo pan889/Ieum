@@ -3,7 +3,9 @@ import { Link, useParams } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { issuesApi } from '@/shared/api'
+import type { AgentTicket } from '@ieum/api-client'
+
+import { deskApi, issuesApi } from '@/shared/api'
 import { describeError, fieldOfError } from '@/shared/api/errors'
 import { RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
@@ -27,6 +29,30 @@ export function IssueDetailScreen() {
     queryKey: ['issues', 'detail', issueKey],
     queryFn: () => issuesApi.getByKey(issueKey),
   })
+
+  /**
+   * 이 이슈가 티켓인가. **`ticket: null` 이 "티켓이 아니다" 라는 답이다.**
+   *
+   * 이슈 응답에 데스크 정보를 섞지 않는다 — `issues` 가 `desk` 를 알게 되고
+   * 그건 의존 그래프에 없는 화살표다(ADR-0010). 화면이 조회를 하나 더 한다.
+   *
+   * 처음에는 서버가 404 로 답했다. 그게 "없으면 404" 라는 규칙에는 맞았지만,
+   * **평범한 이슈를 열 때마다 콘솔에 404 가 찍혔다** — 이슈 상세는 이 제품에서
+   * 가장 많이 열리는 화면이다. 콘솔이 매번 붉으면 사람은 그것을 안 보게 되고,
+   * 그러면 진짜 오류가 가장 오래 살아남는다. E2E 의 `consoleErrors` 픽스처가
+   * 이 판단을 이미 갖고 있어서 이슈 스펙 넷이 붉어져 드러났다.
+   *
+   * **이 훅은 아래 조기 반환보다 위에 있어야 한다.** 훅은 조건 없이 같은
+   * 순서로 불려야 하고, 조기 반환 뒤에 두면 로딩 중 렌더에서는 안 불려
+   * 렌더마다 훅 수가 달라진다.
+   */
+  const issueId = issue.data?.id
+  const ticket = useQuery({
+    queryKey: ['desk', 'ticket', issueId ?? ''],
+    queryFn: () => deskApi.agentTicket(issueId ?? ''),
+    enabled: Boolean(issueId),
+  })
+  const desk = ticket.data?.ticket ?? null
 
   if (issue.isPending) {
     return <p className="text-sm text-muted">{t('common:state.loading')}</p>
@@ -59,10 +85,15 @@ export function IssueDetailScreen() {
           <TimeTracking issueId={data.id} version={data.version} />
           <Attachments ownerType="issue" ownerId={data.id} />
           <LinkedDocs issueId={data.id} />
-          <Comments issueId={data.id} />
+          <Comments issueId={data.id} isTicket={desk !== null} />
           <History issueId={data.id} />
         </div>
-        <Details issue={data} onSaved={invalidate} />
+        <div className="flex flex-col gap-5">
+          {/* 티켓이면 데스크 정보를 사이드바 맨 위에 둔다. 상담원이 먼저
+              알아야 하는 것은 "누가, 어느 창구로" 다. */}
+          {desk ? <TicketFacts ticket={desk} /> : null}
+          <Details issue={data} onSaved={invalidate} />
+        </div>
       </div>
     </section>
   )
@@ -381,8 +412,53 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   )
 }
 
-function Comments({ issueId }: { issueId: string }) {
-  const { t } = useTranslation(['issues'])
+/**
+ * 티켓의 데스크 정보. **누가, 어느 창구로** 가 상담원이 먼저 알아야 하는
+ * 것이다.
+ *
+ * 게스트 주소에 "검증되지 않음" 을 붙이는 것이 이 판의 요점이다. 게스트가
+ * 적어 낸 주소는 아무나 적을 수 있다 — 계정 주소처럼 믿고 확인 없이 무엇을
+ * 보내면, 남의 주소를 적어 넣은 사람이 그 사람에게 무언가를 배달한다.
+ */
+function TicketFacts({ ticket }: { ticket: AgentTicket }) {
+  const { t } = useTranslation(['desk'])
+
+  return (
+    <Card className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-muted">{t('desk:agent.title')}</h2>
+      {ticket.requester ? (
+        <Row label={t('desk:agent.requester')}>
+          <span>{ticket.requester.display_name || ticket.requester.email}</span>
+          <span className="ml-1 text-xs text-muted">{ticket.requester.email}</span>
+          {ticket.requester.verified ? null : (
+            <Badge tone="danger" className="ml-1">
+              {t('desk:agent.unverified')}
+            </Badge>
+          )}
+        </Row>
+      ) : null}
+      {ticket.organization_name ? (
+        <Row label={t('desk:agent.organization')}>{ticket.organization_name}</Row>
+      ) : null}
+      {ticket.request_type_name ? (
+        <Row label={t('desk:agent.requestType')}>{ticket.request_type_name}</Row>
+      ) : null}
+      {/* 창구는 링크로 둔다. 상담원이 고객이 보는 화면을 열어 볼 수 있어야
+          "고객에게는 어떻게 보이나" 를 확인할 수 있다. */}
+      {ticket.portal_slug ? (
+        <Row label={t('desk:agent.portal')}>
+          <a className="underline" href={`/portal/${ticket.portal_slug}`}>
+            /portal/{ticket.portal_slug}
+          </a>
+        </Row>
+      ) : null}
+      <Row label={t('desk:agent.channel')}>{t(`desk:agent.channel.${ticket.channel}`)}</Row>
+    </Card>
+  )
+}
+
+function Comments({ issueId, isTicket }: { issueId: string; isTicket: boolean }) {
+  const { t } = useTranslation(['issues', 'desk'])
   const queryClient = useQueryClient()
   const [body, setBody] = useState('')
   const [internal, setInternal] = useState(false)
@@ -394,7 +470,8 @@ function Comments({ issueId }: { issueId: string }) {
   const authors = useUserNames((comments.data ?? []).map((c) => c.author_id))
 
   const add = useMutation({
-    mutationFn: () => issuesApi.addComment(issueId, { body, is_internal: internal }),
+    mutationFn: (asInternal: boolean) =>
+      issuesApi.addComment(issueId, { body, is_internal: asInternal }),
     onSuccess: () => {
       setBody('')
       void queryClient.invalidateQueries({ queryKey: ['issues', 'comments', issueId] })
@@ -431,7 +508,7 @@ function Comments({ issueId }: { issueId: string }) {
 
       <form
         className="flex flex-col gap-2 border-t border-border pt-4"
-        onSubmit={(event) => { event.preventDefault(); add.mutate() }}
+        onSubmit={(event) => { event.preventDefault(); add.mutate(internal) }}
       >
         {add.isError ? <Alert>{describeError(add.error)}</Alert> : null}
         <MarkdownEditor
@@ -444,19 +521,54 @@ function Comments({ issueId }: { issueId: string }) {
           // 코멘트를 지울 때 본문에서 참조하던 그림이 같이 사라진다.
           attachTo={{ ownerType: 'issue', ownerId: issueId }}
         />
-        <div className="flex items-center gap-3">
-          <Button type="submit" loading={add.isPending} disabled={body.trim() === ''}>
-            {t('issues:comment.submit')}
-          </Button>
-          <label className="flex items-center gap-1.5 text-xs text-muted">
-            <input
-              type="checkbox"
-              checked={internal}
-              onChange={(e) => { setInternal(e.target.checked); }}
-            />
-            {t('issues:comment.internal')}
-          </label>
-        </div>
+        {/*
+          **티켓에서는 체크박스를 쓰지 않는다.**
+
+          티켓의 코멘트는 고객이 읽는다. 체크박스는 한 번의 미스클릭으로 두
+          방향 모두 사고가 된다: 꺼진 채로 쓰면 내부 노트가 고객에게 가고,
+          켜진 채로 쓰면 회신이 고객에게 닿지 않는다. 어느 쪽도 되돌릴 수
+          없다 — 보낸 것은 이미 읽혔고, 안 간 것은 기다림이 된다.
+
+          그래서 **버튼을 둘로 나눈다.** 무엇을 하는지가 누르는 행동에 적혀
+          있으면 기본값을 틀릴 수 없다. 티켓이 아닌 이슈에는 고객이 없으므로
+          위험이 없고, 잘 돌던 화면을 바꾸지 않는다.
+        */}
+        {isTicket ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              loading={add.isPending && !internal}
+              disabled={body.trim() === ''}
+              onClick={() => { setInternal(false); add.mutate(false) }}
+            >
+              {t('desk:agent.replyToCustomer')}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              loading={add.isPending && internal}
+              disabled={body.trim() === ''}
+              onClick={() => { setInternal(true); add.mutate(true) }}
+            >
+              {t('desk:agent.addInternalNote')}
+            </Button>
+            <span className="text-xs text-muted">{t('desk:agent.replyHint')}</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Button type="submit" loading={add.isPending} disabled={body.trim() === ''}>
+              {t('issues:comment.submit')}
+            </Button>
+            <label className="flex items-center gap-1.5 text-xs text-muted">
+              <input
+                type="checkbox"
+                checked={internal}
+                onChange={(e) => { setInternal(e.target.checked); }}
+              />
+              {t('issues:comment.internal')}
+            </label>
+          </div>
+        )}
       </form>
     </Card>
   )

@@ -260,6 +260,57 @@ class TicketResponse(BaseModel):
     answers: list[AnswerResponse]
 
 
+class ReplyResponse(BaseModel):
+    """대화 한 줄. **`is_internal` 이 없다** — 이 표면에 오는 것은 언제나
+    공개 코멘트다. 필드를 두면 언젠가 True 가 실려 나간다."""
+
+    id: UUID
+    author_id: UUID | None
+    body: str
+    created_at: datetime
+    edited_at: datetime | None
+
+
+class ReplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=100_000)
+
+
+class RequesterResponse(BaseModel):
+    """요청을 낸 사람. `verified=false` 면 게스트가 적어 낸 주소다 —
+    검증되지 않았다는 사실을 화면이 보여 줘야 한다."""
+
+    user_id: UUID | None
+    display_name: str
+    email: str
+    verified: bool
+
+
+class AgentTicketResponse(BaseModel):
+    """상담원 화면이 쓰는 데스크 정보."""
+
+    issue_id: UUID
+    channel: str
+    request_type_name: str | None
+    portal_slug: str | None
+    requester: RequesterResponse | None
+    organization_name: str | None
+    csat_score: int | None
+
+
+class AgentTicketEnvelope(BaseModel):
+    """`ticket` 이 `null` 이면 이 이슈는 티켓이 아니다(또는 데스크 정보를 볼
+    권한이 없다). **오류가 아니라 답이다.**
+
+    봉투로 감싸는 것은 화면이 확인을 건너뛸 수 없게 하려는 것이다. 필드가
+    널 가능이므로 타입 검사가 `ticket.requester` 를 바로 읽는 코드를
+    거절한다 — 404 로 답할 때 얻던 보장을 타입이 대신 산다.
+    """
+
+    ticket: AgentTicketResponse | None
+
+
 class TicketSummaryResponse(BaseModel):
     id: UUID
     key: str

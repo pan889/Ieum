@@ -61,6 +61,14 @@ const resources = {
   },
 } as const
 
+/**
+ * 로드할 네임스페이스. `resources` 에서 뽑는다 — 두 곳에 적으면 어긋난다.
+ *
+ * `en` 을 기준으로 삼는 것은 `fallbackLng` 가 `en` 이기 때문이다: en 에 없는
+ * 네임스페이스는 어차피 떨어질 곳이 없다.
+ */
+export const NAMESPACES = Object.keys(resources.en) as (keyof typeof resources.en)[]
+
 const STORAGE_KEY = 'ieum.locale'
 
 /**
@@ -109,18 +117,13 @@ export async function initI18n(locale: Locale = detectLocale()): Promise<typeof 
       // 새 언어를 추가했는데 키를 못 채웠으면 en 으로 떨어진다 (i18n.md 5절).
       fallbackLng: 'en',
       defaultNS: 'common',
-      ns: [
-        'common',
-        'auth',
-        'errors',
-        'projects',
-        'issues',
-        'boards',
-        'notifications',
-        'wiki',
-        'markdown',
-        'search',
-      ],
+      // **목록을 손으로 들고 있지 않는다.** 여기에 열 개를 적어 두었고
+      // `admin`·`desk` 두 개가 빠져 있었다 — 카탈로그를 더하면서 이 줄을
+      // 잊은 것이다. 지금은 `resources` 가 인라인이라 i18next 가 그래도
+      // 찾아 주므로 화면은 멀쩡했고, 그래서 아무도 몰랐다. 백엔드로 카탈로그를
+      // 나눠 받는 순간(또는 `partialBundledLanguages` 를 켜는 순간) 그 두
+      // 네임스페이스만 조용히 비어 있게 된다.
+      ns: NAMESPACES,
       interpolation: { escapeValue: false },
       returnNull: false,
     })

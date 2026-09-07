@@ -233,3 +233,105 @@ async def get_tickets(session: AsyncSession, issue_ids: Sequence[UUID]) -> dict[
         return {}
     service = IssueService(session, get_permission_service())
     return {issue.id: _ticket(await service.to_view(issue)) for issue in issues}
+
+
+# ── 고객이 보는 대화 ───────────────────────────────────────────
+#
+# 내부 노트는 **고객에게 절대 나가지 않는다** (auth.md 5절). 그 보장을
+# 구조로 만든다: 아래 두 함수에는 `include_internal` 매개변수가 **없다.**
+# 매개변수로 두면 어딘가에서 True 가 흘러 들어오고, 그 한 번이 사고다.
+
+
+@dataclass(frozen=True, slots=True)
+class PublicComment:
+    """고객이 볼 수 있는 코멘트 하나. `is_internal` 이 없다 — 언제나 False 다."""
+
+    id: UUID
+    author_id: UUID | None
+    body: str
+    created_at: datetime
+    edited_at: datetime | None
+
+
+async def list_public_comments(session: AsyncSession, issue_id: UUID) -> list[PublicComment]:
+    """공개 코멘트만. **내부 노트는 SQL 단계에서 빠진다.**
+
+    권한을 보지 않는다 — 이 티켓이 이 고객의 것인지는 `desk` 가 이미
+    판단했고, 고객에게는 `issue.view` 가 없으므로 여기서 다시 보면 아무
+    것도 못 본다.
+    """
+    from ieum.modules.issues.repository import CommentRepository
+
+    rows = await CommentRepository(session).list_for_issue(issue_id, include_internal=False)
+    return [
+        PublicComment(
+            id=row.id,
+            author_id=row.author_id,
+            body=row.body,
+            created_at=row.created_at,
+            edited_at=row.edited_at,
+        )
+        for row in rows
+    ]
+
+
+async def add_public_comment(
+    session: AsyncSession, actor: Actor, issue_id: UUID, body: str
+) -> PublicComment:
+    """고객의 회신. **언제나 공개**이고 권한을 보지 않는다.
+
+    `CommentService.add` 를 쓰지 않는 이유는 그쪽이 `issue.comment.add` 를
+    요구하기 때문이다 — 고객에게 그 권한을 주면 포털 밖의 이슈에도 코멘트를
+    달 수 있게 된다. `create_ticket` 과 같은 판단이다.
+
+    알림은 나간다: 상담원이 회신을 못 보면 티켓이 멈춘다.
+    """
+    from ieum.core.markdown import normalize as normalize_markdown
+    from ieum.core.outbox import publish
+    from ieum.modules.issues import events as issue_events
+    from ieum.modules.issues.models import IssueComment
+    from ieum.modules.issues.repository import CommentRepository
+
+    text = normalize_markdown(body)
+    if not text:
+        from ieum.core.exceptions import ValidationError
+
+        raise ValidationError("내용을 비울 수 없다.", code="issues.comment_empty")
+
+    issue = await IssueRepository(session).get(issue_id)
+    if issue is None:
+        from ieum.core.exceptions import NotFoundError
+
+        raise NotFoundError("요청을 찾을 수 없다.")
+
+    comment = CommentRepository(session).add(
+        IssueComment(issue_id=issue_id, author_id=actor.user_id, body=text, is_internal=False)
+    )
+    await session.flush()
+
+    project = await org.get_project(session, issue.project_id)
+    publish(
+        session,
+        issue_events.IssueCommented(
+            aggregate_id=issue.id,
+            project_id=issue.project_id,
+            issue_key=f"{project.key}-{issue.key_seq}" if project else "",
+            summary=issue.summary,
+            comment_id=comment.id,
+            actor_id=actor.user_id,
+            is_internal=False,
+            assignee_id=issue.assignee_id,
+            reporter_id=issue.reporter_id,
+            # 고객의 회신에서 멘션을 풀지 않는다. 고객은 내부 사람의 이름을
+            # 몰라야 하고, 본문에 `@` 를 적었다고 내부 사용자를 찾아 주면
+            # 그 자체가 이름을 확인해 주는 통로가 된다.
+            mentioned_ids=[],
+        ),
+    )
+    return PublicComment(
+        id=comment.id,
+        author_id=comment.author_id,
+        body=comment.body,
+        created_at=comment.created_at,
+        edited_at=comment.edited_at,
+    )

@@ -156,6 +156,8 @@ export {
 } from './notifications'
 export {
   createDeskApi,
+  type AgentTicket,
+  type AgentTicketEnvelope,
   type Answer,
   type CustomerMember,
   type CustomerOrg,
@@ -171,6 +173,8 @@ export {
   type PortalInfo,
   type PortalPatch,
   type PortalRequestType,
+  type Reply,
+  type Requester,
   type RequestType,
   type RequestTypePatch,
   type Ticket,
