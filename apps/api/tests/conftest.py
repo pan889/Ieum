@@ -101,14 +101,21 @@ async def session(engine: object) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def app_client(engine: object, settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
+async def app_client(
+    engine: object, settings: Settings, ready_store: ObjectStore
+) -> AsyncIterator[httpx.AsyncClient]:
     """시드까지 끝난 실제 앱에 붙은 HTTP 클라이언트.
 
     통합 테스트는 라우터·의존성·권한 배선까지 함께 봐야 의미가 있다.
     DB 세션은 dependency_overrides 로 갈아끼운다 — 모듈 전역을 건드리면
     테스트끼리 상태가 샌다.
+
+    스토리지도 갈아끼운다. 기본 설정은 개발용 MinIO 를 가리키는데 테스트
+    환경에는 없다 — 첨부가 얽힌 경로(임포트·내보내기)가 라우터까지 제대로
+    배선됐는지는 실제로 읽고 써 봐야만 알 수 있다.
     """
     from ieum.config import get_settings
+    from ieum.core.deps import get_object_store
     from ieum.db.session import get_db_session
     from ieum.main import create_app
     from ieum.seed import seed
@@ -127,6 +134,7 @@ async def app_client(engine: object, settings: Settings) -> AsyncIterator[httpx.
     app = create_app(settings)
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_db_session] = _override_session
+    app.dependency_overrides[get_object_store] = lambda: ready_store
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

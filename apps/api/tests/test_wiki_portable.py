@@ -20,8 +20,11 @@ import pytest
 from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import normalize
 from ieum.modules.wiki.portable import (
+    asset_folder,
     asset_targets,
+    attachment_targets,
     content_disposition,
+    encode_target,
     parse_document,
     read_archive,
     render_document,
@@ -329,3 +332,74 @@ class TestRewriteAssets:
 
     def test_nothing_to_do(self) -> None:
         assert rewrite_assets("![x](a.png)", {}) == "![x](a.png)"
+
+
+class TestAttachmentTargets:
+    """본문에 박힌 `attachment:` 참조 찾기. 내보내기가 여기서 담을 것을 정한다."""
+
+    ID = "0b1c2d3e-4f56-7890-abcd-ef0123456789"
+
+    def test_finds_the_id_and_the_filename(self) -> None:
+        refs = attachment_targets(f"![그림](attachment:{self.ID}/a.png)")
+        assert len(refs) == 1
+        assert str(refs[0].attachment_id) == self.ID
+        assert refs[0].filename == "a.png"
+        assert refs[0].target == f"attachment:{self.ID}/a.png"
+
+    def test_ignores_other_schemes(self) -> None:
+        body = "[이슈](issue:ABC-1) [문서](page:x) [웹](https://x.com/a.png) [상대](a.png)"
+        assert attachment_targets(body) == []
+
+    def test_skips_fenced_code(self) -> None:
+        """문법을 설명한 예시까지 담으면 안 된다."""
+        body = f"```md\n![예시](attachment:{self.ID}/a.png)\n```"
+        assert attachment_targets(body) == []
+
+    def test_decodes_the_filename(self) -> None:
+        refs = attachment_targets(f"![x](attachment:{self.ID}/%ED%95%9C%EA%B8%80.png)")
+        assert refs[0].filename == "한글.png"
+
+    def test_a_bare_id_has_no_filename(self) -> None:
+        """파일명 없이 id 만 박혀 있어도 담을 수 있어야 한다."""
+        refs = attachment_targets(f"![x](attachment:{self.ID})")
+        assert refs[0].filename == ""
+
+    def test_no_duplicates(self) -> None:
+        body = f"![1](attachment:{self.ID}/a.png) ![2](attachment:{self.ID}/a.png)"
+        assert len(attachment_targets(body)) == 1
+
+    def test_a_lookalike_is_not_a_uuid(self) -> None:
+        """글자 수만 맞는 것. 사람이 손으로 쓴 본문에 얼마든지 있을 수 있고,
+        내보내기가 여기서 터지면 스페이스 전체를 못 받는다."""
+        assert attachment_targets("[x](attachment:------------------------------------)") == []
+        assert attachment_targets("[x](attachment:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)") == []
+
+
+class TestAssetFolder:
+    def test_sits_beside_the_document(self) -> None:
+        """문서와 같은 자리라야 상대 경로가 그대로 맞는다."""
+        assert asset_folder("docs/guide") == "docs/guide.assets"
+
+    def test_does_not_collide_with_the_child_folder(self) -> None:
+        """하위 문서는 `docs/guide/` 로 들어간다. 첨부가 그 안에 섞이면 안 된다."""
+        assert not asset_folder("docs/guide").startswith("docs/guide/")
+
+
+class TestEncodeTarget:
+    """링크 대상 이스케이프. 최소한만 바꾼다."""
+
+    def test_leaves_readable_text_alone(self) -> None:
+        """`quote` 를 그대로 쓰면 한글 폴더명이 `%EC%95%88…` 이 된다."""
+        assert encode_target("안내.assets/1/그림.png") == "안내.assets/1/그림.png"
+
+    def test_escapes_what_breaks_the_link(self) -> None:
+        assert encode_target("a b.png") == "a%20b.png"
+        assert encode_target("x(1).png") == "x%281%29.png"
+
+    def test_round_trips_through_resolve(self) -> None:
+        for name in ("a b.png", "x(1).png", "100%.png", "한글.png"):
+            assert resolve_asset("guide.md", encode_target(name)) == name
+
+    def test_percent_goes_first(self) -> None:
+        """안 그러면 파일명의 `%20` 이 되돌릴 때 공백이 되어 다른 파일이 된다."""
+        assert resolve_asset("guide.md", encode_target("a%20b.png")) == "a%20b.png"

@@ -554,10 +554,18 @@ async def import_into_space(
 
 @spaces_router.get("/{space_id}/export")
 async def export_space(
-    space_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+    space_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    store: StorageDep,
 ) -> Response:
-    """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다."""
-    data = await PageService(session, permissions).export_space(actor, space_id)
+    """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다.
+
+    스토리지를 받는 이유는 첨부를 함께 담기 때문이다. 안 담으면 내보낸
+    묶음이 이 서버에 묶인다 — 옮긴 쪽에서 그림이 전부 깨진 채로.
+    """
+    data = await PageService(session, permissions, store=store).export_space(actor, space_id)
     space = await SpaceService(session, permissions).get(actor, space_id)
     return Response(
         content=data,

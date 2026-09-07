@@ -14,7 +14,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.core.attachments import Attachment
+from ieum.core.attachments import Attachment, AttachmentService
 from ieum.core.context import Actor
 from ieum.core.exceptions import (
     ConflictError,
@@ -34,7 +34,9 @@ from ieum.modules.org.models import Role
 from ieum.modules.org.repository import OrgPermissionResolver, RoleRepository
 from ieum.modules.wiki import attachments as wiki_attachments
 from ieum.modules.wiki import permissions as perms
+from ieum.modules.wiki import service as service_module
 from ieum.modules.wiki.models import Space
+from ieum.modules.wiki.portable import SKIPPED_MANIFEST
 from ieum.modules.wiki.service import (
     NewPage,
     PageCommentService,
@@ -1348,3 +1350,256 @@ class TestImportedAssets:
             actor, space_id=space.id, data=data
         )
         assert "a.png" in views[0].body
+
+
+class TestExportedAssets:
+    """내보낸 묶음에 첨부가 함께 담긴다.
+
+    안 담으면 내보내기가 이 서버에 묶인다 — 옮긴 쪽에서 그림이 전부 깨진 채로.
+    담고 나면 상대 경로가 되고, 다시 올릴 때 임포트가 도로 흡수한다(왕복).
+    """
+
+    @staticmethod
+    def _members(archive: bytes) -> dict[str, bytes]:
+        import io
+        import zipfile
+
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            return {name: zf.read(name) for name in zf.namelist()}
+
+    @staticmethod
+    def _names(archive: bytes) -> list[str]:
+        """중복까지 보이는 목록. dict 로 접으면 같은 이름 둘이 하나로 보인다."""
+        import io
+        import zipfile
+
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            return zf.namelist()
+
+    async def _page_with_image(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        space: Space,
+        store: ObjectStore,
+        *,
+        title: str = "안내",
+        data: bytes = b"\x89PNG\r\n\x1a\n" + b"0" * 32,
+    ) -> Attachment:
+        pages = PageService(session, permissions, store=store)
+        view = await pages.create(actor, NewPage(space_id=space.id, title=title, publish=True))
+        row = await AttachmentService(session, store).ingest(
+            actor,
+            owner_type=wiki_attachments.OWNER_PAGE,
+            owner_id=view.page.id,
+            filename="a.png",
+            mime="image/png",
+            data=data,
+        )
+        await pages.update(actor, view.page.id, body=f"![그림](attachment:{row.id}/a.png)")
+        return row
+
+    async def test_attachment_travels_with_the_document(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        blob = b"\x89PNG\r\n\x1a\n" + b"pixels"
+        row = await self._page_with_image(
+            session, permissions, actor, space, ready_store, data=blob
+        )
+
+        archive = await PageService(session, permissions, store=ready_store).export_space(
+            actor, space.id
+        )
+        members = self._members(archive)
+
+        # 문서 옆 폴더에 둔다. id 를 한 겹 끼워 같은 이름끼리 덮어쓰지 않게.
+        assert members[f"안내.assets/{row.id}/a.png"] == blob
+        # 본문은 상대 경로로 돌아온다 — 서명된 주소도, 스킴도 아니다.
+        assert f"](안내.assets/{row.id}/a.png)" in members["안내.md"].decode()
+        assert "attachment:" not in members["안내.md"].decode()
+
+    async def test_nested_document_keeps_the_link_relative(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """`docs/guide.md` 의 첨부는 `docs/guide.assets/…` 에. 상대 경로는
+        `guide.assets/…` 여야 한다 — 문서 위치를 기준으로 풀리기 때문이다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions, store=ready_store)
+        parent = await pages.create(actor, NewPage(space_id=space.id, title="docs", publish=True))
+        child = await pages.create(
+            actor,
+            NewPage(space_id=space.id, title="guide", parent_id=parent.page.id, publish=True),
+        )
+        row = await AttachmentService(session, ready_store).ingest(
+            actor,
+            owner_type=wiki_attachments.OWNER_PAGE,
+            owner_id=child.page.id,
+            filename="a.png",
+            mime="image/png",
+            data=b"\x89PNG" + b"0" * 16,
+        )
+        await pages.update(actor, child.page.id, body=f"![그림](attachment:{row.id}/a.png)")
+
+        members = self._members(await pages.export_space(actor, space.id))
+        assert f"docs/guide.assets/{row.id}/a.png" in members
+        assert f"](guide.assets/{row.id}/a.png)" in members["docs/guide.md"].decode()
+
+    async def test_export_then_import_restores_the_attachment(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """왕복이 닫힌다. 여기가 안 닫히면 옮길 때마다 그림을 잃는다."""
+        actor = await full_access(session, user, space)
+        blob = b"\x89PNG\r\n\x1a\n" + b"round-trip"
+        row = await self._page_with_image(
+            session, permissions, actor, space, ready_store, data=blob
+        )
+        pages = PageService(session, permissions, store=ready_store)
+        archive = await pages.export_space(actor, space.id)
+
+        other = Space(key=f"T{new_id().hex[:6].upper()}", name="Copy")
+        session.add(other)
+        await session.flush()
+        target = await full_access(session, user, other)
+        restored = await pages.import_archive(target, space_id=other.id, data=archive)
+
+        rows = (
+            (
+                await session.execute(
+                    select(Attachment).where(Attachment.owner_id == restored[0].page.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [r.filename for r in rows] == ["a.png"]
+        assert rows[0].id != row.id
+        assert await ready_store.get(rows[0].storage_key) == blob
+        assert f"attachment:{rows[0].id}/a.png" in restored[0].body
+
+    async def test_oversized_attachment_is_skipped_and_listed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """조용히 빠지면 옮긴 쪽에서 영영 모른다. 본문도 손대지 않는다 —
+        주소만 바꿔 놓고 파일을 안 담으면 깨진 링크가 된다."""
+        monkeypatch.setattr(service_module, "MAX_EXPORT_ASSET_BYTES", 8)
+        actor = await full_access(session, user, space)
+        row = await self._page_with_image(
+            session, permissions, actor, space, ready_store, data=b"\x89PNG" + b"0" * 64
+        )
+
+        members = self._members(
+            await PageService(session, permissions, store=ready_store).export_space(actor, space.id)
+        )
+        assert not any(name.endswith("a.png") for name in members)
+        manifest = members[SKIPPED_MANIFEST].decode()
+        assert f"attachment:{row.id}/a.png" in manifest
+        assert "안내.md" in manifest
+        assert f"attachment:{row.id}/a.png" in members["안내.md"].decode()
+
+    async def test_nothing_is_skipped_when_everything_fits(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        await self._page_with_image(session, permissions, actor, space, ready_store)
+        members = self._members(
+            await PageService(session, permissions, store=ready_store).export_space(actor, space.id)
+        )
+        assert SKIPPED_MANIFEST not in members
+
+    async def test_a_deleted_attachment_leaves_the_body_alone(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """읽을 수 없는 첨부의 주소를 바꾸면 무엇이 있었는지도 사라진다."""
+        actor = await full_access(session, user, space)
+        row = await self._page_with_image(session, permissions, actor, space, ready_store)
+        await AttachmentService(session, ready_store).delete(actor, row.id)
+
+        members = self._members(
+            await PageService(session, permissions, store=ready_store).export_space(actor, space.id)
+        )
+        assert f"attachment:{row.id}/a.png" in members["안내.md"].decode()
+        assert not any(".assets/" in name for name in members)
+
+    async def test_one_attachment_two_references_is_packed_once(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """같은 첨부를 두 표기로 가리킬 수 있다. 두 번 담으면 ZIP 에 같은
+        이름이 두 개 들어가고 상한도 두 배로 깎인다."""
+        actor = await full_access(session, user, space)
+        row = await self._page_with_image(session, permissions, actor, space, ready_store)
+        pages = PageService(session, permissions, store=ready_store)
+        page = (await pages.get_by_path(actor, space.key, "안내")).page
+        await pages.update(
+            actor,
+            page.id,
+            body=f"![1](attachment:{row.id}/a.png) [2](attachment:{row.id})",
+        )
+
+        archive = await pages.export_space(actor, space.id)
+        assert [n for n in self._names(archive) if n.endswith("a.png")] == [
+            f"안내.assets/{row.id}/a.png"
+        ]
+        body = self._members(archive)["안내.md"].decode()
+        assert body.count(f"안내.assets/{row.id}/a.png") == 2
+
+    async def test_without_a_store_the_scheme_stays(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """스토리지가 없으면 손대지 않는다. 링크를 지우는 것보다 낫다."""
+        actor = await full_access(session, user, space)
+        row = await self._page_with_image(session, permissions, actor, space, ready_store)
+        members = self._members(
+            await PageService(session, permissions).export_space(actor, space.id)
+        )
+        assert f"attachment:{row.id}/a.png" in members["안내.md"].decode()

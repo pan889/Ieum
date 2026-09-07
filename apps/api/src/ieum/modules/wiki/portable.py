@@ -15,9 +15,11 @@ import posixpath
 import re
 import unicodedata
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, unquote
+from uuid import UUID
 
 import yaml
 
@@ -34,6 +36,12 @@ _FIRST_H1 = re.compile(r"^#[ \t]+(.+?)[ \t]*#*[ \t]*$", re.MULTILINE)
 #: 묶음 하나에 담을 수 있는 파일 수. 사고로 올린 큰 ZIP 이 워커를 잡지 않게.
 MAX_ARCHIVE_FILES = 500
 MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
+
+#: 내보내기에 함께 담을 첨부의 총량. 넘치면 그 파일만 빼고, 뺀 목록을
+#: 묶음 안에 적어 둔다 — 조용히 빠지면 옮긴 쪽에서 영영 모른다.
+MAX_EXPORT_ASSET_BYTES = 40 * 1024 * 1024
+#: 뺀 첨부를 적어 두는 파일.
+SKIPPED_MANIFEST = "_SKIPPED_ATTACHMENTS.txt"
 
 _MD_SUFFIXES = (".md", ".markdown")
 
@@ -150,6 +158,20 @@ _FENCE = re.compile(r"^\s{0,3}(```+|~~~+)")
 _SCHEME = re.compile(r"\A[a-zA-Z][a-zA-Z0-9+.-]*:")
 
 
+#: 본문에 박힌 첨부 참조. 저장은 스킴으로 한다 — 서명된 주소는 몇 분 뒤 죽고,
+#: 내보낸 `.md` 가 그 서버에 묶인다 (web 의 markdown/attachments.ts 와 짝).
+_ATTACHMENT = re.compile(r"\Aattachment:([0-9a-fA-F-]{36})(?:/(.*))?\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentRef:
+    """본문 한 곳이 가리키는 첨부. `target` 은 본문에 적힌 글자 그대로다."""
+
+    target: str
+    attachment_id: UUID
+    filename: str
+
+
 @dataclass(frozen=True, slots=True)
 class Archive:
     """묶음에서 꺼낸 것. 문서와, 문서가 가리킬 수 있는 나머지 파일들."""
@@ -159,8 +181,8 @@ class Archive:
     assets: dict[str, bytes]
 
 
-def asset_targets(body: str) -> list[str]:
-    """본문이 가리키는 **상대 경로** 목록. 등장 순서대로, 중복 없이.
+def link_targets(body: str) -> list[str]:
+    """본문이 가리키는 대상 전부. 등장 순서대로, 중복 없이.
 
     울타리 안은 건너뛴다 — 문법을 설명한 코드 예시가 링크로 읽히면 안 된다
     (links.py 와 같은 이유).
@@ -186,12 +208,42 @@ def asset_targets(body: str) -> list[str]:
                 target = target[1:-1].strip()
             if not target or target in seen:
                 continue
-            # 스킴이 있거나(`https:`·`attachment:`) 절대 경로면 우리 파일이 아니다.
-            if _SCHEME.match(target) or target.startswith(("/", "#")):
-                continue
             seen.add(target)
             found.append(target)
     return found
+
+
+def asset_targets(body: str) -> list[str]:
+    """본문이 가리키는 **상대 경로**만. 임포트가 흡수할 후보다."""
+    # 스킴이 있거나(`https:`·`attachment:`) 절대 경로면 우리 파일이 아니다.
+    return [
+        target
+        for target in link_targets(body)
+        if not _SCHEME.match(target) and not target.startswith(("/", "#"))
+    ]
+
+
+def attachment_targets(body: str) -> list[AttachmentRef]:
+    """본문에 박힌 `attachment:<id>/<파일명>` 참조. 내보내기가 쓴다."""
+    refs: list[AttachmentRef] = []
+    for target in link_targets(body):
+        match = _ATTACHMENT.match(target)
+        if match is None:
+            continue
+        try:
+            attachment_id = UUID(match.group(1))
+        except ValueError:
+            # 글자 수만 맞고 UUID 는 아니다. 사람이 손으로 쓴 본문이므로
+            # 얼마든지 있을 수 있다 — 내보내기가 여기서 터지면 안 된다.
+            continue
+        refs.append(
+            AttachmentRef(
+                target=target,
+                attachment_id=attachment_id,
+                filename=unquote(match.group(2) or ""),
+            )
+        )
+    return refs
 
 
 def resolve_asset(document_path: str, target: str) -> str | None:
@@ -205,6 +257,32 @@ def resolve_asset(document_path: str, target: str) -> str | None:
     if resolved.startswith("../") or resolved in {"..", "."} or resolved.startswith("/"):
         return None
     return resolved
+
+
+def asset_folder(page_path: str) -> str:
+    """문서 옆에 두는 첨부 폴더. `docs/guide.md` → `docs/guide.assets`.
+
+    문서 파일과 같은 자리에 두어야 다시 올렸을 때 상대경로가 그대로 맞는다.
+    하위 문서 폴더(`docs/guide/`)와도 겹치지 않는다.
+    """
+    return f"{page_path}.assets"
+
+
+#: 링크 대상에 그대로 두면 문법이 깨지는 글자. 나머지는 손대지 않는다 —
+#: `quote` 를 그대로 쓰면 `안내.assets` 가 `%EC%95%88…` 이 되어 사람이 못 읽는다.
+_UNSAFE_IN_TARGET = {" ": "%20", "(": "%28", ")": "%29", "<": "%3C", ">": "%3E"}
+
+
+def encode_target(path: str) -> str:
+    """링크 대상으로 쓸 수 있게 **최소한만** 이스케이프한다.
+
+    `resolve_asset` 이 되돌린다(unquote). `%` 를 먼저 바꾸지 않으면 파일명에
+    있던 `%20` 이 되돌릴 때 공백이 되어 다른 파일을 가리킨다.
+    """
+    out = path.replace("%", "%25")
+    for char, escaped in _UNSAFE_IN_TARGET.items():
+        out = out.replace(char, escaped)
+    return out
 
 
 def rewrite_assets(body: str, replacements: dict[str, str]) -> str:
@@ -333,8 +411,11 @@ def content_disposition(filename: str) -> str:
     return f"attachment; filename=\"{safe_stem}{safe_ext}\"; filename*=UTF-8''{quoted}"
 
 
-def write_archive(files: list[tuple[str, str]]) -> bytes:
-    """`(경로, 내용)` 목록을 ZIP 으로. 경로에는 `.md` 가 이미 붙어 있어야 한다."""
+def write_archive(files: Sequence[tuple[str, str | bytes]]) -> bytes:
+    """`(경로, 내용)` 목록을 ZIP 으로.
+
+    글자와 바이트를 함께 담는다 — 문서 옆에 그 문서의 첨부가 들어간다.
+    """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for path, content in files:
@@ -343,11 +424,18 @@ def write_archive(files: list[tuple[str, str]]) -> bytes:
 
 
 __all__ = [
+    "MAX_EXPORT_ASSET_BYTES",
+    "SKIPPED_MANIFEST",
     "Archive",
     "ArchiveEntry",
+    "AttachmentRef",
     "ParsedDocument",
+    "asset_folder",
     "asset_targets",
+    "attachment_targets",
     "content_disposition",
+    "encode_target",
+    "link_targets",
     "parse_document",
     "read_archive",
     "render_document",

@@ -161,6 +161,25 @@ class ObjectStore:
 
         await asyncio.to_thread(_put)
 
+    async def get(self, key: str) -> bytes | None:
+        """객체를 통째로 읽는다. 없으면 None.
+
+        내보내기가 쓴다. 첨부 상한이 있어 한 파일이 메모리를 삼키지 않는다.
+        """
+
+        def _get() -> bytes | None:
+            try:
+                response = self._client.get_object(Bucket=self._bucket, Key=key)
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code")
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    return None
+                raise
+            body: bytes = response["Body"].read()
+            return body
+
+        return await asyncio.to_thread(_get)
+
     async def delete(self, key: str) -> None:
         def _delete() -> None:
             self._client.delete_object(Bucket=self._bucket, Key=key)

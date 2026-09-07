@@ -239,6 +239,25 @@ class AttachmentService:
         log.info("attachment.ingested", attachment=str(row.id), size=row.size)
         return row
 
+    async def read(self, actor: Actor, attachment_id: UUID) -> tuple[Attachment, bytes] | None:
+        """첨부 행과 실제 내용. 볼 수 없거나 사라졌으면 None.
+
+        행을 함께 준다 — 파일명을 부르는 쪽에서 지어내면 안 되기 때문이다.
+        본문에 적힌 이름은 사람이 고칠 수 있고, 거기에 `../` 가 섞이면
+        내보낸 묶음이 폴더 밖으로 새어 나간다.
+
+        내보내기가 쓴다. 브라우저는 서명된 주소로 직접 받으므로 이 길을
+        타지 않는다 — 서버를 경유하면 큰 파일이 워커를 붙잡는다.
+        """
+        row = await self._s.get(Attachment, attachment_id)
+        if row is None or row.status != STATUS_READY:
+            return None
+        resolver = _resolver_for(row.owner_type)
+        if not await resolver.can_view(self._s, actor, row.owner_id):
+            return None
+        data = await self._store.get(row.storage_key)
+        return None if data is None else (row, data)
+
     async def list_for(self, actor: Actor, owner_type: str, owner_id: UUID) -> list[Attachment]:
         resolver = _resolver_for(owner_type)
         if not await resolver.can_view(self._s, actor, owner_id):

@@ -59,8 +59,13 @@ from ieum.modules.wiki.models import (
     Space,
 )
 from ieum.modules.wiki.portable import (
+    MAX_EXPORT_ASSET_BYTES,
+    SKIPPED_MANIFEST,
     ArchiveEntry,
+    asset_folder,
     asset_targets,
+    attachment_targets,
+    encode_target,
     parse_document,
     read_archive,
     render_document,
@@ -291,6 +296,17 @@ def _kind_of(front_matter: dict[str, Any]) -> str:
 def _with_kind(front_matter: dict[str, Any], kind: str) -> dict[str, Any]:
     """보통 문서에는 안 적는다. 기본값을 적으면 모든 파일이 지저분해진다."""
     return front_matter if kind == "page" else {**front_matter, "kind": kind}
+
+
+def _skipped_manifest(lines: list[str]) -> str:
+    """내보내기에서 빠진 첨부의 목록. 사람이 읽고 손으로 옮길 수 있게."""
+    header = (
+        "These attachments were not included in the export because the archive\n"
+        f"would exceed {MAX_EXPORT_ASSET_BYTES} bytes of attachments.\n"
+        "Download them from the original site.\n\n"
+        "page\treference\tsize\n"
+    )
+    return header + "\n".join(lines) + "\n"
 
 
 async def resolve_page_mentions(
@@ -1033,21 +1049,30 @@ class PageService:
         return f"{view.page.slug}.md", content
 
     async def export_space(self, actor: Actor, space_id: UUID) -> bytes:
-        """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다."""
+        """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다.
+
+        첨부도 함께 담고 본문의 `attachment:` 를 상대 경로로 되돌린다. 안 하면
+        내보낸 묶음이 이 서버에 묶인다 — 그림이 전부 깨진 채로. 다시 올리면
+        임포트가 상대 경로를 도로 첨부로 흡수하므로(`_absorb_assets`) 왕복이
+        닫힌다.
+        """
         space = await self._require_space(space_id)
         await self._perms.require(self._s, actor, perms.PAGE_VIEW, scope=Scope.space(space.id))
         # 블로그 글도 담는다. 안 담으면 내보내기가 문서의 일부를 조용히 잃는다.
         rows = await self._visible(actor, await self._pages.tree_of(space.id, kind=None))
 
-        files: list[tuple[str, str]] = []
+        files: list[tuple[str, str | bytes]] = []
+        skipped: list[str] = []
+        budget = MAX_EXPORT_ASSET_BYTES
         for page in rows:
             view = await self.to_view(page, space=space)
+            body, budget = await self._pack_assets(actor, page, view.body, files, budget, skipped)
             files.append(
                 (
                     f"{page.path}.md",
                     render_document(
                         title=page.title,
-                        body=view.body,
+                        body=body,
                         labels=view.labels,
                         front_matter=_with_kind(
                             view.current.front_matter if view.current else {}, page.kind
@@ -1055,7 +1080,67 @@ class PageService:
                     ),
                 )
             )
+        if skipped:
+            # 조용히 빠지면 옮긴 쪽에서 영영 모른다. 무엇이 왜 빠졌는지 적는다.
+            files.append((SKIPPED_MANIFEST, _skipped_manifest(skipped)))
         return write_archive(files)
+
+    async def _pack_assets(
+        self,
+        actor: Actor,
+        page: Page,
+        body: str,
+        files: list[tuple[str, str | bytes]],
+        budget: int,
+        skipped: list[str],
+    ) -> tuple[str, int]:
+        """문서의 첨부를 묶음에 담고, 본문 주소를 상대 경로로 바꾼다.
+
+        `docs/guide.md` 의 첨부는 `docs/guide.assets/<id>/<파일명>` 에 둔다.
+        문서와 같은 폴더라 상대 경로가 그대로 맞고, 하위 문서 폴더와도
+        겹치지 않는다. id 를 한 겹 끼우는 것은 같은 이름의 파일 둘이 서로를
+        덮어쓰지 않게 하기 위해서다.
+
+        총량을 넘기거나 읽을 수 없는 첨부는 **본문을 그대로 둔다** — 주소만
+        바꿔 놓고 파일을 안 담으면 깨진 링크가 되고, 무엇이 있었는지도 사라진다.
+        """
+        store = self._store
+        if store is None:
+            return body, budget
+        refs = attachment_targets(body)
+        if not refs:
+            return body, budget
+
+        attachments = AttachmentService(self._s, store)
+        folder = asset_folder(page.path)
+        relative_base = posixpath.basename(folder)
+        replacements: dict[str, str] = {}
+        # 같은 첨부를 두 가지 표기로 가리킬 수 있다(`attachment:<id>` 와
+        # `attachment:<id>/a.png`). 한 번만 담는다 — 두 번 담으면 ZIP 에 같은
+        # 이름이 두 개 들어가고 상한도 두 배로 깎인다.
+        packed: dict[UUID, str] = {}
+        for ref in refs:
+            done = packed.get(ref.attachment_id)
+            if done is not None:
+                replacements[ref.target] = done
+                continue
+            found = await attachments.read(actor, ref.attachment_id)
+            if found is None:
+                # 지워졌거나 볼 수 없는 첨부다. 본문은 손대지 않는다.
+                continue
+            row, data = found
+            if len(data) > budget:
+                skipped.append(f"{page.path}.md\t{ref.target}\t{len(data)} bytes")
+                continue
+            budget -= len(data)
+            # 파일명은 **행에서** 가져온다. 본문에 적힌 이름은 사람이 고칠 수
+            # 있고, 거기에 `../` 가 섞이면 묶음이 폴더 밖으로 새어 나간다.
+            inner = f"{row.id}/{row.filename}"
+            files.append((f"{folder}/{inner}", data))
+            packed[ref.attachment_id] = encode_target(f"{relative_base}/{inner}")
+            replacements[ref.target] = packed[ref.attachment_id]
+
+        return rewrite_assets(body, replacements), budget
 
     async def compare(
         self, actor: Actor, page_id: UUID, *, before: int, after: int

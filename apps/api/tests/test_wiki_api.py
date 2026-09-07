@@ -305,6 +305,41 @@ class TestImportExport:
             assert archive.namelist() == ["one.md"]
             assert b"title: One" in archive.read("one.md")
 
+    async def test_attachments_travel_in_the_zip(self, app_client: httpx.AsyncClient) -> None:
+        """ZIP → 첨부 → ZIP. 라우터까지 배선돼 있어야 왕복이 닫힌다.
+
+        내보내기에 스토리지를 안 물리면 조용히 텍스트만 나간다 — 옮긴 쪽에서
+        그림이 전부 깨진 채로. 서비스 테스트만으로는 그 배선을 못 잡는다.
+        """
+        headers = await _auth(app_client)
+        space = await _space(app_client, headers)
+        blob = b"\x89PNG\r\n\x1a\n" + b"pixels"
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("guide.md", "# 안내\n\n![그림](images/a.png)\n")
+            archive.writestr("images/a.png", blob)
+        imported = await app_client.post(
+            f"{BASE}/spaces/{space['id']}/import",
+            files={"file": ("bundle.zip", buffer.getvalue(), "application/zip")},
+            headers=headers,
+        )
+        assert imported.status_code == 200, imported.text
+        assert "attachment:" in imported.json()[0]["body"]
+        # 제목은 첫 H1 에서 온다. 파일명이 아니라 그 제목이 경로를 정한다.
+        path = imported.json()[0]["path"]
+
+        exported = await app_client.get(f"{BASE}/spaces/{space['id']}/export", headers=headers)
+        assert exported.status_code == 200, exported.text
+        with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+            images = [n for n in archive.namelist() if n.endswith("a.png")]
+            assert len(images) == 1, archive.namelist()
+            assert archive.read(images[0]) == blob
+            body = archive.read(f"{path}.md").decode()
+        # 스킴이 아니라 상대 경로로 나간다. 그래야 다시 올렸을 때 붙는다.
+        assert "attachment:" not in body
+        assert f"{path}.assets/" in body
+
     async def test_non_utf8_upload_is_rejected(self, app_client: httpx.AsyncClient) -> None:
         """추측해서 열면 깨진 글자가 문서로 들어앉고 되돌릴 방법이 없다."""
         headers = await _auth(app_client)

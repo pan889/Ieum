@@ -215,6 +215,64 @@ test('묶음 안의 그림이 첨부가 되고 실제로 뜬다', async ({ page,
   expect(consoleErrors).toEqual([])
 })
 
+test('내보낸 ZIP 에 그림이 함께 담겨 되올려도 뜬다', async ({ page, consoleErrors }) => {
+  const source = spaceKey()
+  await signIn(page)
+  await createSpace(page, source)
+  await page.goto(`/wiki/${source}`)
+
+  await importFile(page, {
+    name: 'assets.zip',
+    mimeType: 'application/zip',
+    buffer: zip([
+      ['docs/guide.md', '# 안내\n\n![그림](images/dot.png)\n'],
+      ['docs/images/dot.png', DOT_PNG],
+    ]),
+  })
+  await page.getByRole('link', { name: '안내' }).click()
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  const original = /attachment:([0-9a-f-]+)\/dot\.png/.exec(
+    (await (await bodyField(page)).inputValue()),
+  )?.[1]
+  expect(original).toBeTruthy()
+  await page.goto(`/wiki/${source}`)
+
+  const saved = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export ZIP' }).click()
+  const archive = await (await saved).path()
+
+  // 되올린다. 그림이 안 담겼으면 여기서 깨진 링크가 된다 — 옮긴 쪽에서는
+  // 원본 서버에 다시 갈 방법이 없다.
+  const target = spaceKey()
+  await createSpace(page, target)
+  await page.goto(`/wiki/${target}`)
+  await importFile(page, {
+    name: 'roundtrip.zip',
+    mimeType: 'application/zip',
+    buffer: await readFile(archive),
+  })
+
+  await page.getByRole('link', { name: '안내' }).click()
+  const image = page.locator('article img').first()
+  await expect(image).toBeVisible()
+  // 주소만 맞고 못 받는 경우가 있다. 픽셀이 실제로 있어야 한다.
+  await expect
+    .poll(async () => image.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0))
+    .toBe(true)
+
+  // 새 스페이스의 **새 첨부**로 붙었다. 여기가 원본 id 그대로면 내보내기가
+  // 그림을 안 담은 것이다 — 원본 스페이스를 지우는 순간 함께 사라진다.
+  // 같은 서버에서 되올리는 동안에는 그림이 멀쩡히 보이므로 눈으로는 못 잡는다.
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  const copied = /attachment:([0-9a-f-]+)\/dot\.png/.exec(
+    (await (await bodyField(page)).inputValue()),
+  )?.[1]
+  expect(copied).toBeTruthy()
+  expect(copied).not.toBe(original)
+
+  expect(consoleErrors).toEqual([])
+})
+
 function zip(files: [string, string | Buffer][]): Buffer {
   const locals: Buffer[] = []
   const centrals: Buffer[] = []
