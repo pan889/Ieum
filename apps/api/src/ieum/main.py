@@ -9,8 +9,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 from starlette.responses import Response
@@ -44,6 +45,8 @@ from ieum.modules.identity.router import (
     tokens_router,
     users_router,
 )
+from ieum.modules.identity.scim import ScimError
+from ieum.modules.identity.scim_router import scim_router
 from ieum.modules.issues import attachments as issue_attachments
 from ieum.modules.issues.board_router import boards_router
 from ieum.modules.issues.contracts import issue_model
@@ -184,6 +187,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         portal_router,
     ):
         app.include_router(router, prefix=API_PREFIX)
+
+    # SCIM 은 **접두사 없이** 붙는다. `/scim/v2` 는 IdP 가 기대하는 경로이고,
+    # `/api/v1` 아래로 옮기면 Okta·Entra 의 설정 화면이 받아 주지 않는다.
+    app.include_router(scim_router)
+
+    # 그리고 오류도 SCIM 봉투로 나가야 한다. 우리 봉투를 주면 IdP 는 인증
+    # 실패인지 서버 오류인지 구별하지 못하고, 대개 재시도 고리에 빠진다.
+    @app.exception_handler(ScimError)
+    async def _scim_error(_: Request, exc: ScimError) -> JSONResponse:
+        return JSONResponse(exc.body(), status_code=exc.status, media_type="application/scim+json")
 
     return app
 

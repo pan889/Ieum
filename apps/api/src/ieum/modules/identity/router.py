@@ -52,6 +52,7 @@ from ieum.modules.identity.schemas import (
     SamlHandoffRequest,
     SamlProviderCreateRequest,
     SamlProviderUpdateRequest,
+    ScimTokenResponse,
     SessionResponse,
     SsoCallbackRequest,
     SsoProviderCreateRequest,
@@ -1019,6 +1020,44 @@ async def update_saml_provider(
     )
     await session.commit()
     return IdpResponse.of(provider)
+
+
+@sso_admin_router.post("/providers/{provider_id}/scim-token", response_model=ScimTokenResponse)
+async def issue_scim_token(
+    provider_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> ScimTokenResponse:
+    """프로비저닝 토큰을 발급한다. **평문은 이 응답에서만 나온다.**
+
+    새로 발급하면 옛 토큰은 그 자리에서 죽는다 — 유출된 토큰을 확실히 끊는
+    유일한 방법이 재발급이기 때문이다.
+    """
+    raw = await IdentityProviderService(session, settings, permissions).issue_scim_token(
+        actor, provider_id
+    )
+    await session.commit()
+    return ScimTokenResponse(token=raw)
+
+
+@sso_admin_router.delete(
+    "/providers/{provider_id}/scim-token", status_code=status.HTTP_204_NO_CONTENT
+)
+async def stop_scim(
+    provider_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> Response:
+    """프로비저닝을 멈춘다. 토큰은 그대로 두고 문만 닫는다."""
+    await IdentityProviderService(session, settings, permissions).set_scim_enabled(
+        actor, provider_id, enabled=False
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @sso_admin_router.post("/providers/{provider_id}/disable", status_code=status.HTTP_204_NO_CONTENT)

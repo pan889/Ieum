@@ -16,11 +16,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { NewIdentityProvider, NewSamlProvider } from '@ieum/api-client'
+import type { IdentityProvider, NewIdentityProvider, NewSamlProvider } from '@ieum/api-client'
 
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { idpApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { formatDateTime } from '@/features/issues/format'
 import { Alert, Button, Card, Field, Select, Textarea } from '@/shared/ui/primitives'
 
 type Kind = 'oidc' | 'saml'
@@ -377,10 +378,100 @@ export function SsoScreen() {
                   {provider.is_enabled ? t('admin:sso.disable') : t('admin:sso.enable')}
                 </Button>
               </Card>
+              <Provisioning provider={provider} />
             </li>
           ))}
         </ul>
       )}
     </section>
+  )
+}
+
+/**
+ * SCIM 프로비저닝 (M4).
+ *
+ * SSO 와 **같은 줄에** 둔다. IdP 한 곳이 로그인과 계정 밀어넣기를 함께
+ * 담당하고, 관리자는 그 둘을 같은 화면에서 설정한다(Okta·Entra 도 앱 하나
+ * 안에서 그렇게 한다).
+ *
+ * **토큰은 발급 직후 한 번만 보여 준다.** 다시 볼 방법이 없어야 재발급이
+ * 유일한 복구 방법이 되고, 그러면 유출된 토큰은 반드시 죽는다 — PAT 과 같은
+ * 규약이다. 화면도 그 사실을 말해 준다.
+ */
+function Provisioning({ provider }: { provider: IdentityProvider }) {
+  const { t } = useTranslation(['admin', 'common'])
+  const queryClient = useQueryClient()
+  const [issued, setIssued] = useState<string | null>(null)
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['idp'] })
+  const issue = useMutation({
+    mutationFn: () => idpApi.issueScimToken(provider.id),
+    onSuccess: async (found) => {
+      setIssued(found.token)
+      await refresh()
+    },
+  })
+  const stop = useMutation({
+    mutationFn: () => idpApi.stopScim(provider.id),
+    onSuccess: async () => {
+      setIssued(null)
+      await refresh()
+    },
+  })
+
+  return (
+    <div className="mt-1 flex flex-col gap-1 border-l-2 border-border pl-3 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-fg">{t('admin:scim.title')}</span>
+        <span className="text-muted">
+          {provider.scim_enabled
+            ? t('admin:scim.on')
+            : provider.scim_has_token
+              ? t('admin:scim.paused')
+              : t('admin:scim.off')}
+        </span>
+        {/* **마지막으로 온 시각을 말한다.** 안 보이면 프로비저닝이 도는지
+            확인할 방법이 없다 — 메일 채널과 같은 판단이다. */}
+        <span className="text-muted">
+          {provider.scim_last_seen_at
+            ? t('admin:scim.lastSeen', { when: formatDateTime(provider.scim_last_seen_at) })
+            : t('admin:scim.neverSeen')}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          className="ml-auto text-xs"
+          loading={issue.isPending}
+          onClick={() => { issue.mutate() }}
+        >
+          {provider.scim_has_token ? t('admin:scim.reissue') : t('admin:scim.issue')}
+        </Button>
+        {provider.scim_enabled ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-xs"
+            loading={stop.isPending}
+            onClick={() => { stop.mutate() }}
+          >
+            {t('admin:scim.stop')}
+          </Button>
+        ) : null}
+      </div>
+
+      {issue.isError ? <Alert>{describeError(issue.error)}</Alert> : null}
+      {stop.isError ? <Alert>{describeError(stop.error)}</Alert> : null}
+
+      {issued !== null ? (
+        <div className="flex flex-col gap-1 rounded-md border border-border bg-surface p-2">
+          <p className="text-muted">{t('admin:scim.tokenOnce')}</p>
+          {/* 고르기 쉬워야 한다. IdP 설정 화면에 붙여 넣을 값이다. */}
+          <code className="break-all font-mono text-xs text-fg">{issued}</code>
+          <p className="text-muted">
+            {t('admin:scim.endpoint', { url: `${location.origin}/scim/v2` })}
+          </p>
+        </div>
+      ) : null}
+    </div>
   )
 }

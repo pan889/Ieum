@@ -353,6 +353,16 @@ class SamlHandoffRequest(BaseModel):
     code: str = Field(min_length=1, max_length=512)
 
 
+class ScimTokenResponse(BaseModel):
+    """발급한 프로비저닝 토큰. **한 번만 나온다.**
+
+    다시 볼 방법이 없어야 재발급이 유일한 복구 방법이 되고, 그러면 유출된
+    토큰은 반드시 죽는다 — PAT 과 같은 규약이다.
+    """
+
+    token: str
+
+
 class IdpResponse(BaseModel):
     """관리 화면용. **시크릿은 절대 나가지 않는다** — 저장도 암호문뿐이다."""
 
@@ -375,6 +385,13 @@ class IdpResponse(BaseModel):
     saml_certificate_count: int = 0
     saml_allow_idp_initiated: bool = False
     saml_want_encrypted: bool = False
+    #: SCIM 프로비저닝 (M4). **토큰은 안 나간다** — 발급할 때 한 번만 보인다.
+    scim_enabled: bool = False
+    #: 토큰이 있는가. 없으면 화면은 "아직 발급 안 함" 을 보여 준다.
+    scim_has_token: bool = False
+    #: IdP 가 마지막으로 두드린 시각. **비어 있으면 한 번도 안 왔다** —
+    #: 프로비저닝이 도는지 확인할 유일한 증거다.
+    scim_last_seen_at: datetime | None = None
 
     @classmethod
     def of(cls, provider: Any) -> IdpResponse:
@@ -394,4 +411,7 @@ class IdpResponse(BaseModel):
             saml_certificate_count=len(provider.saml_certificates or []),
             saml_allow_idp_initiated=provider.saml_allow_idp_initiated,
             saml_want_encrypted=provider.saml_want_encrypted,
+            scim_enabled=provider.scim_enabled,
+            scim_has_token=provider.scim_token_hash is not None,
+            scim_last_seen_at=provider.scim_last_seen_at,
         )

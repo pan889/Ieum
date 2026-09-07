@@ -50,9 +50,25 @@ class User(Entity):
     #: 조직·역할 정책과 무관하게 이 사용자에게 MFA 를 강제한다
     require_mfa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    #: 이 계정을 밀어 넣은 IdP. `NULL` 이면 SCIM 이 만든 계정이 아니다.
+    #:
+    #: **누가 만들었는지를 적어 두는 이유는 지우는 쪽 때문이다.** IdP 가
+    #: 둘이면(예: 협력사) 한쪽의 토큰으로 다른 쪽 계정을 비활성화할 수 있으면
+    #: 안 된다 — 프로비저닝은 조용히 돌고, 그런 사고는 며칠 뒤에 발견된다.
+    scim_provider_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("identity_provider.id", ondelete="SET NULL"), nullable=True
+    )
+    #: 그 IdP 가 이 사람을 부르는 id (`externalId`). 우리 id 와 다르다.
+    scim_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     __table_args__ = (
         CheckConstraint(status.in_(USER_STATUSES), name="user_status"),
         Index("ix_user_active", "status", postgresql_where=text("status = 'active'")),
+        # 같은 IdP 가 같은 사람을 두 번 밀어 넣지 못하게 한다. 막지 않으면
+        # 재시도 한 번에 계정이 둘 생기고, 둘 다 로그인할 수 있다.
+        UniqueConstraint(
+            "scim_provider_id", "scim_external_id", name="uq_user_scim_provider_external"
+        ),
     )
 
     @property
@@ -66,8 +82,17 @@ class UserGroup(Entity):
     name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="local")
+    #: 이 그룹을 밀어 넣은 IdP. 사용자와 같은 이유다 — 남의 그룹을 지우지
+    #: 못하게 한다.
+    scim_provider_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("identity_provider.id", ondelete="SET NULL"), nullable=True
+    )
+    scim_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    __table_args__ = (CheckConstraint(source.in_(GROUP_SOURCES), name="user_group_source"),)
+    __table_args__ = (
+        CheckConstraint(source.in_(GROUP_SOURCES), name="user_group_source"),
+        Index("ix_user_group_scim_provider_id", "scim_provider_id"),
+    )
 
 
 class GroupMember(Entity):
@@ -321,6 +346,24 @@ class IdentityProvider(Entity):
     email_domains: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     #: IdP 가 2차 요소를 책임진다고 볼 것인가. 켜면 `amr`/`acr` 를 확인한다.
     trust_idp_mfa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # ── SCIM 프로비저닝 ─────────────────────────────────────────
+    #
+    # **SSO 와 같은 행에 둔다.** IdP 한 곳이 로그인과 프로비저닝을 함께
+    # 담당하고(Okta·Entra 의 앱 하나가 둘 다 설정한다), 그래야 "이 IdP 를
+    # 껐다" 가 로그인과 계정 밀어넣기에 같이 적용된다.
+    scim_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    #: 프로비저닝 토큰의 SHA-256. **원문은 안 저장한다** — PAT 과 같은 규약이고,
+    #: 만들 때 한 번만 보여 준다.
+    scim_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    scim_token_issued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    scim_last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(kind.in_(IDP_KINDS), name="identity_provider_kind"),

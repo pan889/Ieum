@@ -425,15 +425,32 @@ export async function signInWithMfa(page: Page): Promise<void> {
   // 로그인만으로는 "미완료" 세션이다. 앱 셸이 2단계 화면을 띄운다.
   const code = page.getByLabel(/authentication code|인증 코드/i)
   await expect(code).toBeVisible()
-  const digits = await freshCode(page)
-  // 한 글자씩 넣고 **들어간 것을 확인한다.** 이 입력은 제어 컴포넌트라
-  // 값이 상태로 들어가지 않으면 폼은 빈 코드를 보내고, 서버는 그것을 422 로
-  // 거절한다 — 화면에는 "코드가 틀렸다" 도 안 뜬다. 실제로 그렇게 붉어졌고,
-  // 원인을 찾는 데 오래 걸렸다. `fill` 이 아니라 타이핑으로 넣는다.
-  await code.pressSequentially(digits)
-  await expect(code).toHaveValue(digits)
-  await page.getByRole('button', { name: /^(verify|확인)$/i }).click()
-  // 앱 셸이 뜰 때까지 기다린다. 주소만 보면 아직 검증 요청이 날아가는 중이다.
+
+  // **거절당하면 다음 스텝으로 한 번 더 시도한다.**
+  //
+  // 서버는 재사용을 막으려고 "맞은 코드의 스텝 이하" 를 거절하고, 맞는 스텝을
+  // ±1 범위에서 찾는다. 그래서 앞 시험이 방금 통과한 직후에는, 이 쪽이 새
+  // 스텝의 코드를 보내도 서버가 그것을 이전 스텝으로 맞춰 버리는 경우가
+  // 생긴다 — 스펙 한 파일에서 2FA 로 여러 번 들어가면 실제로 그렇게 붉어진다.
+  //
+  // 한 번 더 시도하면 그 창을 확실히 벗어난다. 무한히 돌지 않는 것이
+  // 중요하다: 비밀이 틀린 것(진짜 결함)과 구별되어야 한다.
+  const wrong = page.getByText(/code isn't right|코드가 올바르지/i)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const digits = await freshCode(page)
+    // 한 글자씩 넣고 **들어간 것을 확인한다.** 이 입력은 제어 컴포넌트라
+    // 값이 상태로 들어가지 않으면 폼은 빈 코드를 보내고, 서버는 그것을 422 로
+    // 거절한다 — 화면에는 "코드가 틀렸다" 도 안 뜬다. 실제로 그렇게 붉어졌고,
+    // 원인을 찾는 데 오래 걸렸다. `fill` 이 아니라 타이핑으로 넣는다.
+    await code.clear()
+    await code.pressSequentially(digits)
+    await expect(code).toHaveValue(digits)
+    await page.getByRole('button', { name: /^(verify|확인)$/i }).click()
+    // 앱 셸이 뜨거나, 틀렸다는 말이 뜬다. 둘 중 하나는 온다.
+    await expect(out.or(wrong).first()).toBeVisible()
+    if (await out.isVisible()) return
+  }
+  // 세 번 다 거절당했으면 스텝 문제가 아니다 — 비밀이 어긋난 것이다.
   await expect(out).toBeVisible()
 }
 

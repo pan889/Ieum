@@ -165,6 +165,11 @@ export interface IdentityProvider {
   email_domains: string[]
   trust_idp_mfa: boolean
   groups_claim: string | null
+  /** SCIM 프로비저닝 (M4). 토큰 자체는 절대 안 온다. */
+  scim_enabled: boolean
+  scim_has_token: boolean
+  /** IdP 가 마지막으로 두드린 시각. 비어 있으면 한 번도 안 왔다. */
+  scim_last_seen_at: string | null
 }
 
 export interface NewIdentityProvider {
@@ -217,6 +222,15 @@ export function createIdpApi(client: ApiClient) {
     /** 다시 켠다. 이게 없으면 끄는 것이 일방통행이다. */
     enable: (id: string) =>
       client.post<void>(`/api/v1/admin/sso/providers/${id}/enable`),
+    /**
+     * 프로비저닝 토큰을 발급한다. **응답에 담긴 평문이 유일한 사본이다** —
+     * 새로 발급하면 옛 토큰은 그 자리에서 죽는다.
+     */
+    issueScimToken: (id: string) =>
+      client.post<{ token: string }>(`/api/v1/admin/sso/providers/${id}/scim-token`),
+    /** 프로비저닝을 멈춘다. 토큰은 그대로 두고 문만 닫는다. */
+    stopScim: (id: string) =>
+      client.delete<void>(`/api/v1/admin/sso/providers/${id}/scim-token`),
   }
 }
 

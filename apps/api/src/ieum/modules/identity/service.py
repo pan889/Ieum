@@ -77,6 +77,7 @@ from ieum.modules.identity.repository import (
     UserRepository,
     normalize_email,
 )
+from ieum.modules.identity.scim_service import issue_scim_token
 from ieum.modules.identity.sso import Claims
 from ieum.modules.org import contracts as org
 
@@ -2199,6 +2200,47 @@ class IdentityProviderService:
             target_type="identity_provider",
             target_id=provider.id,
             metadata={"is_enabled": enabled},
+        )
+
+    async def issue_scim_token(self, actor: Actor, provider_id: UUID) -> str:
+        """프로비저닝 토큰을 새로 발급하고 **평문을 한 번만** 돌려준다.
+
+        `IDP_MANAGE` 와 같은 손잡이다(step-up 필수). 이 토큰을 쥐면 계정을
+        만들고 끌 수 있으므로, IdP 설정을 바꾸는 것과 같은 무게다.
+
+        새로 발급하면 **옛 토큰은 그 자리에서 죽는다.** 해시 칸이 하나뿐인
+        것이 그 뜻이다 — 유출된 토큰을 확실히 끊는 유일한 방법이 재발급이고,
+        둘을 동시에 살려 두면 그 보장이 사라진다.
+        """
+        await self._require(actor)
+        provider = await self._providers.get(provider_id)
+        if provider is None:
+            raise NotFoundError("그 IdP 를 찾을 수 없다.")
+        raw = issue_scim_token(provider)
+        AuditRepository(self._s).record(
+            action=audit.IDP_UPDATED,
+            actor_id=actor.user_id,
+            target_type="identity_provider",
+            target_id=provider.id,
+            # **토큰은 안 남긴다.** 감사 로그는 내보낼 수 있는 자료다.
+            metadata={"scim_token": "issued"},
+        )
+        return raw
+
+    async def set_scim_enabled(self, actor: Actor, provider_id: UUID, *, enabled: bool) -> None:
+        """프로비저닝을 끈다. 토큰은 그대로 두고 문만 닫는다 — 다시 켤 때
+        IdP 설정을 고치지 않아도 되게."""
+        await self._require(actor)
+        provider = await self._providers.get(provider_id)
+        if provider is None:
+            raise NotFoundError("그 IdP 를 찾을 수 없다.")
+        provider.scim_enabled = enabled
+        AuditRepository(self._s).record(
+            action=audit.IDP_UPDATED,
+            actor_id=actor.user_id,
+            target_type="identity_provider",
+            target_id=provider.id,
+            metadata={"scim_enabled": enabled},
         )
 
     async def _require(self, actor: Actor) -> None:
