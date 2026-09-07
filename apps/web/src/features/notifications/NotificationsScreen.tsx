@@ -12,10 +12,11 @@ import clsx from 'clsx'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EMAIL_MODES, type EmailMode } from '@ieum/api-client'
 import { formatDateTime } from '@/features/issues/format'
 import { notificationsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Select } from '@/shared/ui/primitives'
 
 export function useUnreadCount() {
   return useQuery({
@@ -86,6 +87,8 @@ export function NotificationsScreen() {
         <p className="text-sm text-muted">{t('notifications:list.empty')}</p>
       ) : null}
 
+      <Preferences />
+
       <ul className="flex flex-col gap-2">
         {items.map((row) => (
           <li key={row.id}>
@@ -124,5 +127,55 @@ export function NotificationsScreen() {
         ))}
       </ul>
     </div>
+  )
+}
+
+/**
+ * 수신 설정.
+ *
+ * 메일을 켬/끔 하나로 두면 알림마다 한 통씩 오고, 사람들은 통째로 끈다.
+ * 끈 사람에게는 아무것도 못 알린다. 그래서 가운데 칸("하루에 한 번")이 있다.
+ */
+function Preferences() {
+  const { t } = useTranslation(['notifications'])
+  const queryClient = useQueryClient()
+
+  const preferences = useQuery({
+    queryKey: ['notifications', 'preferences'],
+    queryFn: () => notificationsApi.preferences(),
+  })
+
+  const save = useMutation({
+    mutationFn: (mode: EmailMode) => notificationsApi.updatePreferences({ email_mode: mode }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(['notifications', 'preferences'], next)
+    },
+  })
+
+  const mode = preferences.data?.email_mode
+  if (mode === undefined) return null
+
+  return (
+    <Card className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-3">
+        <Select
+          label={t('notifications:preferences.emailMode')}
+          value={mode}
+          disabled={save.isPending}
+          onChange={(event) => { save.mutate(event.target.value as EmailMode) }}
+        >
+          {EMAIL_MODES.map((value) => (
+            <option key={value} value={value}>
+              {t(`notifications:preferences.email.${value}`)}
+            </option>
+          ))}
+        </Select>
+        {save.isSuccess ? (
+          <span className="text-xs text-muted">{t('notifications:preferences.saved')}</span>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted">{t('notifications:preferences.emailHint')}</p>
+      {save.isError ? <Alert>{describeError(save.error)}</Alert> : null}
+    </Card>
   )
 }

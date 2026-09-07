@@ -30,6 +30,9 @@ from ieum.db.base import Entity
 
 WATCH_TARGETS = ("issue", "project", "page", "space")
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "abandoned")
+#: 메일을 언제 받을지. 하나짜리 스위치로 두면 "받는다/안 받는다" 밖에 못 고른다 —
+#: 알림마다 한 통씩 오면 아무도 안 읽고, 결국 통째로 끈다.
+EMAIL_MODES = ("instant", "daily", "off")
 WEBHOOK_SCOPES = ("global", "project")
 
 
@@ -86,7 +89,7 @@ class Watch(Entity):
 
 
 class NotificationPreference(Entity):
-    """수신 설정. 없으면 기본값(인앱 켜짐, 메일 켜짐)으로 본다."""
+    """수신 설정. 없으면 기본값(인앱 켜짐, 메일 즉시)으로 본다."""
 
     __tablename__ = "notification_preference"
 
@@ -94,11 +97,20 @@ class NotificationPreference(Entity):
         ForeignKey("user.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     in_app: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: `instant`(알림마다) · `daily`(하루치를 한 통으로) · `off`.
+    email_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="instant")
+    #: 마지막 다이제스트를 보낸 시각. 하루에 두 번 보내지 않기 위한 자물쇠다.
+    last_digest_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     #: 자기 행동에 대한 알림을 받을지. 기본은 받지 않는다.
     notify_own_actions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     #: 끄고 싶은 이벤트 타입 목록.
     muted_events: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+    __table_args__ = (
+        CheckConstraint(email_mode.in_(EMAIL_MODES), name="notification_preference_email_mode"),
+    )
 
 
 class Webhook(Entity):

@@ -10,7 +10,7 @@ import hmac
 import json
 import secrets
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -28,6 +28,7 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import User
 from ieum.modules.notify import delivery as wd
+from ieum.modules.notify import digest as nd
 from ieum.modules.notify import permissions as nperms
 from ieum.modules.notify.handlers import (
     HandlerContext,
@@ -237,7 +238,7 @@ class TestFanOut:
     async def test_mail_respects_email_preference(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:
-        session.add(NotificationPreference(user_id=people["korean"].id, email=False))
+        session.add(NotificationPreference(user_id=people["korean"].id, email_mode="off"))
         await session.flush()
         service = NotificationService(session, settings)
         created = await service.fan_out(
@@ -812,6 +813,139 @@ class TestDeliveryQueue:
         session.add(row)
         await session.flush()
         assert row.id not in {d.id for d in await DeliveryRepository(session).due()}
+
+
+class TestDigest:
+    """하루치를 한 통으로.
+
+    알림마다 메일이 한 통씩 가면 아무도 안 읽고, 결국 통째로 끈다. 끈
+    사람에게는 아무것도 못 알린다.
+    """
+
+    def _at(self, hour: int) -> datetime:
+        return datetime(2026, 9, 7, hour, 0, tzinfo=UTC)
+
+    async def _prefers_daily(
+        self, session: AsyncSession, user: User, *, last: datetime | None = None
+    ) -> NotificationPreference:
+        row = NotificationPreference(user_id=user.id, email_mode="daily", last_digest_at=last)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def _notify(self, session: AsyncSession, user: User, title: str) -> Notification:
+        row = Notification(user_id=user.id, kind="issue.created", title=title)
+        session.add(row)
+        await session.flush()
+        return row
+
+    def test_morning_follows_the_reader(self) -> None:
+        """전 세계 한 시각에 몰아 보내면 절반에게는 한밤중이다."""
+        eight_utc = self._at(nd.DIGEST_HOUR)
+        assert nd.is_morning(eight_utc, "UTC") is True
+        assert nd.is_morning(eight_utc, "Asia/Seoul") is False
+        # 서울의 아침 여덟 시는 UTC 로 전날 스물세 시다.
+        assert nd.is_morning(datetime(2026, 9, 6, 23, 0, tzinfo=UTC), "Asia/Seoul") is True
+
+    def test_unknown_timezone_falls_back(self) -> None:
+        """시간대 이름이 틀렸다고 아예 안 보내는 것보다 낫다."""
+        assert nd.is_morning(self._at(nd.DIGEST_HOUR), "Mars/Olympus") is True
+
+    async def test_collects_unread_since_last_digest(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        user = people["english"]
+        await self._prefers_daily(session, user)
+        await self._notify(session, user, "첫 번째")
+        await self._notify(session, user, "두 번째")
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        mine = [d for d in found if d.mail.to == user.email]
+        assert len(mine) == 1
+        assert mine[0].covered == 2
+        assert "첫 번째" in mine[0].mail.body
+        assert "두 번째" in mine[0].mail.body
+        # 목록으로 데려간다. 알림 하나가 아니라 하루치이므로.
+        assert mine[0].mail.link == "/notifications"
+
+    async def test_read_notifications_are_left_out(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """이미 읽었으면 화면에서 봤다는 뜻이다. 다시 보내면 "아까 본 것" 목록이다."""
+        user = people["english"]
+        await self._prefers_daily(session, user)
+        seen = await self._notify(session, user, "이미 봤다")
+        seen.read_at = utcnow()
+        await session.flush()
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        assert [d for d in found if d.mail.to == user.email] == []
+
+    async def test_nothing_to_say_sends_nothing(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """빈 요약을 매일 보내면 그게 스팸이다."""
+        await self._prefers_daily(session, people["english"])
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        assert [d for d in found if d.mail.to == people["english"].email] == []
+
+    async def test_not_twice_in_a_day(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        user = people["english"]
+        await self._prefers_daily(session, user, last=self._at(nd.DIGEST_HOUR) - timedelta(hours=2))
+        await self._notify(session, user, "새 소식")
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        assert [d for d in found if d.mail.to == user.email] == []
+
+    async def test_instant_readers_are_not_digested(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        user = people["english"]
+        session.add(NotificationPreference(user_id=user.id, email_mode="instant"))
+        await session.flush()
+        await self._notify(session, user, "새 소식")
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        assert [d for d in found if d.mail.to == user.email] == []
+
+    async def test_digest_speaks_the_readers_language(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        user = people["korean"]
+        await self._prefers_daily(session, user)
+        await self._notify(session, user, "소식")
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        mine = next(d for d in found if d.mail.to == user.email)
+        assert mine.mail.subject == "Ieum 소식 1건"
+
+    async def test_marking_sent_stops_the_next_run(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        user = people["english"]
+        await self._prefers_daily(session, user)
+        await self._notify(session, user, "새 소식")
+
+        moment = self._at(nd.DIGEST_HOUR)
+        first = await nd.collect(session, settings, now=moment)
+        nd.mark_sent([d for d in first if d.mail.to == user.email], now=moment)
+        await session.flush()
+
+        again = await nd.collect(session, settings, now=moment)
+        assert [d for d in again if d.mail.to == user.email] == []
+
+    async def test_pending_mail_skips_daily_readers(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """즉시 메일과 다이제스트가 둘 다 가면 같은 일로 두 통이 온다."""
+        user = people["english"]
+        await self._prefers_daily(session, user)
+        row = await self._notify(session, user, "새 소식")
+
+        mails = await NotificationService(session, settings).pending_mail([row])
+        assert mails == []
 
 
 class TestPageHandlers:

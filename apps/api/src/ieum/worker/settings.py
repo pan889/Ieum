@@ -11,7 +11,12 @@ from arq.typing import WorkerCoroutine
 from ieum.config import get_settings
 from ieum.core.logging import configure_logging, get_logger
 from ieum.db.session import dispose_engine, init_engine
-from ieum.worker.tasks import task_deliver_webhooks, task_drain_outbox, task_sweep
+from ieum.worker.tasks import (
+    task_deliver_webhooks,
+    task_drain_outbox,
+    task_send_digests,
+    task_sweep,
+)
 
 log = get_logger(__name__)
 
@@ -33,6 +38,7 @@ class WorkerSettings:
         task_drain_outbox,
         task_deliver_webhooks,
         task_sweep,
+        task_send_digests,
     ]
     # 아웃박스 지연은 사용자가 체감한다. 15초마다 훑는다. API 가 이벤트를
     # 넣을 때 큐에 바로 밀어 넣어 즉시 처리하는 건 M2 과제로 남긴다.
@@ -43,7 +49,11 @@ class WorkerSettings:
             cast("WorkerCoroutine", task_sweep),
             second={0, 15, 30, 45},
             run_at_startup=True,
-        )
+        ),
+        # 다이제스트는 매시 정각에 훑는다. **누구에게 보낼지는 받는 사람의
+        # 지역 시각**이 정한다 — 전 세계 한 시각에 몰아 보내면 절반에게는
+        # 한밤중이다 (notify/digest.py).
+        cron(cast("WorkerCoroutine", task_send_digests), minute={0}, second={5}),
     ]
     on_startup = startup
     on_shutdown = shutdown

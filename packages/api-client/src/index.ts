@@ -113,6 +113,8 @@ export {
 } from './tokens-api'
 export {
   createNotificationsApi,
+  EMAIL_MODES,
+  type EmailMode,
   type Notification,
   type NotificationPage,
   type NotificationPreferences,

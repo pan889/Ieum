@@ -25,9 +25,13 @@ export interface NotificationPage {
   unread_count: number
 }
 
+/** 메일을 언제 받을지. 켬/끔 하나로 두면 사람들이 통째로 끈다. */
+export type EmailMode = 'instant' | 'daily' | 'off'
+export const EMAIL_MODES: EmailMode[] = ['instant', 'daily', 'off']
+
 export interface NotificationPreferences {
   in_app: boolean
-  email: boolean
+  email_mode: EmailMode
   notify_own_actions: boolean
   muted_events: string[]
 }

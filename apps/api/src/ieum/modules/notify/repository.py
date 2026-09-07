@@ -47,6 +47,20 @@ class NotificationRepository:
         rows = list((await self._s.execute(stmt)).scalars().all())
         return Page.from_rows(rows, request, lambda n: {"id": str(n.id)})
 
+    async def since(self, user_id: UUID, after: datetime | None, limit: int) -> list[Notification]:
+        """지난번 다이제스트 뒤에 쌓인 것. 읽은 것은 뺀다.
+
+        이미 읽었으면 화면에서 봤다는 뜻이다. 그걸 다시 메일로 보내면
+        다이제스트가 "아까 본 것 목록" 이 된다.
+        """
+        stmt = select(Notification).where(
+            Notification.user_id == user_id, Notification.read_at.is_(None)
+        )
+        if after is not None:
+            stmt = stmt.where(Notification.created_at > after)
+        stmt = stmt.order_by(Notification.created_at.asc()).limit(limit)
+        return list((await self._s.execute(stmt)).scalars().all())
+
     async def unread_count(self, user_id: UUID) -> int:
         stmt = (
             select(func.count())
@@ -130,6 +144,11 @@ class PreferenceRepository:
         stmt = select(NotificationPreference).where(NotificationPreference.user_id.in_(user_ids))
         rows = (await self._s.execute(stmt)).scalars().all()
         return {row.user_id: row for row in rows}
+
+    async def daily_digest_users(self) -> list[NotificationPreference]:
+        """하루 한 통으로 받기로 한 사람들."""
+        stmt = select(NotificationPreference).where(NotificationPreference.email_mode == "daily")
+        return list((await self._s.execute(stmt)).scalars().all())
 
     async def get_or_create(self, user_id: UUID) -> NotificationPreference:
         stmt = select(NotificationPreference).where(NotificationPreference.user_id == user_id)

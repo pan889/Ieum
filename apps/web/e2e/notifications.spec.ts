@@ -86,3 +86,24 @@ test('내가 한 일은 나에게 알리지 않는다', async ({ page, consoleEr
 
   expect(consoleErrors).toEqual([])
 })
+
+test('메일 받는 방식은 고른 대로 남는다', async ({ page, consoleErrors }) => {
+  await signIn(page)
+  await page.goto('/notifications')
+
+  // 켬/끔 하나로 두면 알림마다 한 통씩 오고 사람들은 통째로 끈다. 끈
+  // 사람에게는 아무것도 못 알린다 — 그래서 가운데 칸이 있다.
+  const mode = page.getByLabel(/^email$/i)
+  await expect(mode).toHaveValue('instant')
+  await mode.selectOption('daily')
+  await expect(page.getByText(/^saved\.$/i)).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByLabel(/^email$/i)).toHaveValue('daily')
+
+  // 시드 DB 를 공유하므로 되돌려 놓는다.
+  await page.getByLabel(/^email$/i).selectOption('instant')
+  await expect(page.getByText(/^saved\.$/i)).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})

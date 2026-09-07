@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ieum.modules.notify.models import WATCH_TARGETS
+from ieum.modules.notify.models import EMAIL_MODES, WATCH_TARGETS
 
 
 class NotificationResponse(BaseModel):
@@ -41,14 +41,14 @@ class PreferenceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     in_app: bool
-    email: bool
+    email_mode: str
     notify_own_actions: bool
     muted_events: list[str]
 
 
 class PreferenceUpdateRequest(BaseModel):
     in_app: bool | None = None
-    email: bool | None = None
+    email_mode: str | None = Field(default=None, pattern=f"^({'|'.join(EMAIL_MODES)})$")
     notify_own_actions: bool | None = None
     muted_events: list[str] | None = None
 

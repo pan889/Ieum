@@ -122,7 +122,8 @@ class NotificationService:
         mails: list[Mail] = []
         for notification in notifications:
             preference = preferences.get(notification.user_id)
-            if preference is not None and not preference.email:
+            # 즉시 받는 사람만. `daily` 는 다이제스트가 따로 챙긴다.
+            if preference is not None and preference.email_mode != "instant":
                 continue
             user = await identity.get_user(self._s, notification.user_id)
             if user is None or not user.is_active:

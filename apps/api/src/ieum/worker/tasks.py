@@ -29,6 +29,7 @@ from ieum.db.session import session_scope
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.notify import delivery as webhook_delivery
+from ieum.modules.notify import digest as digests
 from ieum.modules.notify.handlers import (
     HandlerContext,
     enqueue_webhooks,
@@ -221,6 +222,26 @@ async def sweep() -> dict[str, int]:
 
 
 # ── arq 진입점 ──────────────────────────────────────────────────
+async def send_digests() -> int:
+    """하루치를 한 통으로 묶어 보낸다. 보낸 통 수를 돌려준다.
+
+    매시 돈다. 누구에게 보낼지는 **받는 사람의 지역 시각**이 정한다 — 전 세계
+    한 시각에 몰아 보내면 절반에게는 한밤중이다 (notify/digest.py).
+    """
+    settings = get_settings()
+    async with session_scope() as session:
+        pending = await digests.collect(session, settings)
+        if not pending:
+            return 0
+        # 보내기 **전에** 표시하고 커밋한다. 발송 중에 워커가 죽으면 한 통을
+        # 잃지만, 반대로 하면 같은 요약이 계속 다시 나간다.
+        digests.mark_sent(pending)
+
+    sent = await send_all(settings, [d.mail for d in pending])
+    log.info("mail.digest", queued=len(pending), sent=sent)
+    return sent
+
+
 # arq 의 WorkerCoroutine 프로토콜은 `(ctx, *args, **kwargs)` 를 요구한다.
 # 순수 함수와 분리해 두면 테스트와 CLI 가 arq 를 거치지 않고 그대로 부른다.
 
@@ -239,3 +260,7 @@ async def task_sweep(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> dict[str, in
 
 async def task_sweep_attachments(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:
     return await sweep_attachments()
+
+
+async def task_send_digests(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:
+    return await send_digests()
