@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -23,19 +24,24 @@ LOCALES = ("en", "ko")
 PREFIX = "permission."
 
 
+MODULES_DIR = Path(__file__).resolve().parents[1] / "src" / "ieum" / "modules"
+
+
 @pytest.fixture(autouse=True, scope="module")
 def _register_all() -> None:
-    """레지스트리를 채운다.
+    """레지스트리를 채운다. **모듈 목록을 손으로 들고 있지 않는다.**
 
     권한은 각 모듈의 `permissions.py` 가 import 될 때 등록된다. 이 파일만
     돌리면 그 모듈들이 안 불려서 레지스트리가 비고, 테스트는 **아무것도
     검사하지 않은 채 통과한다.**
+
+    한때 여기에 import 다섯 줄을 적어 두었다. 그러면 새 모듈을 만들 때
+    한 줄을 빠뜨리는 것으로 이 게이트가 그 모듈에 대해 조용히 무력해진다 —
+    실제로 `desk` 를 추가하면서 그렇게 됐고, 권한 세 개가 이름 없이
+    통과했다. 그래서 디스크에서 찾는다: 목록이 없으면 빠뜨릴 것도 없다.
     """
-    from ieum.modules.identity import permissions as _identity  # noqa: F401
-    from ieum.modules.issues import permissions as _issues  # noqa: F401
-    from ieum.modules.notify import permissions as _notify  # noqa: F401
-    from ieum.modules.org import permissions as _org  # noqa: F401
-    from ieum.modules.wiki import permissions as _wiki  # noqa: F401
+    for path in sorted(MODULES_DIR.glob("*/permissions.py")):
+        importlib.import_module(f"ieum.modules.{path.parent.name}.permissions")
 
 
 def _registered() -> set[str]:
@@ -52,6 +58,17 @@ def _registered() -> set[str]:
 def _names(locale: str) -> dict[str, str]:
     data = json.loads((CATALOG_DIR / locale / "admin.json").read_text(encoding="utf-8"))
     return {k.removeprefix(PREFIX): v for k, v in data.items() if k.startswith(PREFIX)}
+
+
+def test_every_module_with_permissions_is_discovered() -> None:
+    """디스크 탐색이 실제로 뭔가를 찾는지 본다.
+
+    경로가 틀리면 glob 은 조용히 빈 목록을 준다 — 그러면 fixture 가 아무
+    모듈도 import 하지 않고, 레지스트리는 (다른 테스트가 채워 준 만큼만)
+    남는다. 그 상태를 "통과" 로 읽지 않도록 여기서 붙잡는다.
+    """
+    found = {p.parent.name for p in MODULES_DIR.glob("*/permissions.py")}
+    assert len(found) >= 5, f"권한 모듈을 못 찾았다: {sorted(found)} ({MODULES_DIR})"
 
 
 def test_the_registry_is_not_empty() -> None:

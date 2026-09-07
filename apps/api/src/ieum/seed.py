@@ -15,6 +15,7 @@ from ieum.core.logging import configure_logging, get_logger
 from ieum.core.permissions import Scope, ScopeKind
 from ieum.core.time import utcnow
 from ieum.db.session import init_engine, session_scope
+from ieum.modules.desk import permissions as desk_perms
 from ieum.modules.identity import permissions as identity_perms
 from ieum.modules.identity.models import User
 from ieum.modules.identity.repository import UserRepository, normalize_email
@@ -34,7 +35,13 @@ log = get_logger(__name__)
 BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "Administrator": (
         "global",
-        (*identity_perms.ALL, *org_perms.ALL, *issue_perms.ALL, *wiki_perms.ALL),
+        (
+            *identity_perms.ALL,
+            *org_perms.ALL,
+            *issue_perms.ALL,
+            *wiki_perms.ALL,
+            *desk_perms.ALL,
+        ),
     ),
     "Member": (
         "global",
@@ -69,10 +76,31 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
         "project",
         (org_perms.PROJECT_VIEW, *issue_perms.MEMBER_DEFAULTS),
     ),
-    # 고객 포털이 아니라 내부 열람 전용. 데스크 고객 계정은 M4 에서 따로 만든다.
+    # 고객 포털이 아니라 내부 열람 전용. 데스크 고객 계정은 역할을 받지
+    # 않는다 — 포털이 권한의 근거다 (desk/service.py).
     "Project Viewer": (
         "project",
         (org_perms.PROJECT_VIEW, issue_perms.ISSUE_VIEW),
+    ),
+    # 상담원. 티켓을 다루지만 포털 정의는 못 고친다 — 폼을 바꾸는 일은
+    # 고객이 보는 화면을 바꾸는 일이라 관리자의 몫이다.
+    "Desk Agent": (
+        "project",
+        (
+            org_perms.PROJECT_VIEW,
+            issue_perms.ISSUE_VIEW,
+            issue_perms.ISSUE_CREATE,
+            issue_perms.ISSUE_EDIT,
+            issue_perms.ISSUE_TRANSITION,
+            issue_perms.ISSUE_ASSIGN,
+            issue_perms.ISSUE_LINK,
+            issue_perms.COMMENT_ADD,
+            issue_perms.COMMENT_EDIT_OWN,
+            # 상담원은 내부 노트를 본다. 이것이 고객과의 결정적 차이다.
+            issue_perms.COMMENT_VIEW_INTERNAL,
+            issue_perms.WORKLOG_ADD,
+            *desk_perms.AGENT_DEFAULTS,
+        ),
     ),
     "Space Admin": (
         "space",

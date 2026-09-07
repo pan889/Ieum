@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -53,6 +54,10 @@ INTERNAL_PATHS = (
     "/admin/security",
     "/admin/workflows",
     "/admin/fields",
+    # 데스크의 **관리** 표면. 고객이 쓰는 `/portal/...` 과 한 글자 차이라
+    # 여기 없으면 접두사 검사가 어긋나도 아무도 모른다.
+    "/portals",
+    "/customer-organizations",
 )
 
 
@@ -167,6 +172,41 @@ class TestTheirOwnSessionStillWorks:
         headers = await _customer_headers(app_client, engine, settings)
         r = await app_client.get(f"{BASE}/auth/sessions", headers=headers)
         assert r.status_code == 200, r.text
+
+
+class TestOneCharacterApart:
+    """`/portal/` 은 열리고 `/portals` 는 닫힌다. 이 한 글자가 경계다.
+
+    `startswith("/api/v1/portal/")` 이므로 `/api/v1/portals/...` 는 통과하지
+    못한다 — 슬래시가 그 일을 한다. 접두사에서 슬래시를 빼는 순간 데스크
+    **관리** API 가 고객에게 통째로 열린다. 그러니 그 사실 자체를 시험이
+    붙잡고 있어야 한다.
+    """
+
+    async def test_the_admin_desk_surface_is_refused(
+        self, app_client: httpx.AsyncClient, engine: object, settings: Settings
+    ) -> None:
+        headers = await _customer_headers(app_client, engine, settings)
+        r = await app_client.get(f"{BASE}/portals?project_id={uuid4()}", headers=headers)
+        assert r.status_code == 403, r.text
+
+    async def test_the_customer_portal_surface_passes_through(
+        self, app_client: httpx.AsyncClient, engine: object, settings: Settings
+    ) -> None:
+        """포털이 없으니 404 여야 한다 — **403 이 아니다.**
+
+        403 이면 격리에 걸린 것이고, 그러면 고객은 자기 창구도 못 본다.
+        """
+        headers = await _customer_headers(app_client, engine, settings)
+        r = await app_client.get(f"{BASE}/portal/no-such-portal", headers=headers)
+        assert r.status_code == 404, r.text
+
+    async def test_the_customer_portal_surface_needs_no_login(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """게스트 요청이 성립하려면 이 표면이 익명으로 열려 있어야 한다."""
+        r = await app_client.get(f"{BASE}/portal/no-such-portal")
+        assert r.status_code == 404, r.text
 
 
 class TestInternalUsersAreUnaffected:

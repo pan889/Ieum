@@ -11,6 +11,13 @@ from __future__ import annotations
 from ieum.core.attachments import Attachment
 from ieum.core.outbox import OutboxEvent
 from ieum.db.base import Base
+from ieum.modules.desk.models import (
+    CustomerMembership,
+    CustomerOrganization,
+    Portal,
+    RequestType,
+    TicketExt,
+)
 from ieum.modules.identity.models import (
     ApiToken,
     AuditLog,
@@ -73,6 +80,8 @@ __all__ = [
     "AuditLog",
     "Base",
     "Board",
+    "CustomerMembership",
+    "CustomerOrganization",
     "EntityLink",
     "FieldDefinition",
     "GroupMember",
@@ -97,13 +106,16 @@ __all__ = [
     "PageTemplate",
     "PageVersion",
     "PermissionGrant",
+    "Portal",
     "Project",
+    "RequestType",
     "Role",
     "RoleAssignment",
     "SavedFilter",
     "SearchDocument",
     "SecurityLevel",
     "Space",
+    "TicketExt",
     "User",
     "UserGroup",
     "UserSession",

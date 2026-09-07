@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import ieum.modules.desk.events
 import ieum.modules.identity.events
 import ieum.modules.issues.events
 import ieum.modules.wiki.events  # noqa: F401

@@ -397,6 +397,29 @@ class IssueService:
         await self._perms.require(
             self._s, actor, perms.ISSUE_CREATE, scope=Scope.project(payload.project_id)
         )
+        return await self.create_authorized(actor, payload)
+
+    async def create_authorized(
+        self, actor: Actor, payload: NewIssue, *, anonymous: bool = False
+    ) -> IssueView:
+        """`issue.create` 를 **보지 않고** 만든다. 호출자가 이미 판단했을 때만.
+
+        포털 제출이 여기로 온다. 고객 계정은 프로젝트 역할이 없으므로
+        `issue.create` 를 절대 통과하지 못하고, 통과하도록 역할을 주면 그
+        고객은 포털이 열어 둔 요청 유형 밖의 이슈도 만들 수 있게 된다 —
+        권한을 넓혀서 기능을 여는 것은 거꾸로다.
+
+        그래서 권한의 근거를 옮긴다: "이 포털이 이 요청 유형을 열어 두었다"
+        가 근거이고, 그 판단은 `desk` 가 한다. 여기서는 **만드는 일**만 한다.
+
+        `_` 로 시작하지 않는 것은 다른 모듈이 `contracts` 를 통해 쓰기
+        때문이다. 라우터에서 직접 부르지 않는다 — 부르면 권한 없는 생성
+        경로가 API 표면에 그대로 뚫린다.
+
+        `anonymous` 는 게스트 요청용이다. 신고자를 NULL 로 둔다 — 계정이
+        없는 사람을 `reporter_id` 에 넣을 수 없고(FK), 아무 계정에 붙이면
+        증명 없이 남의 이름으로 티켓을 만드는 일이 된다.
+        """
         project = await org.get_project(self._s, payload.project_id)
         if project is None:
             raise NotFoundError("프로젝트를 찾을 수 없다.")
@@ -444,7 +467,7 @@ class IssueService:
             state_id=initial.id,
             summary=summary,
             description=_normalized_body(payload.description),
-            reporter_id=actor.user_id,
+            reporter_id=None if anonymous else actor.user_id,
             assignee_id=payload.assignee_id,
             priority=payload.priority,
             parent_id=payload.parent_id,

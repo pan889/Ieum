@@ -24,6 +24,7 @@ from ieum.core.logging import configure_logging, get_logger
 from ieum.core.middleware import TraceMiddleware
 from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
+from ieum.modules.desk.router import customers_router, portal_router, portals_router
 from ieum.modules.identity.router import (
     audit_router,
     auth_router,
@@ -160,6 +161,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         notifications_router,
         watches_router,
         webhooks_router,
+        portals_router,
+        customers_router,
+        portal_router,
     ):
         app.include_router(router, prefix=API_PREFIX)
 
