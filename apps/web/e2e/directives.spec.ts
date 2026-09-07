@@ -21,6 +21,10 @@ async function writePage(page: Page, title: string, body: string): Promise<void>
   await page.getByRole('button', { name: /^edit$/i }).click()
   await writeBody(page, body)
   await page.getByRole('button', { name: /^save$/i }).click()
+  // **닫힐 때까지 기다린다.** 저장을 누른 것만으로 다음 줄로 넘어가면, 아직
+  // 떠 있는 편집기의 Title 칸과 곧 열 대화상자의 Title 칸이 겹쳐 선택자가
+  // 둘을 잡는다 — 앱은 맞게 굴러가는데 테스트만 이따금 붉어진다.
+  await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible()
 }
 
 test(':::info 는 강조 상자로 그려진다', async ({ page, consoleErrors }) => {
