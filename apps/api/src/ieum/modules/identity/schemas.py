@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+from ieum.modules.identity.models import AuditLog
 
 
 class LoginRequest(BaseModel):
@@ -126,3 +129,42 @@ class ApiTokenIssuedResponse(BaseModel):
     token: ApiTokenResponse
     #: 평문. 저장하지 않으므로 다시 못 본다.
     secret: str
+
+
+class AuditLogResponse(BaseModel):
+    """감사 로그 한 줄.
+
+    `model_validate` 를 쓰지 않는다. 모델의 컬럼 이름은 `metadata` 지만 파이썬
+    속성은 `audit_metadata` 다 — SQLAlchemy 의 `Base.metadata` 와 부딪히기
+    때문이다. `from_attributes` 로 읽으면 그 레지스트리 객체를 집어 온다.
+    """
+
+    id: UUID
+    action: str
+    actor_id: UUID | None
+    #: 행위자의 이메일. id 만 주면 화면에서 사람을 못 알아본다.
+    actor_email: str | None = None
+    target_type: str | None
+    target_id: UUID | None
+    ip: str | None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    @classmethod
+    def of(cls, row: AuditLog, actor_email: str | None) -> AuditLogResponse:
+        return cls(
+            id=row.id,
+            action=row.action,
+            actor_id=row.actor_id,
+            actor_email=actor_email,
+            target_type=row.target_type,
+            target_id=row.target_id,
+            ip=row.ip,
+            metadata=row.audit_metadata,
+            created_at=row.created_at,
+        )
+
+
+class AuditPageResponse(BaseModel):
+    items: list[AuditLogResponse]
+    next_cursor: str | None = None

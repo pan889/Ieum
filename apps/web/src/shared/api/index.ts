@@ -2,6 +2,7 @@ import {
   ApiClient,
   createApiTokensApi,
   createAttachmentsApi,
+  createAuditApi,
   createAuthApi,
   createBoardsApi,
   createIssuesApi,
@@ -34,3 +35,4 @@ export const wikiApi = createWikiApi(apiClient)
 export const notificationsApi = createNotificationsApi(apiClient)
 export const apiTokensApi = createApiTokensApi(apiClient)
 export const rolesApi = createRolesApi(apiClient)
+export const auditApi = createAuditApi(apiClient)

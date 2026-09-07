@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { formatDateTime, formatRelative } from '@/features/issues/format'
+import { SettingsNav } from '@/features/settings/SettingsNav'
 import { apiTokensApi, rolesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Button, Card, Chip, Field, Select } from '@/shared/ui/primitives'
@@ -50,6 +51,7 @@ export function ApiTokensScreen() {
 
   return (
     <section className="mx-auto flex max-w-3xl flex-col gap-5">
+      <SettingsNav />
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-xl font-semibold">{t('auth:tokens.title')}</h1>

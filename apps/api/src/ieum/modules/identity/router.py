@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Query, status
+from fastapi.responses import StreamingResponse
 
 from ieum.core.deps import (
     AppSettings,
@@ -18,13 +20,18 @@ from ieum.core.deps import (
 )
 from ieum.core.exceptions import ValidationError
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
-from ieum.core.permissions import Scope
+from ieum.core.permissions import Scope, get_permission_service
+from ieum.core.time import utcnow
+from ieum.modules.identity import audit as audit_log
 from ieum.modules.identity import permissions as perms
+from ieum.modules.identity.repository import AuditFilter
 from ieum.modules.identity.schemas import (
     AcceptInviteRequest,
     ApiTokenCreateRequest,
     ApiTokenIssuedResponse,
     ApiTokenResponse,
+    AuditLogResponse,
+    AuditPageResponse,
     BackupCodesResponse,
     ChangePasswordRequest,
     InviteRequest,
@@ -40,6 +47,7 @@ from ieum.modules.identity.schemas import (
 )
 from ieum.modules.identity.service import (
     ApiTokenService,
+    AuditService,
     AuthService,
     IssuedTokens,
     MFAService,
@@ -48,6 +56,7 @@ from ieum.modules.identity.service import (
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
+audit_router = APIRouter(prefix="/audit", tags=["audit"])
 
 
 def _tokens(issued: IssuedTokens) -> TokenResponse:
@@ -68,9 +77,17 @@ async def login(
     user_agent: UserAgent = None,
 ) -> TokenResponse:
     """로컬 로그인. 계정 존재 여부가 응답으로 새지 않는다."""
-    issued = await AuthService(session, settings).login(
-        email=body.email, password=body.password, ip=ip, user_agent=user_agent
-    )
+    try:
+        issued = await AuthService(session, settings).login(
+            email=body.email, password=body.password, ip=ip, user_agent=user_agent
+        )
+    except Exception:
+        # 실패 기록은 커밋돼야 한다. 실패 경로는 예외를 던지고 그러면 요청
+        # 세션이 롤백되는데, 그때 시도 기록까지 함께 사라지면 실패 횟수를 셀
+        # 수 없다 — 무차별 대입 제한이 통째로 동작하지 않는다. 감사 로그에도
+        # 실패한 로그인이 안 남는다(auth.md 6절). 리프레시·MFA 와 같은 처리다.
+        await session.commit()
+        raise
     await session.commit()
     return _tokens(issued)
 
@@ -132,6 +149,21 @@ async def revoke_all_sessions(
 ) -> None:
     """본인의 모든 세션을 끊는다. 기기 분실 시의 첫 대응이다."""
     await AuthService(session, settings).revoke_all_sessions(user_id=actor.user_id)
+    await session.commit()
+
+
+@auth_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(
+    session_id: UUID, actor: CurrentActor, session: DbSession, settings: AppSettings
+) -> None:
+    """기기 하나만 끊는다. 전부 끊으면 지금 쓰는 자리에서도 튕겨 나간다.
+
+    남의 세션인지는 서비스가 본다. 없거나 남의 것이면 조용히 204 다 —
+    404 를 주면 세션 id 를 넣어 보며 남의 세션 존재를 확인할 수 있다.
+    """
+    await AuthService(session, settings).revoke_session(
+        session_id=session_id, user_id=actor.user_id, actor_id=actor.user_id
+    )
     await session.commit()
 
 
@@ -355,4 +387,115 @@ async def revoke_token(
 ) -> None:
     """폐기는 step-up 없이 할 수 있다. 잠그는 쪽은 언제나 쉬워야 한다."""
     await ApiTokenService(session, settings).revoke(actor, token_id)
+    await session.commit()
+
+
+# ── 감사 로그 ──────────────────────────────────────────────────
+
+
+def _audit_filter(
+    actor_id: UUID | None,
+    action: str | None,
+    target_type: str | None,
+    target_id: UUID | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> AuditFilter:
+    return AuditFilter(
+        actor_id=actor_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        since=since,
+        until=until,
+    )
+
+
+@audit_router.get("/actions", response_model=list[str])
+async def list_audit_actions(actor: CurrentActor, session: DbSession) -> list[str]:
+    """필터에 쓸 행동 목록. 상수에서 나온다.
+
+    테이블에서 `DISTINCT action` 을 긁지 않는다 — 행이 쌓이면 그 한 번이
+    인덱스를 통째로 훑고, 아직 한 번도 안 일어난 행동은 목록에서 빠져
+    "그런 건 기록 안 하나" 로 읽힌다.
+    """
+    # 목록 자체가 우리가 무엇을 감시하는지 알려 준다. 권한을 본다.
+    await get_permission_service().require(session, actor, perms.AUDIT_VIEW, scope=Scope.global_())
+    return list(audit_log.ACTIONS)
+
+
+@audit_router.get("", response_model=AuditPageResponse)
+async def list_audit(
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    actor_id: UUID | None = None,
+    action: str | None = Query(default=None, max_length=100),
+    target_type: str | None = Query(default=None, max_length=64),
+    target_id: UUID | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+) -> AuditPageResponse:
+    """최신순. 감사 로그는 늘 "방금 무슨 일이 있었나" 부터 본다."""
+    page, emails = await AuditService(session, permissions).list(
+        actor,
+        _audit_filter(actor_id, action, target_type, target_id, since, until),
+        PageRequest(limit=limit, cursor=cursor),
+    )
+    return AuditPageResponse(
+        items=[
+            AuditLogResponse.of(row, emails.get(row.actor_id) if row.actor_id else None)
+            for row in page.items
+        ],
+        next_cursor=page.next_cursor,
+    )
+
+
+@audit_router.get("/export")
+async def export_audit(
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    actor_id: UUID | None = None,
+    action: str | None = Query(default=None, max_length=100),
+    target_type: str | None = Query(default=None, max_length=64),
+    target_id: UUID | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> StreamingResponse:
+    """같은 필터로 CSV. 감사 대응은 화면이 아니라 파일로 끝난다."""
+    stream = await AuditService(session, permissions).export(
+        actor, _audit_filter(actor_id, action, target_type, target_id, since, until)
+    )
+    stamp = utcnow().strftime("%Y%m%d-%H%M%S")
+    return StreamingResponse(
+        stream,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="ieum-audit-{stamp}.csv"',
+            # 감사 로그는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@users_router.delete("/{user_id}/sessions", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_user_sessions(
+    user_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> None:
+    """남의 세션을 원격으로 끊는다. 퇴사·기기 분실 때 관리자가 하는 일이다.
+
+    step-up 을 요구한다(권한 정의에 붙어 있다) — 남의 자리에서 사람을
+    쫓아내는 일이라, 자리를 비운 관리자 화면으로는 못 하게 한다.
+    """
+    await permissions.require(session, actor, perms.SESSION_REVOKE, scope=Scope.global_())
+    await AuthService(session, settings).revoke_all_sessions(
+        user_id=user_id, actor_id=actor.user_id
+    )
     await session.commit()

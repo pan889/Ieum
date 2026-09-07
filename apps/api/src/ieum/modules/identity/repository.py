@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -22,6 +23,9 @@ from ieum.modules.identity.models import (
     UserGroup,
     UserSession,
 )
+
+#: 기기 목록에 그릴 최대 개수. 사람이 실제로 쓰는 기기는 한 자릿수다.
+MAX_LISTED_SESSIONS = 50
 
 
 def normalize_email(email: str) -> str:
@@ -136,13 +140,23 @@ class SessionRepository:
         self._s.add(user_session)
         return user_session
 
-    async def list_live_for_user(self, user_id: UUID) -> list[UserSession]:
+    async def list_live_for_user(
+        self, user_id: UUID, *, limit: int = MAX_LISTED_SESSIONS
+    ) -> list[UserSession]:
+        """살아 있는 세션, 최신순.
+
+        상한을 둔다. 로그아웃하지 않고 브라우저를 닫기만 하면 세션이 계속
+        쌓이고, 그대로 그리면 기기 목록이 수천 줄이 되어 정작 찾는 기기를
+        고를 수 없다. 오래된 것을 통째로 치우는 길은 "모든 기기에서
+        로그아웃" 이 이미 맡고 있다.
+        """
         stmt = (
             select(UserSession)
             .where(UserSession.user_id == user_id)
             .where(UserSession.revoked_at.is_(None))
             .where(UserSession.expires_at > utcnow())
             .order_by(UserSession.created_at.desc())
+            .limit(limit)
         )
         return list((await self._s.execute(stmt)).scalars().all())
 
@@ -255,9 +269,63 @@ class LoginAttemptRepository:
         return int(max(by_email, by_ip))
 
 
+@dataclass(frozen=True, slots=True)
+class AuditFilter:
+    """감사 로그 조회 조건. 전부 선택이고, 안 주면 전체다."""
+
+    actor_id: UUID | None = None
+    #: 정확히 일치하거나(`auth.login.failed`), 접두사로 묶거나(`auth.`).
+    action: str | None = None
+    target_type: str | None = None
+    target_id: UUID | None = None
+    #: 포함(>=). 기간을 안 주면 전체를 훑는다 — 화면이 기본값을 준다.
+    since: datetime | None = None
+    #: 미포함(<). 마지막 날을 통째로 담으려면 다음 날 0시를 준다.
+    until: datetime | None = None
+
+
 class AuditRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
+
+    async def list(self, filters: AuditFilter, request: PageRequest) -> Page[AuditLog]:
+        """최신순. 감사 로그는 늘 "방금 무슨 일이 있었나" 부터 본다."""
+        stmt: Select[tuple[AuditLog]] = select(AuditLog)
+        if filters.actor_id is not None:
+            stmt = stmt.where(AuditLog.actor_id == filters.actor_id)
+        if filters.action:
+            # `auth.` 처럼 점으로 끝나면 그 영역 전체다. 인덱스가 접두사
+            # 검색을 그대로 받는다(`ix_audit_log_action_created_at`).
+            stmt = (
+                stmt.where(AuditLog.action.startswith(filters.action))
+                if filters.action.endswith(".")
+                else stmt.where(AuditLog.action == filters.action)
+            )
+        if filters.target_type:
+            stmt = stmt.where(AuditLog.target_type == filters.target_type)
+        if filters.target_id is not None:
+            stmt = stmt.where(AuditLog.target_id == filters.target_id)
+        if filters.since is not None:
+            stmt = stmt.where(AuditLog.created_at >= filters.since)
+        if filters.until is not None:
+            stmt = stmt.where(AuditLog.created_at < filters.until)
+
+        # 커서는 (created_at, id) 복합. 같은 시각에 쌓인 행도 안정적으로 넘긴다 —
+        # 로그인 폭주 때 한 밀리초에 수십 행이 들어온다.
+        payload = request.cursor_payload
+        if payload:
+            cursor_created = datetime.fromisoformat(payload["created_at"])
+            cursor_id = UUID(payload["id"])
+            stmt = stmt.where(
+                (AuditLog.created_at, AuditLog.id) < (cursor_created, cursor_id)  # type: ignore[operator]
+            )
+        stmt = stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(
+            request.fetch_limit
+        )
+        rows = list((await self._s.execute(stmt)).scalars().all())
+        return Page.from_rows(
+            rows, request, lambda r: {"created_at": r.created_at.isoformat(), "id": str(r.id)}
+        )
 
     def record(
         self,

@@ -1,0 +1,18 @@
+{
+  "audit.title": "감사 로그",
+  "audit.description": "누가 언제 무엇을 했는지. 기록은 고치거나 지울 수 없습니다.",
+  "audit.action": "행동",
+  "audit.allActions": "전체",
+  "audit.areaAuth": "로그인·2단계 인증",
+  "audit.areaIdentity": "계정·토큰",
+  "audit.since": "시작",
+  "audit.until": "끝",
+  "audit.export": "CSV 내보내기",
+  "audit.empty": "이 기간에는 기록이 없습니다.",
+  "audit.when": "시각",
+  "audit.actor": "행위자",
+  "audit.target": "대상",
+  "audit.ip": "IP",
+  "audit.details": "상세",
+  "audit.systemActor": "시스템"
+}

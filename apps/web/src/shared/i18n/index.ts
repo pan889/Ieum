@@ -2,6 +2,7 @@ import i18next from 'i18next'
 import ICU from 'i18next-icu'
 import { initReactI18next } from 'react-i18next'
 
+import adminEn from '@ieum/i18n/en/admin.json'
 import authEn from '@ieum/i18n/en/auth.json'
 import boardsEn from '@ieum/i18n/en/boards.json'
 import commonEn from '@ieum/i18n/en/common.json'
@@ -12,6 +13,7 @@ import notificationsEn from '@ieum/i18n/en/notifications.json'
 import projectsEn from '@ieum/i18n/en/projects.json'
 import searchEn from '@ieum/i18n/en/search.json'
 import wikiEn from '@ieum/i18n/en/wiki.json'
+import adminKo from '@ieum/i18n/ko/admin.json'
 import authKo from '@ieum/i18n/ko/auth.json'
 import boardsKo from '@ieum/i18n/ko/boards.json'
 import commonKo from '@ieum/i18n/ko/common.json'
@@ -30,6 +32,7 @@ const resources = {
   en: {
     common: commonEn,
     auth: authEn,
+    admin: adminEn,
     errors: errorsEn,
     projects: projectsEn,
     issues: issuesEn,
@@ -42,6 +45,7 @@ const resources = {
   ko: {
     common: commonKo,
     auth: authKo,
+    admin: adminKo,
     errors: errorsKo,
     projects: projectsKo,
     issues: issuesKo,

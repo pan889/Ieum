@@ -8,11 +8,13 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 from typing import Any
+from uuid import UUID, uuid4
 
 import httpx
 import pyotp
 import pytest
 
+from ieum.config import Settings
 from ieum.core.time import utcnow
 
 pytestmark = pytest.mark.integration
@@ -402,3 +404,190 @@ class TestProfile:
     async def test_requires_authentication(self, app_client: httpx.AsyncClient) -> None:
         r = await app_client.patch(f"{BASE}/users/me", json={"locale": "ko"})
         assert r.status_code == 401
+
+
+class TestLoginFailureIsRecorded:
+    """실패한 로그인은 트랜잭션 밖으로 살아남아야 한다.
+
+    실패 경로는 예외를 던지고, 그러면 요청 세션이 롤백된다. 커밋하지 않으면
+    감사 기록도 시도 기록도 함께 사라진다 — 감사 로그에 실패가 안 남고,
+    실패 횟수를 못 세니 **무차별 대입 제한이 통째로 동작하지 않는다**.
+    """
+
+    async def test_the_rate_limiter_actually_fires(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        email = f"bruteforce-{uuid4().hex[:10]}@example.com"
+        limit = settings.login_max_attempts
+        codes = []
+        for _ in range(limit + 2):
+            r = await app_client.post(
+                f"{BASE}/auth/login", json={"email": email, "password": "wrong-password-1234"}
+            )
+            codes.append(r.status_code)
+        # 잠그지 않고 지연시킨다. 상한을 넘긴 뒤에는 429 가 나와야 한다.
+        assert 429 in codes, codes
+
+    async def test_the_failure_lands_in_the_audit_log(self, app_client: httpx.AsyncClient) -> None:
+        email = f"ghost-{uuid4().hex[:10]}@example.com"
+        await app_client.post(
+            f"{BASE}/auth/login", json={"email": email, "password": "wrong-password-1234"}
+        )
+
+        headers = _auth(await _login(app_client))
+        rows = (
+            await app_client.get(f"{BASE}/audit?action=auth.login.failed", headers=headers)
+        ).json()["items"]
+        assert any(r["metadata"].get("email") == email for r in rows), rows
+
+
+class TestSessionRevocation:
+    """기기 하나만 끊는 길. 전부 끊으면 지금 쓰는 자리에서도 튕겨 나간다."""
+
+    async def test_one_device_goes_and_the_rest_stay(self, app_client: httpx.AsyncClient) -> None:
+        first = _auth(await _login(app_client))
+        second = _auth(await _login(app_client))
+
+        rows = (await app_client.get(f"{BASE}/auth/sessions", headers=second)).json()
+        other = next(r for r in rows if not r["is_current"])
+
+        killed = await app_client.delete(f"{BASE}/auth/sessions/{other['id']}", headers=second)
+        assert killed.status_code == 204
+
+        # 끊은 쪽은 즉시 죽고, 끊은 사람 자신은 그대로 붙어 있다.
+        assert (await app_client.get(f"{BASE}/auth/me", headers=first)).status_code == 401
+        assert (await app_client.get(f"{BASE}/auth/me", headers=second)).status_code == 200
+
+    async def test_someone_elses_session_is_not_revealed(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        """404 를 주면 세션 id 를 넣어 보며 남의 세션 존재를 확인할 수 있다.
+        조용히 204 를 주되 **끊지는 않는다**."""
+        victim = _auth(await _login(app_client))
+        victim_sessions = (await app_client.get(f"{BASE}/auth/sessions", headers=victim)).json()
+        target = victim_sessions[0]["id"]
+
+        invited = await _invited_user(app_client, settings)
+        r = await app_client.delete(f"{BASE}/auth/sessions/{target}", headers=invited)
+        assert r.status_code == 204
+        assert (await app_client.get(f"{BASE}/auth/me", headers=victim)).status_code == 200
+
+    async def test_admin_revokes_another_users_sessions(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """퇴사·기기 분실 때 관리자가 하는 일. 원격 폐기가 없으면 비밀번호를
+        강제로 바꾸는 수밖에 없다."""
+        victim_tokens = await _login(app_client)
+        victim = _auth(victim_tokens)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=victim)).json()
+
+        admin = _auth(await _login(app_client))
+        r = await app_client.delete(f"{BASE}/users/{me['id']}/sessions", headers=admin)
+        assert r.status_code == 204
+        assert (await app_client.get(f"{BASE}/auth/me", headers=victim)).status_code == 401
+
+
+class TestAuditLog:
+    """감사 로그 조회. 쓰기만 되고 읽을 길이 없으면 감사에 대응할 수 없다."""
+
+    async def test_login_shows_up(self, app_client: httpx.AsyncClient) -> None:
+        headers = _auth(await _login(app_client))
+        r = await app_client.get(f"{BASE}/audit", headers=headers)
+        assert r.status_code == 200, r.text
+        rows = r.json()["items"]
+        assert rows, "로그인은 반드시 남는다"
+        # 최신순이다. 감사 로그는 늘 "방금 무슨 일이 있었나" 부터 본다.
+        assert rows[0]["action"] == "auth.login.succeeded"
+        # id 만 주면 화면에서 사람을 못 알아본다.
+        assert rows[0]["actor_email"] == ADMIN_EMAIL
+
+    async def test_filters_by_action_and_prefix(self, app_client: httpx.AsyncClient) -> None:
+        headers = _auth(await _login(app_client))
+        await app_client.post(
+            f"{BASE}/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password-here"}
+        )
+
+        exact = await app_client.get(f"{BASE}/audit?action=auth.login.failed", headers=headers)
+        assert [r["action"] for r in exact.json()["items"]] == ["auth.login.failed"]
+
+        # 점으로 끝나면 그 영역 전체다.
+        area = await app_client.get(f"{BASE}/audit?action=auth.", headers=headers)
+        actions = {r["action"] for r in area.json()["items"]}
+        assert {"auth.login.failed", "auth.login.succeeded"} <= actions
+
+    async def test_pages_backwards_without_repeating(self, app_client: httpx.AsyncClient) -> None:
+        """같은 밀리초에 여러 행이 쌓여도 커서가 흔들리면 안 된다 — 로그인
+        폭주 때 실제로 그렇게 들어온다."""
+        headers = _auth(await _login(app_client))
+        for _ in range(6):
+            await app_client.post(
+                f"{BASE}/auth/login", json={"email": ADMIN_EMAIL, "password": "nope-nope-nope"}
+            )
+
+        first = (await app_client.get(f"{BASE}/audit?limit=3", headers=headers)).json()
+        assert first["next_cursor"]
+        second = (
+            await app_client.get(
+                f"{BASE}/audit?limit=3&cursor={first['next_cursor']}", headers=headers
+            )
+        ).json()
+
+        ids = [r["id"] for r in first["items"]] + [r["id"] for r in second["items"]]
+        assert len(ids) == len(set(ids))
+
+    async def test_actions_come_from_constants(self, app_client: httpx.AsyncClient) -> None:
+        """아직 한 번도 안 일어난 행동도 목록에 있어야 한다. 없으면 화면에서
+        "그런 건 기록 안 하나" 로 읽힌다."""
+        headers = _auth(await _login(app_client))
+        r = await app_client.get(f"{BASE}/audit/actions", headers=headers)
+        assert r.status_code == 200
+        assert "auth.refresh.reuse_detected" in r.json()
+
+    async def test_export_is_csv_with_a_bom(self, app_client: httpx.AsyncClient) -> None:
+        """BOM 이 없으면 엑셀이 UTF-8 을 로컬 인코딩으로 읽어 한국어가 깨진다."""
+        headers = _auth(await _login(app_client))
+        r = await app_client.get(f"{BASE}/audit/export", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith("text/csv")
+        # 감사 로그는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
+        assert r.headers["cache-control"] == "no-store"
+        assert r.content.startswith(b"\xef\xbb\xbf")
+
+        text = r.content.decode("utf-8-sig")
+        assert text.splitlines()[0].startswith("created_at,action,actor_email")
+        assert ADMIN_EMAIL in text
+
+    async def test_without_the_permission_it_is_refused(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        """목록 하나가 조직의 활동 전부를 드러낸다."""
+        invited = await _invited_user(app_client, settings)
+        assert (await app_client.get(f"{BASE}/audit", headers=invited)).status_code == 403
+        assert (await app_client.get(f"{BASE}/audit/actions", headers=invited)).status_code == 403
+        # 거절이 빈 파일로 보이면 안 된다 — 헤더가 나간 뒤에 막으면 그렇게 된다.
+        assert (await app_client.get(f"{BASE}/audit/export", headers=invited)).status_code == 403
+
+
+async def _invited_user(client: httpx.AsyncClient, settings: Settings) -> dict[str, str]:
+    """아무 권한도 없는 계정. 초대받은 사람에게는 아무 권한도 없다."""
+    from ieum.modules.identity.invites import encode_invite_token
+
+    admin = _auth(await _login(client))
+    email = f"nobody-{uuid4().hex[:10]}@example.com"
+    invited = await client.post(
+        f"{BASE}/users/invite",
+        json={"email": email, "display_name": "Nobody"},
+        headers=admin,
+    )
+    assert invited.status_code == 201, invited.text
+
+    password = "nobody-password-1234"
+    token = encode_invite_token(UUID(invited.json()["id"]), settings)
+    accepted = await client.post(
+        f"{BASE}/users/accept-invite", json={"token": token, "password": password}
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    signed_in = await client.post(f"{BASE}/auth/login", json={"email": email, "password": password})
+    assert signed_in.status_code == 200, signed_in.text
+    return _auth(dict(signed_in.json()))

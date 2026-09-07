@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 import secrets
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -42,15 +42,19 @@ from ieum.core.logging import get_logger
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import (
+    PermissionService,
     Scope,
     ScopeKind,
     get_permission_service,
     registry,
 )
 from ieum.core.time import in_seconds, utcnow
+from ieum.modules.identity import audit
 from ieum.modules.identity import events as identity_events
-from ieum.modules.identity.models import ApiToken, MFACredential, User, UserSession
+from ieum.modules.identity import permissions as perms
+from ieum.modules.identity.models import ApiToken, AuditLog, MFACredential, User, UserSession
 from ieum.modules.identity.repository import (
+    AuditFilter,
     AuditRepository,
     LoginAttemptRepository,
     MFARepository,
@@ -152,7 +156,7 @@ class AuthService:
         )
 
         self._audit.record(
-            action="auth.login.succeeded",
+            action=audit.LOGIN_SUCCEEDED,
             actor_id=user.id,
             target_type="user",
             target_id=user.id,
@@ -182,7 +186,7 @@ class AuthService:
         if row.rotated_to_id is not None or row.revoked_at is not None:
             revoked = await self._sessions.revoke_family(row.family_id)
             self._audit.record(
-                action="auth.refresh.reuse_detected",
+                action=audit.REFRESH_REUSE_DETECTED,
                 actor_id=row.user_id,
                 target_type="session_family",
                 target_id=row.family_id,
@@ -229,13 +233,35 @@ class AuthService:
             return
         row.revoked_at = utcnow()
         self._audit.record(
-            action="auth.logout", actor_id=row.user_id, target_type="session", target_id=row.id
+            action=audit.LOGOUT, actor_id=row.user_id, target_type="session", target_id=row.id
         )
+
+    async def revoke_session(self, *, session_id: UUID, user_id: UUID, actor_id: UUID) -> bool:
+        """세션 하나만 끊는다. 못 찾았거나 남의 것이면 False.
+
+        전부 끊기(`revoke_all_sessions`)와 다른 길이 필요한 이유는 기기를 하나만
+        잃어버렸을 때다. 전부 끊으면 지금 쓰고 있는 자리에서도 튕겨 나간다.
+
+        **남의 세션인지 여기서 본다.** 라우터에서 보면 서비스를 다시 쓸 때
+        빠진다 — 세션 id 만 알면 아무나 끊을 수 있게 된다.
+        """
+        row = await self._sessions.get(session_id)
+        if row is None or row.user_id != user_id or row.revoked_at is not None:
+            return False
+        row.revoked_at = utcnow()
+        self._audit.record(
+            action=audit.SESSION_REVOKED,
+            actor_id=actor_id,
+            target_type="session",
+            target_id=row.id,
+            metadata={"user_id": str(user_id)},
+        )
+        return True
 
     async def revoke_all_sessions(self, *, user_id: UUID, actor_id: UUID | None = None) -> int:
         count = await self._sessions.revoke_all_for_user(user_id)
         self._audit.record(
-            action="auth.session.revoked_all",
+            action=audit.SESSION_REVOKED_ALL,
             actor_id=actor_id or user_id,
             target_type="user",
             target_id=user_id,
@@ -335,7 +361,7 @@ class AuthService:
     ) -> None:
         self._attempts.record(email=email, ip=ip, succeeded=False)
         self._audit.record(
-            action="auth.login.failed",
+            action=audit.LOGIN_FAILED,
             actor_id=user.id if user else None,
             target_type="user",
             target_id=user.id if user else None,
@@ -417,7 +443,7 @@ class MFAService:
         credential.last_timestep = matched
 
         self._audit.record(
-            action="auth.mfa.enrolled",
+            action=audit.MFA_ENROLLED,
             actor_id=user_id,
             target_type="mfa_credential",
             target_id=credential.id,
@@ -434,7 +460,7 @@ class MFAService:
         if await self._verify_totp(user_id, code) or await self._consume_backup_code(user_id, code):
             row.mfa_satisfied_at = utcnow()
             self._audit.record(
-                action="auth.mfa.verified",
+                action=audit.MFA_VERIFIED,
                 actor_id=user_id,
                 target_type="session",
                 target_id=row.id,
@@ -442,7 +468,7 @@ class MFAService:
             return
 
         self._audit.record(
-            action="auth.mfa.failed", actor_id=user_id, target_type="session", target_id=row.id
+            action=audit.MFA_FAILED, actor_id=user_id, target_type="session", target_id=row.id
         )
         raise ValidationError("인증 코드가 올바르지 않다.", code="auth.mfa_invalid_code")
 
@@ -466,7 +492,7 @@ class MFAService:
                 )
             )
         self._audit.record(
-            action="auth.mfa.backup_codes_issued",
+            action=audit.MFA_BACKUP_CODES_ISSUED,
             actor_id=user_id,
             target_type="user",
             target_id=user_id,
@@ -554,7 +580,7 @@ class UserService:
         await self._s.flush()
 
         self._audit.record(
-            action="identity.user.invited",
+            action=audit.USER_INVITED,
             actor_id=invited_by,
             target_type="user",
             target_id=user.id,
@@ -602,7 +628,7 @@ class UserService:
         user.status = "active"
 
         self._audit.record(
-            action="identity.user.activated",
+            action=audit.USER_ACTIVATED,
             actor_id=user.id,
             target_type="user",
             target_id=user.id,
@@ -631,7 +657,7 @@ class UserService:
                 )
             user.locale = locale
             self._audit.record(
-                action="identity.user.locale_changed",
+                action=audit.USER_LOCALE_CHANGED,
                 actor_id=user_id,
                 target_type="user",
                 target_id=user_id,
@@ -654,7 +680,7 @@ class UserService:
         # 비밀번호가 바뀌면 다른 기기의 세션을 끊는다. 탈취 대응의 핵심이다.
         revoked = await self._sessions.revoke_all_for_user(user_id)
         self._audit.record(
-            action="identity.user.password_changed",
+            action=audit.USER_PASSWORD_CHANGED,
             actor_id=user_id,
             target_type="user",
             target_id=user_id,
@@ -686,6 +712,46 @@ __all__ = [
     "TOTPEnrollment",
     "UserService",
 ]
+
+
+class AuditService:
+    """감사 로그 조회. 쓰기는 각 서비스가 `AuditRepository` 로 직접 한다.
+
+    읽기만 여기 모으는 이유는 **권한** 때문이다. 감사 로그는 누가 언제 무엇을
+    했는지가 통째로 들어 있어, 목록 하나가 조직의 활동 전부를 드러낸다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+        self._audit = AuditRepository(session)
+        self._users = UserRepository(session)
+
+    async def list(
+        self, actor: Actor, filters: AuditFilter, request: PageRequest
+    ) -> tuple[Page[AuditLog], dict[UUID, str]]:
+        """페이지와, 그 안에 나온 행위자의 이메일.
+
+        이메일을 함께 주는 이유는 화면이 id 만 받으면 사람을 못 알아보기
+        때문이다. 목록마다 사용자 API 를 다시 부르게 하면 N+1 이 화면 쪽으로
+        옮겨 갈 뿐이다.
+        """
+        await self._require_view(actor)
+        page = await self._audit.list(filters, request)
+        rows = await self._users.get_many([r.actor_id for r in page.items if r.actor_id])
+        return page, {u.id: u.email for u in rows}
+
+    async def export(self, actor: Actor, filters: AuditFilter) -> AsyncIterator[bytes]:
+        """CSV 스트림. 권한은 **스트림을 만들기 전에** 본다.
+
+        제너레이터 안에서 보면 응답 헤더가 이미 200 으로 나간 뒤라, 거절이
+        빈 파일로 보인다.
+        """
+        await self._require_view(actor)
+        return audit.stream_csv(self._s, filters)
+
+    async def _require_view(self, actor: Actor) -> None:
+        await self._perms.require(self._s, actor, perms.AUDIT_VIEW, scope=Scope.global_())
 
 
 class ApiTokenService:
@@ -763,7 +829,7 @@ class ApiTokenService:
         await self._s.flush()
 
         self._audit.record(
-            action="identity.token.issued",
+            action=audit.TOKEN_ISSUED,
             actor_id=actor.user_id,
             target_type="api_token",
             target_id=row.id,
@@ -788,7 +854,7 @@ class ApiTokenService:
             raise NotFoundError("토큰을 찾을 수 없다.")
         row.revoked_at = utcnow()
         self._audit.record(
-            action="identity.token.revoked",
+            action=audit.TOKEN_REVOKED,
             actor_id=actor.user_id,
             target_type="api_token",
             target_id=row.id,

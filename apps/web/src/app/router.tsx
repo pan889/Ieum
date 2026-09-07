@@ -16,6 +16,8 @@ import type { IssuesSearch } from '@/features/issues/urlState'
 import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
 import { NotificationsScreen } from '@/features/notifications/NotificationsScreen'
 import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
+import { AuditLogScreen } from '@/features/settings/AuditLogScreen'
+import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
 
@@ -82,6 +84,18 @@ const tokensRoute = createRoute({
   component: ApiTokensScreen,
 })
 
+const sessionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/sessions',
+  component: SessionsScreen,
+})
+
+const auditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/audit',
+  component: AuditLogScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -141,6 +155,8 @@ const routeTree = rootRoute.addChildren([
   boardsRoute,
   boardRoute,
   tokensRoute,
+  sessionsRoute,
+  auditRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

@@ -1,0 +1,18 @@
+{
+  "audit.title": "Audit log",
+  "audit.description": "Who did what, and when. Records cannot be edited or deleted.",
+  "audit.action": "Action",
+  "audit.allActions": "All actions",
+  "audit.areaAuth": "Sign-in and 2FA",
+  "audit.areaIdentity": "Accounts and tokens",
+  "audit.since": "From",
+  "audit.until": "To",
+  "audit.export": "Export CSV",
+  "audit.empty": "Nothing recorded in this range.",
+  "audit.when": "When",
+  "audit.actor": "Who",
+  "audit.target": "Target",
+  "audit.ip": "IP",
+  "audit.details": "Details",
+  "audit.systemActor": "System"
+}

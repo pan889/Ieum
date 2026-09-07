@@ -24,7 +24,12 @@ from ieum.core.logging import configure_logging, get_logger
 from ieum.core.middleware import TraceMiddleware
 from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
-from ieum.modules.identity.router import auth_router, tokens_router, users_router
+from ieum.modules.identity.router import (
+    audit_router,
+    auth_router,
+    tokens_router,
+    users_router,
+)
 from ieum.modules.issues import attachments as issue_attachments
 from ieum.modules.issues.board_router import boards_router
 from ieum.modules.issues.contracts import issue_model
@@ -134,6 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         auth_router,
         users_router,
         tokens_router,
+        audit_router,
         projects_router,
         roles_router,
         issues_router,

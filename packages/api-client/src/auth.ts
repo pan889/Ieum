@@ -105,6 +105,8 @@ export function createAuthApi(client: ApiClient) {
     me: () => client.get<CurrentUser>(`${BASE}/me`),
     sessions: () => client.get<SessionInfo[]>(`${BASE}/sessions`),
     revokeAllSessions: () => client.delete<void>(`${BASE}/sessions`),
+    /** 기기 하나만 끊는다. 전부 끊으면 지금 쓰는 자리에서도 튕겨 나간다. */
+    revokeSession: (id: string) => client.delete<void>(`${BASE}/sessions/${id}`),
 
     enrollTotp: () => client.post<TotpEnrollment>(`${BASE}/mfa/totp/enroll`),
     confirmTotp: (credentialId: string, code: string) =>
