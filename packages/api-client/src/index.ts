@@ -32,6 +32,10 @@ export {
   createSecurityApi,
   type SecurityApi,
   type SecurityPolicy,
+  createIdpApi,
+  type IdentityProvider,
+  type IdpApi,
+  type NewIdentityProvider,
 } from './projects'
 export {
   createIssuesApi,

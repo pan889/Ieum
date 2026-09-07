@@ -111,12 +111,29 @@ export function createAuthApi(client: ApiClient) {
     revokeSession: (id: string) => client.delete<void>(`${BASE}/sessions/${id}`),
 
     /** 로그인 **전에** 부른다. 실패해도 화면은 로컬 로그인으로 서야 한다. */
-    ssoProviders: () => client.get<SsoProvider[]>(`${BASE}/sso/providers`),
+    ssoProviders: () =>
+      client.get<SsoProvider[]>(`${BASE}/sso/providers`, { anonymous: true }),
     /** 콜백 주소는 서버가 정한다 — 여기서 고르게 하면 코드가 새 나간다. */
     startSso: (providerId: string) =>
-      client.post<{ authorization_url: string }>(`${BASE}/sso/${providerId}/start`),
-    completeSso: (code: string, state: string) =>
-      client.post<TokenResponse>(`${BASE}/sso/callback`, { code, state }),
+      client.post<{ authorization_url: string }>(`${BASE}/sso/${providerId}/start`, undefined, {
+        anonymous: true,
+      }),
+
+    async completeSso(code: string, state: string): Promise<TokenResponse> {
+      const tokens = await client.post<TokenResponse>(
+        `${BASE}/sso/callback`,
+        { code, state },
+        { anonymous: true },
+      )
+      // **로컬 로그인과 같이 저장한다.** 안 하면 교환은 성공하는데 다음
+      // 요청이 401 을 받아, 화면은 다시 로그인 화면으로 떨어진다 — 사용자
+      // 눈에는 "SSO 가 안 된다" 로만 보인다.
+      tokenStore.set({
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+      })
+      return tokens
+    },
 
     enrollTotp: () => client.post<TotpEnrollment>(`${BASE}/mfa/totp/enroll`),
     confirmTotp: (credentialId: string, code: string) =>

@@ -21,5 +21,21 @@
   "security.requireMfaHint": "모든 사람이 인증 앱을 등록해야 Ieum 을 쓸 수 있습니다.",
   "security.turnOn": "켜기",
   "security.turnOff": "끄기",
-  "security.appliesNextSignIn": "각자 다음에 로그인할 때부터 적용됩니다. 이미 열려 있는 세션은 그대로 유지됩니다."
+  "security.appliesNextSignIn": "각자 다음에 로그인할 때부터 적용됩니다. 이미 열려 있는 세션은 그대로 유지됩니다.",
+  "sso.title": "싱글 사인온",
+  "sso.description": "회사 IdP 로 로그인할 수 있게 합니다.",
+  "sso.add": "IdP 추가",
+  "sso.empty": "등록된 IdP 가 없습니다.",
+  "sso.name": "표시 이름",
+  "sso.issuer": "발급자(issuer)",
+  "sso.clientId": "클라이언트 ID",
+  "sso.clientSecret": "클라이언트 시크릿",
+  "sso.authorizationEndpoint": "인가 엔드포인트",
+  "sso.tokenEndpoint": "토큰 엔드포인트",
+  "sso.jwksUri": "JWKS 주소",
+  "sso.groupsClaim": "그룹 클레임",
+  "sso.emailDomains": "이메일 도메인",
+  "sso.redirectHint": "IdP 에 이 콜백 주소를 등록하세요: {uri}",
+  "sso.save": "추가",
+  "sso.disable": "끄기"
 }

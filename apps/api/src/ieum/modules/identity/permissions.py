@@ -13,6 +13,7 @@ GROUP_MANAGE = "identity.group.manage"
 SESSION_REVOKE = "identity.session.revoke"
 TOKEN_ISSUE = "identity.token.issue"  # noqa: S105 - 권한 상수이지 비밀번호가 아니다
 AUDIT_VIEW = "identity.audit.view"
+IDP_MANAGE = "identity.idp.manage"
 
 registry.register_many(
     [
@@ -24,6 +25,9 @@ registry.register_many(
         PermissionDef(SESSION_REVOKE, GLOBAL, "타인 세션 폐기", requires_step_up=True),
         PermissionDef(TOKEN_ISSUE, GLOBAL, "API 토큰 발급", requires_step_up=True),
         PermissionDef(AUDIT_VIEW, GLOBAL, "감사 로그 조회"),
+        # IdP 설정을 쥐면 누구로든 로그인할 수 있다. auth.md 3절이 step-up 을
+        # 요구하는 자리다 — 2FA 강제 스위치와 달리 부트스트랩 문제가 없다.
+        PermissionDef(IDP_MANAGE, GLOBAL, "IdP 설정 변경", requires_step_up=True),
     ]
 )
 
@@ -35,4 +39,5 @@ ALL = (
     SESSION_REVOKE,
     TOKEN_ISSUE,
     AUDIT_VIEW,
+    IDP_MANAGE,
 )

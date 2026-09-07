@@ -47,6 +47,10 @@ SSO_LOGIN_SUCCEEDED = "auth.sso.login_succeeded"
 SSO_USER_PROVISIONED = "auth.sso.user_provisioned"
 SSO_ACCOUNT_LINKED = "auth.sso.account_linked"
 
+# ── IdP ─────────────────────────────────────────────────────────
+IDP_CREATED = "identity.idp.created"
+IDP_UPDATED = "identity.idp.updated"
+
 # ── 보안 정책 ───────────────────────────────────────────────────
 SECURITY_MFA_POLICY_CHANGED = "org.security.mfa_policy_changed"
 
@@ -75,6 +79,8 @@ ACTIONS = (
     SSO_LOGIN_SUCCEEDED,
     SSO_USER_PROVISIONED,
     SSO_ACCOUNT_LINKED,
+    IDP_CREATED,
+    IDP_UPDATED,
     SECURITY_MFA_POLICY_CHANGED,
     TOKEN_ISSUED,
     TOKEN_REVOKED,
@@ -169,6 +175,8 @@ async def _fill_emails(
 __all__ = [
     "ACTIONS",
     "COLUMNS",
+    "IDP_CREATED",
+    "IDP_UPDATED",
     "LOGIN_FAILED",
     "LOGIN_SUCCEEDED",
     "LOGOUT",

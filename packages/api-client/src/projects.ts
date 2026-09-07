@@ -81,3 +81,50 @@ export function createSecurityApi(client: ApiClient) {
 }
 
 export type SecurityApi = ReturnType<typeof createSecurityApi>
+
+
+/** 관리 화면용 IdP. **시크릿은 여기에 없다** — 저장도 암호문뿐이다. */
+export interface IdentityProvider {
+  id: string
+  name: string
+  kind: string
+  is_enabled: boolean
+  issuer: string
+  client_id: string
+  jit_provisioning: boolean
+  link_verified_email: boolean
+  email_domains: string[]
+  trust_idp_mfa: boolean
+  groups_claim: string | null
+}
+
+export interface NewIdentityProvider {
+  name: string
+  issuer: string
+  client_id: string
+  client_secret: string
+  authorization_endpoint: string
+  token_endpoint: string
+  jwks_uri: string
+  scopes?: string
+  email_claim?: string
+  name_claim?: string
+  groups_claim?: string | null
+  jit_provisioning?: boolean
+  link_verified_email?: boolean
+  email_domains?: string[]
+  trust_idp_mfa?: boolean
+}
+
+export function createIdpApi(client: ApiClient) {
+  return {
+    list: () => client.get<IdentityProvider[]>('/api/v1/admin/sso/providers'),
+    create: (body: NewIdentityProvider) =>
+      client.post<IdentityProvider>('/api/v1/admin/sso/providers', body),
+    /** 지우지 않고 끈다 — 지우면 계정 연결이 따라 사라진다. */
+    disable: (id: string) =>
+      client.post<void>(`/api/v1/admin/sso/providers/${id}/disable`),
+  }
+}
+
+export type IdpApi = ReturnType<typeof createIdpApi>

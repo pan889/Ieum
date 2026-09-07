@@ -206,3 +206,21 @@ class SsoProviderCreateRequest(BaseModel):
     link_verified_email: bool = True
     email_domains: list[str] = Field(default_factory=list)
     trust_idp_mfa: bool = False
+
+
+class IdpResponse(BaseModel):
+    """관리 화면용. **시크릿은 절대 나가지 않는다** — 저장도 암호문뿐이다."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    kind: str
+    is_enabled: bool
+    issuer: str
+    client_id: str
+    jit_provisioning: bool
+    link_verified_email: bool
+    email_domains: list[str]
+    trust_idp_mfa: bool
+    groups_claim: str | None

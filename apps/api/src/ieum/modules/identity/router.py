@@ -35,6 +35,7 @@ from ieum.modules.identity.schemas import (
     AuditPageResponse,
     BackupCodesResponse,
     ChangePasswordRequest,
+    IdpResponse,
     InviteRequest,
     LoginRequest,
     MFAVerifyRequest,
@@ -42,6 +43,7 @@ from ieum.modules.identity.schemas import (
     RefreshRequest,
     SessionResponse,
     SsoCallbackRequest,
+    SsoProviderCreateRequest,
     SsoProviderResponse,
     SsoStartResponse,
     TokenResponse,
@@ -53,8 +55,10 @@ from ieum.modules.identity.service import (
     ApiTokenService,
     AuditService,
     AuthService,
+    IdentityProviderService,
     IssuedTokens,
     MFAService,
+    NewProvider,
     SsoService,
     UserService,
 )
@@ -62,6 +66,7 @@ from ieum.modules.identity.service import (
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
 audit_router = APIRouter(prefix="/audit", tags=["audit"])
+sso_admin_router = APIRouter(prefix="/admin/sso", tags=["sso"])
 
 
 def _tokens(issued: IssuedTokens) -> TokenResponse:
@@ -551,3 +556,66 @@ async def complete_sso(
     )
     await session.commit()
     return _tokens(issued)
+
+
+# ── IdP 관리 ───────────────────────────────────────────────────
+
+
+@sso_admin_router.get("/providers", response_model=list[IdpResponse])
+async def list_providers(
+    actor: CurrentActor, session: DbSession, settings: AppSettings, permissions: PermissionDep
+) -> list[IdpResponse]:
+    rows = await IdentityProviderService(session, settings, permissions).list_all(actor)
+    return [IdpResponse.model_validate(p) for p in rows]
+
+
+@sso_admin_router.post(
+    "/providers", response_model=IdpResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_provider(
+    body: SsoProviderCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> IdpResponse:
+    """IdP 를 등록한다. step-up 이 필요하다 — 이 설정을 쥐면 누구로든 로그인할
+    수 있다(발급자와 JWKS 를 바꾸면 자기 키로 서명한 토큰이 통과한다)."""
+    provider = await IdentityProviderService(session, settings, permissions).create(
+        actor,
+        NewProvider(
+            name=body.name,
+            issuer=body.issuer,
+            client_id=body.client_id,
+            client_secret=body.client_secret,
+            authorization_endpoint=body.authorization_endpoint,
+            token_endpoint=body.token_endpoint,
+            jwks_uri=body.jwks_uri,
+            scopes=body.scopes,
+            email_claim=body.email_claim,
+            name_claim=body.name_claim,
+            groups_claim=body.groups_claim,
+            jit_provisioning=body.jit_provisioning,
+            link_verified_email=body.link_verified_email,
+            email_domains=tuple(body.email_domains),
+            trust_idp_mfa=body.trust_idp_mfa,
+        ),
+    )
+    await session.commit()
+    return IdpResponse.model_validate(provider)
+
+
+@sso_admin_router.post("/providers/{provider_id}/disable", status_code=status.HTTP_204_NO_CONTENT)
+async def disable_provider(
+    provider_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> None:
+    """지우지 않고 끈다. 지우면 `user_identity` 가 따라 사라져, 다시 켤 때
+    모두가 새 계정으로 들어온다."""
+    await IdentityProviderService(session, settings, permissions).set_enabled(
+        actor, provider_id, enabled=False
+    )
+    await session.commit()

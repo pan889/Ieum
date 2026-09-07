@@ -1252,3 +1252,96 @@ class SsoService:
         return SecretBox(
             self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class NewProvider:
+    """IdP 등록 입력. 시크릿만 따로 받는다 — 저장 전에 봉해야 한다."""
+
+    name: str
+    issuer: str
+    client_id: str
+    client_secret: str
+    authorization_endpoint: str
+    token_endpoint: str
+    jwks_uri: str
+    scopes: str = "openid email profile"
+    email_claim: str = "email"
+    name_claim: str = "name"
+    groups_claim: str | None = None
+    jit_provisioning: bool = True
+    link_verified_email: bool = True
+    email_domains: tuple[str, ...] = ()
+    trust_idp_mfa: bool = False
+
+
+class IdentityProviderService:
+    """IdP 등록·변경 (auth.md 4절).
+
+    IdP 설정을 쥐면 **누구로든 로그인할 수 있다.** 발급자와 JWKS 를 바꾸면
+    자기 키로 서명한 토큰이 통과한다. step-up 이 붙어 있는 이유다.
+    """
+
+    def __init__(
+        self, session: AsyncSession, settings: Settings, permissions: PermissionService
+    ) -> None:
+        self._s = session
+        self._settings = settings
+        self._perms = permissions
+        self._providers = IdentityProviderRepository(session)
+
+    async def list_all(self, actor: Actor) -> list[IdentityProvider]:
+        await self._require(actor)
+        return await self._providers.enabled()
+
+    async def create(self, actor: Actor, new: NewProvider) -> IdentityProvider:
+        await self._require(actor)
+        box = SecretBox(self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret")
+        provider = self._providers.add(
+            IdentityProvider(
+                name=new.name,
+                kind="oidc",
+                is_enabled=True,
+                issuer=new.issuer,
+                client_id=new.client_id,
+                # 평문은 여기서 끝난다. 응답에도 로그에도 다시 나오지 않는다.
+                client_secret_enc=box.encrypt(new.client_secret),
+                authorization_endpoint=new.authorization_endpoint,
+                token_endpoint=new.token_endpoint,
+                jwks_uri=new.jwks_uri,
+                scopes=new.scopes,
+                email_claim=new.email_claim,
+                name_claim=new.name_claim,
+                groups_claim=new.groups_claim,
+                jit_provisioning=new.jit_provisioning,
+                link_verified_email=new.link_verified_email,
+                email_domains=list(new.email_domains),
+                trust_idp_mfa=new.trust_idp_mfa,
+            )
+        )
+        await self._s.flush()
+        AuditRepository(self._s).record(
+            action=audit.IDP_CREATED,
+            actor_id=actor.user_id,
+            target_type="identity_provider",
+            target_id=provider.id,
+            metadata={"name": provider.name, "issuer": provider.issuer},
+        )
+        return provider
+
+    async def set_enabled(self, actor: Actor, provider_id: UUID, *, enabled: bool) -> None:
+        await self._require(actor)
+        provider = await self._providers.get(provider_id)
+        if provider is None:
+            raise NotFoundError("그 IdP 를 찾을 수 없다.")
+        provider.is_enabled = enabled
+        AuditRepository(self._s).record(
+            action=audit.IDP_UPDATED,
+            actor_id=actor.user_id,
+            target_type="identity_provider",
+            target_id=provider.id,
+            metadata={"is_enabled": enabled},
+        )
+
+    async def _require(self, actor: Actor) -> None:
+        await self._perms.require(self._s, actor, perms.IDP_MANAGE, scope=Scope.global_())

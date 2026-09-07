@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 import httpx
@@ -827,3 +827,73 @@ class TestStepUpNeedsRealMFA:
             headers=_auth(rotated.json()),
         )
         assert r.status_code == 201, r.text
+
+
+class TestIdpAdmin:
+    """IdP 설정을 쥐면 **누구로든 로그인할 수 있다.**
+
+    발급자와 JWKS 를 바꾸면 자기 키로 서명한 토큰이 통과한다. 그래서 step-up
+    대상이고, 시크릿은 어떤 응답에도 나오지 않아야 한다.
+    """
+
+    BODY: ClassVar[dict[str, Any]] = {
+        "name": "Corp",
+        "issuer": "https://idp.corp.example.com",
+        "client_id": "ieum",
+        "client_secret": "super-secret-value",
+        "authorization_endpoint": "https://idp.corp.example.com/authorize",
+        "token_endpoint": "https://idp.corp.example.com/token",
+        "jwks_uri": "https://idp.corp.example.com/jwks",
+        "email_domains": ["corp.example.com"],
+    }
+
+    async def test_registering_needs_step_up(self, app_client: httpx.AsyncClient) -> None:
+        headers = _auth(await _login(app_client))
+        r = await app_client.post(f"{BASE}/admin/sso/providers", json=self.BODY, headers=headers)
+        assert r.status_code == 403, r.text
+        assert r.json()["error"]["code"] == "auth.step_up_requires_mfa"
+
+    async def test_the_secret_never_comes_back(self, app_client: httpx.AsyncClient) -> None:
+        headers = _auth(await _login(app_client))
+        await _enroll_totp(app_client, headers)
+
+        created = await app_client.post(
+            f"{BASE}/admin/sso/providers", json=self.BODY, headers=headers
+        )
+        assert created.status_code == 201, created.text
+        assert "super-secret-value" not in created.text
+        assert "client_secret" not in created.json()
+
+        listed = await app_client.get(f"{BASE}/admin/sso/providers", headers=headers)
+        assert listed.status_code == 200
+        assert "super-secret-value" not in listed.text
+
+    async def test_the_public_list_shows_only_names(self, app_client: httpx.AsyncClient) -> None:
+        """로그인 **전에** 부르는 목록이다. 엔드포인트·클레임 설정까지 흘리면
+        조직의 IdP 구성이 통째로 드러난다."""
+        headers = _auth(await _login(app_client))
+        await _enroll_totp(app_client, headers)
+        await app_client.post(f"{BASE}/admin/sso/providers", json=self.BODY, headers=headers)
+
+        # 익명으로 부른다.
+        public = await app_client.get(f"{BASE}/auth/sso/providers")
+        assert public.status_code == 200, public.text
+        rows = public.json()
+        assert rows and rows[0]["name"] == "Corp"
+        assert set(rows[0]) == {"id", "name"}, rows[0]
+
+    async def test_disabling_hides_it_from_the_login_screen(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = _auth(await _login(app_client))
+        await _enroll_totp(app_client, headers)
+        created = await app_client.post(
+            f"{BASE}/admin/sso/providers", json=self.BODY, headers=headers
+        )
+        provider_id = created.json()["id"]
+
+        off = await app_client.post(
+            f"{BASE}/admin/sso/providers/{provider_id}/disable", headers=headers
+        )
+        assert off.status_code == 204, off.text
+        assert (await app_client.get(f"{BASE}/auth/sso/providers")).json() == []

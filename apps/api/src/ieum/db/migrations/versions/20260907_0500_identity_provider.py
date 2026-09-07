@@ -23,8 +23,20 @@ def upgrade() -> None:
     op.create_table(
         "identity_provider",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        # `server_default` 를 빠뜨리면 INSERT 가 NOT NULL 로 죽는다. 모델은
+        # 서버가 채우는 값으로 선언돼 있어 파이썬 쪽에서 안 넣는다.
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(length=100), nullable=False),
         sa.Column("kind", sa.String(length=16), nullable=False),
         sa.Column("is_enabled", sa.Boolean(), nullable=False),
@@ -48,8 +60,20 @@ def upgrade() -> None:
     op.create_table(
         "user_identity",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        # `server_default` 를 빠뜨리면 INSERT 가 NOT NULL 로 죽는다. 모델은
+        # 서버가 채우는 값으로 선언돼 있어 파이썬 쪽에서 안 넣는다.
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.Column("provider_id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("subject", sa.String(length=255), nullable=False),
