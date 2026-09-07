@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ieum.core.context import Actor
 from ieum.core.exceptions import ConflictError, NotFoundError, ValidationError
 from ieum.core.pagination import Page, PageRequest
-from ieum.core.permissions import PermissionService, Scope
+from ieum.core.permissions import PermissionService, Scope, ScopeKind
 from ieum.modules.identity import contracts as identity
 from ieum.modules.org import contracts
 from ieum.modules.org import permissions as perms
@@ -202,6 +203,172 @@ class RoleService:
             principal_id=principal_id,
         )
 
+    async def list_roles(self, actor: Actor) -> list[RoleView]:
+        """역할 목록 — 권한과 할당 수까지.
+
+        할당 수를 함께 주는 이유: 지우기 전에 몇 명이 영향을 받는지 알아야
+        한다. 화면에서 역할마다 할당을 또 부르면 목록 한 번에 N+1 이 된다.
+        """
+        await self._perms.require(self._s, actor, perms.ROLE_MANAGE, scope=Scope.global_())
+        roles = await self._roles.list_all()
+        grants = await self._roles.grants_by_role()
+        counts = await self._roles.assignment_counts()
+        return [
+            RoleView(role=role, grants=grants.get(role.id, []), assignments=counts.get(role.id, 0))
+            for role in roles
+        ]
+
+    async def update_role(
+        self,
+        actor: Actor,
+        role_id: UUID,
+        *,
+        grants: list[str] | None = None,
+        description: str | None = None,
+        require_mfa: bool | None = None,
+    ) -> Role:
+        """역할의 권한·설명·2FA 요구를 고친다.
+
+        **내장 역할의 권한은 못 고친다.** 시드가 매 기동마다 `BUILTIN_ROLES`
+        정의로 되돌린다(빠진 것을 넣고 남는 것을 회수한다) — 여기서 받아 주면
+        화면은 성공을 보여 주고 다음 배포가 조용히 되돌린다. 설명과 2FA
+        요구는 시드가 손대지 않으므로 고칠 수 있다.
+
+        고칠 길이 없으면 **잘못 만든 역할을 되돌릴 수 없다.** 같은 이름으로
+        새로 만드는 길은 유일 제약이 막고, 이미 준 할당은 그 역할을 가리킨다.
+        """
+        await self._perms.require(self._s, actor, perms.ROLE_MANAGE, scope=Scope.global_())
+        role = await self._require_role(role_id)
+
+        if grants is not None:
+            if role.is_builtin:
+                raise ConflictError(
+                    f"'{role.name}' 은 내장 역할이다. 권한 정의는 바꿀 수 없다.",
+                    code="org.role_is_builtin",
+                )
+            self._validate_grants(grants)
+            self._require_scope_fits(role.scope_kind, grants)
+            # 자기 발을 쏘는 자리. 마지막 관리자가 자기 역할에서 이 권한을
+            # 빼면 역할 화면 자체를 영구히 잃는다.
+            await self._refuse_self_lockout(actor, role, grants)
+            await self._roles.replace_grants(role.id, grants)
+
+        if description is not None:
+            role.description = description or None
+        if require_mfa is not None:
+            role.require_mfa = require_mfa
+        await self._s.flush()
+        return role
+
+    async def delete_role(self, actor: Actor, role_id: UUID) -> None:
+        """역할을 지운다. 할당도 함께 사라진다(FK CASCADE).
+
+        내장 역할은 못 지운다 — 시드가 다음 기동에 다시 만든다.
+        """
+        await self._perms.require(self._s, actor, perms.ROLE_MANAGE, scope=Scope.global_())
+        role = await self._require_role(role_id)
+        if role.is_builtin:
+            raise ConflictError(
+                f"'{role.name}' 은 내장 역할이다. 지울 수 없다.",
+                code="org.role_is_builtin",
+            )
+        await self._refuse_self_lockout(actor, role, [])
+        await self._roles.delete_role(role_id)
+
+    async def assignments(self, actor: Actor, role_id: UUID) -> list[RoleAssignment]:
+        await self._perms.require(self._s, actor, perms.ROLE_MANAGE, scope=Scope.global_())
+        await self._require_role(role_id)
+        return await self._roles.assignments_of(role_id)
+
+    async def revoke(self, actor: Actor, assignment_id: UUID) -> None:
+        """할당을 회수한다.
+
+        **주는 길만 있으면 그건 권한 관리가 아니다.** 잘못 준 것을 되돌릴 수
+        없으면 실수 하나가 영구히 남는다.
+        """
+        assignment = await self._roles.assignment(assignment_id)
+        if assignment is None:
+            raise NotFoundError("역할 할당을 찾을 수 없다.")
+
+        kind = ScopeKind(assignment.scope_kind)
+        scope = Scope.global_() if kind is ScopeKind.GLOBAL else Scope(kind, assignment.scope_id)
+        await self._perms.require(self._s, actor, perms.ROLE_ASSIGN, scope=scope)
+
+        role = await self._require_role(assignment.role_id)
+        if self._is_self(actor, assignment) and await self._grants_role_manage(role):
+            raise ConflictError(
+                "자기 관리자 역할은 스스로 회수할 수 없다.",
+                code="org.cannot_revoke_own_admin",
+            )
+        await self._roles.delete_assignment(assignment_id)
+
+    async def _require_role(self, role_id: UUID) -> Role:
+        role = await self._roles.get(role_id)
+        if role is None:
+            raise NotFoundError("역할을 찾을 수 없다.")
+        return role
+
+    @staticmethod
+    def _is_self(actor: Actor, assignment: RoleAssignment) -> bool:
+        if assignment.principal_kind == "user":
+            return assignment.principal_id == actor.user_id
+        return assignment.principal_id in actor.group_ids
+
+    async def _grants_role_manage(self, role: Role) -> bool:
+        grants = await self._roles.grants_by_role()
+        return perms.ROLE_MANAGE in grants.get(role.id, [])
+
+    async def _refuse_self_lockout(self, actor: Actor, role: Role, grants: list[str]) -> None:
+        """이 역할이 행위자의 유일한 `ROLE_MANAGE` 원천이면 손대지 못하게 한다.
+
+        빼는 순간 역할 화면에 다시 들어갈 수 없고, 되돌려 줄 사람이 없다.
+        """
+        if perms.ROLE_MANAGE in grants:
+            return
+        if not await self._grants_role_manage(role):
+            return
+
+        mine = [a for a in await self._roles.assignments_of(role.id) if self._is_self(actor, a)]
+        if not mine:
+            return
+
+        others = await self._other_role_manage_sources(actor, role.id)
+        if others:
+            return
+        raise ConflictError(
+            "이 역할이 당신의 유일한 역할 관리 권한이다. 먼저 다른 관리자를 두라.",
+            code="org.cannot_drop_own_role_manage",
+        )
+
+    async def _other_role_manage_sources(self, actor: Actor, excluding: UUID) -> list[UUID]:
+        """행위자에게 `ROLE_MANAGE` 를 주는 **다른** 역할들."""
+        grants = await self._roles.grants_by_role()
+        found: list[UUID] = []
+        for role in await self._roles.list_all():
+            if role.id == excluding or perms.ROLE_MANAGE not in grants.get(role.id, []):
+                continue
+            if any(self._is_self(actor, a) for a in await self._roles.assignments_of(role.id)):
+                found.append(role.id)
+        return found
+
+    def _require_scope_fits(self, scope_kind: str, grants: list[str]) -> None:
+        """역할의 스코프에서 쓸 수 없는 권한은 거절한다.
+
+        전역 전용 권한을 프로젝트 역할에 넣으면 저장은 되고 평가에서 조용히
+        무시된다 — "줬는데 안 된다" 가 된다.
+        """
+        from ieum.core.permissions import registry
+
+        bad = [
+            g for g in grants if scope_kind not in {k.value for k in registry.get(g).scope_kinds}
+        ]
+        if bad:
+            raise ValidationError(
+                f"{scope_kind} 스코프 역할에 넣을 수 없는 권한이다.",
+                code="org.permission_scope_mismatch",
+                details={"permissions": bad, "scope_kind": scope_kind},
+            )
+
     def _validate_grants(self, grants: list[str]) -> None:
         from ieum.core.permissions import registry
 
@@ -212,6 +379,16 @@ class RoleService:
                 code="org.unknown_permission",
                 details={"unknown": unknown},
             )
+
+
+@dataclass(frozen=True, slots=True)
+class RoleView:
+    """역할 하나 + 화면이 필요한 곁가지."""
+
+    role: Role
+    grants: list[str]
+    #: 이 역할을 받은 주체 수. 지우기 전에 영향 범위를 알아야 한다.
+    assignments: int
 
 
 class WorkspaceService:

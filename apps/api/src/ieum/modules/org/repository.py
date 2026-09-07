@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
@@ -152,6 +152,59 @@ class RoleRepository:
 
     async def list_all(self) -> list[Role]:
         return list((await self._s.execute(select(Role).order_by(Role.name))).scalars().all())
+
+    async def grants_by_role(self) -> dict[UUID, list[str]]:
+        """역할 → 권한 목록. 역할마다 따로 물으면 목록 한 번에 N+1 이 된다."""
+        rows = (
+            await self._s.execute(
+                select(PermissionGrant.role_id, PermissionGrant.permission).order_by(
+                    PermissionGrant.permission
+                )
+            )
+        ).all()
+        grants: dict[UUID, list[str]] = {}
+        for role_id, permission in rows:
+            grants.setdefault(role_id, []).append(permission)
+        return grants
+
+    async def assignment_counts(self) -> dict[UUID, int]:
+        rows = (
+            await self._s.execute(
+                select(RoleAssignment.role_id, func.count(RoleAssignment.id)).group_by(
+                    RoleAssignment.role_id
+                )
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    async def assignments_of(self, role_id: UUID) -> list[RoleAssignment]:
+        stmt = (
+            select(RoleAssignment)
+            .where(RoleAssignment.role_id == role_id)
+            .order_by(RoleAssignment.created_at, RoleAssignment.id)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def assignment(self, assignment_id: UUID) -> RoleAssignment | None:
+        return await self._s.get(RoleAssignment, assignment_id)
+
+    async def replace_grants(self, role_id: UUID, permissions: Sequence[str]) -> None:
+        """권한 목록을 통째로 갈아 끼운다.
+
+        차이만 적용하지 않는다. 목록 하나를 정본으로 두면 "무엇이 남아 있나"
+        를 따로 추론할 필요가 없다 — 남은 권한 하나가 조용히 사는 쪽이 훨씬
+        나쁜 실패다.
+        """
+        await self._s.execute(delete(PermissionGrant).where(PermissionGrant.role_id == role_id))
+        for permission in dict.fromkeys(permissions):
+            self._s.add(PermissionGrant(role_id=role_id, permission=permission))
+
+    async def delete_role(self, role_id: UUID) -> None:
+        """역할을 지운다. 권한과 할당은 FK 의 ON DELETE CASCADE 가 정리한다."""
+        await self._s.execute(delete(Role).where(Role.id == role_id))
+
+    async def delete_assignment(self, assignment_id: UUID) -> None:
+        await self._s.execute(delete(RoleAssignment).where(RoleAssignment.id == assignment_id))
 
 
 class OrgPermissionResolver:

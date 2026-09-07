@@ -15,7 +15,11 @@ from ieum.core.context import Actor
 from ieum.core.pagination import PageRequest
 from ieum.modules.identity import audit as _audit
 from ieum.modules.identity.models import User
-from ieum.modules.identity.repository import AuditRepository, UserRepository
+from ieum.modules.identity.repository import (
+    AuditRepository,
+    GroupRepository,
+    UserRepository,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +45,26 @@ def _to_ref(user: User) -> UserRef:
         locale=user.locale,
         timezone=user.timezone,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class GroupRef:
+    """다른 모듈이 그룹을 참조할 때 쓰는 최소 정보.
+
+    `role_assignment.principal_id` 는 사람일 수도 그룹일 수도 있다. org 가
+    그 행을 사람이 읽을 이름으로 바꾸려면 그룹 이름이 필요한데, `user_group`
+    테이블은 identity 의 것이다 — 이 자리가 그 통로다.
+    """
+
+    id: UUID
+    name: str
+    #: `idp` 면 IdP 가 관리한다(auth.md 2절). 화면이 편집 손잡이를 감추는 근거.
+    source: str
+
+
+async def get_group(session: AsyncSession, group_id: UUID) -> GroupRef | None:
+    group = await GroupRepository(session).get(group_id)
+    return GroupRef(id=group.id, name=group.name, source=group.source) if group else None
 
 
 async def get_user(session: AsyncSession, user_id: UUID) -> UserRef | None:

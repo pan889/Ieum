@@ -20,6 +20,7 @@ import { AuditLogScreen } from '@/features/settings/AuditLogScreen'
 import { SecurityScreen } from '@/features/settings/SecurityScreen'
 import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
 import { GroupsScreen } from '@/features/settings/GroupsScreen'
+import { RolesScreen } from '@/features/settings/RolesScreen'
 import { SsoScreen } from '@/features/settings/SsoScreen'
 import { UsersScreen } from '@/features/settings/UsersScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
@@ -131,6 +132,12 @@ const groupsRoute = createRoute({
   component: GroupsScreen,
 })
 
+const rolesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/roles',
+  component: RolesScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -197,6 +204,7 @@ const routeTree = rootRoute.addChildren([
   ssoRoute,
   peopleRoute,
   groupsRoute,
+  rolesRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

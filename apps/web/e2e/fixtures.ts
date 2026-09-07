@@ -294,7 +294,13 @@ export async function signInWithMfa(page: Page): Promise<void> {
   // 로그인만으로는 "미완료" 세션이다. 앱 셸이 2단계 화면을 띄운다.
   const code = page.getByLabel(/authentication code|인증 코드/i)
   await expect(code).toBeVisible()
-  await code.fill(await freshCode(page))
+  const digits = await freshCode(page)
+  // 한 글자씩 넣고 **들어간 것을 확인한다.** 이 입력은 제어 컴포넌트라
+  // 값이 상태로 들어가지 않으면 폼은 빈 코드를 보내고, 서버는 그것을 422 로
+  // 거절한다 — 화면에는 "코드가 틀렸다" 도 안 뜬다. 실제로 그렇게 붉어졌고,
+  // 원인을 찾는 데 오래 걸렸다. `fill` 이 아니라 타이핑으로 넣는다.
+  await code.pressSequentially(digits)
+  await expect(code).toHaveValue(digits)
   await page.getByRole('button', { name: /^(verify|확인)$/i }).click()
   // 앱 셸이 뜰 때까지 기다린다. 주소만 보면 아직 검증 요청이 날아가는 중이다.
   await expect(out).toBeVisible()

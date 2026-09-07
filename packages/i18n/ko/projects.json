@@ -16,14 +16,6 @@
   "detail.archived": "아카이브됨",
   "detail.archive": "프로젝트 아카이브",
   "detail.subprojects": "하위 프로젝트 {count}개",
-  "roles.title": "역할과 권한",
-  "roles.assign": "역할 할당",
-  "roles.scope.global": "워크스페이스 전체",
-  "roles.scope.project": "이 프로젝트",
-  "roles.scope.space": "이 스페이스",
-  "roles.scope.queue": "이 큐",
-  "roles.builtin": "내장",
-  "roles.grantCount": "권한 {count}개",
   "list.search": "프로젝트 찾기",
   "list.noMatch": "일치하는 프로젝트가 없습니다."
 }

@@ -32,6 +32,8 @@ export {
   type ProjectsApi,
   createRolesApi,
   type PermissionDef,
+  type Role,
+  type RoleAssignment,
   type RolesApi,
   createSecurityApi,
   type SecurityApi,

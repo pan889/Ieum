@@ -175,5 +175,9 @@
   "auth.webauthn_invalid_assertion": "We couldn't verify your authenticator.",
   "auth.webauthn_invalid_registration": "We couldn't register that authenticator.",
   "auth.webauthn_no_challenge": "Start again — that request has no challenge.",
-  "auth.webauthn_unknown_credential": "That authenticator isn't registered on this account."
+  "auth.webauthn_unknown_credential": "That authenticator isn't registered on this account.",
+  "org.role_is_builtin": "Built-in roles are restored on every deploy — their permissions can't be changed here.",
+  "org.cannot_revoke_own_admin": "You can't take your own administrator role back. Ask another administrator.",
+  "org.cannot_drop_own_role_manage": "This role is your only way to manage roles. Give someone else that permission first.",
+  "org.permission_scope_mismatch": "Those permissions don't apply at this scope: {permissions}."
 }

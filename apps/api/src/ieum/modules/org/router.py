@@ -6,18 +6,23 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.core.permissions import Scope, ScopeKind, registry
+from ieum.modules.identity import contracts as identity
 from ieum.modules.org.schemas import (
     PermissionDefResponse,
     ProjectCreateRequest,
     ProjectPageResponse,
     ProjectResponse,
+    RoleAssignmentResponse,
     RoleAssignRequest,
     RoleCreateRequest,
+    RoleDetailResponse,
     RoleResponse,
+    RoleUpdateRequest,
     SecurityPolicyRequest,
     SecurityPolicyResponse,
 )
@@ -101,7 +106,6 @@ async def list_permissions(actor: CurrentActor) -> list[PermissionDefResponse]:
     return [
         PermissionDefResponse(
             key=d.key,
-            description=d.description,
             scope_kinds=sorted(k.value for k in d.scope_kinds),
             requires_step_up=d.requires_step_up,
         )
@@ -126,6 +130,98 @@ async def create_role(
     )
     await session.commit()
     return RoleResponse.model_validate(role)
+
+
+@roles_router.get("", response_model=list[RoleDetailResponse])
+async def list_roles(
+    actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[RoleDetailResponse]:
+    """역할 정의 전부. **내장 역할도 준다** — 무엇이 있는지 못 보면 새로
+    만들 때 겹치고, 유일 제약이 그 등록을 막는다."""
+    views = await RoleService(session, permissions).list_roles(actor)
+    return [RoleDetailResponse.of(view) for view in views]
+
+
+@roles_router.patch("/{role_id}", response_model=RoleResponse)
+async def update_role(
+    role_id: UUID,
+    body: RoleUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> RoleResponse:
+    role = await RoleService(session, permissions).update_role(
+        actor,
+        role_id,
+        grants=body.grants,
+        description=body.description,
+        require_mfa=body.require_mfa,
+    )
+    await session.commit()
+    return RoleResponse.model_validate(role)
+
+
+@roles_router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_role(
+    role_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    await RoleService(session, permissions).delete_role(actor, role_id)
+    await session.commit()
+
+
+@roles_router.get("/{role_id}/assignments", response_model=list[RoleAssignmentResponse])
+async def list_role_assignments(
+    role_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> list[RoleAssignmentResponse]:
+    rows = await RoleService(session, permissions).assignments(actor, role_id)
+    return [
+        RoleAssignmentResponse(
+            id=row.id,
+            role_id=row.role_id,
+            scope_kind=row.scope_kind,
+            scope_id=row.scope_id,
+            principal_kind=row.principal_kind,
+            principal_id=row.principal_id,
+            principal_label=await _principal_label(session, row.principal_kind, row.principal_id),
+        )
+        for row in rows
+    ]
+
+
+async def _principal_label(session: AsyncSession, kind: str, principal_id: UUID) -> str | None:
+    """주체를 사람이 읽을 이름으로.
+
+    `principal_id` 는 FK 가 아니다(사람일 수도 그룹일 수도 있다). 그래서
+    지워진 주체를 가리키는 행이 있을 수 있고, 그때는 이름이 없다 — 감추지
+    않는다. 화면이 id 를 보여 주고, 회수할 수 있어야 한다.
+    """
+    if kind == "group":
+        group = await identity.get_group(session, principal_id)
+        return group.name if group else None
+    user = await identity.get_user(session, principal_id)
+    return user.email if user else None
+
+
+@roles_router.delete("/assignments/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_assignment(
+    assignment_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> None:
+    """할당을 회수한다. **주는 길만 있으면 권한 관리가 아니다.**
+
+    `/{role_id}` 보다 **뒤에** 선언돼 있어야 한다 — 아니라도 `assignments`
+    가 UUID 로 파싱되지 않아 422 가 되지만, 순서를 지키는 편이 읽기 쉽다.
+    """
+    await RoleService(session, permissions).revoke(actor, assignment_id)
+    await session.commit()
 
 
 @roles_router.post("/assignments", status_code=status.HTTP_204_NO_CONTENT)

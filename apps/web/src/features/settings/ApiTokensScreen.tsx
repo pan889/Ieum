@@ -11,7 +11,7 @@ import { Alert, Button, Card, Chip, Field, Select } from '@/shared/ui/primitives
 const EXPIRY_CHOICES = [30, 90, 365] as const
 
 export function ApiTokensScreen() {
-  const { t } = useTranslation(['auth', 'common'])
+  const { t } = useTranslation(['auth', 'admin', 'common'])
   const queryClient = useQueryClient()
 
   const tokens = useQuery({ queryKey: ['tokens'], queryFn: () => apiTokensApi.list() })
@@ -119,7 +119,10 @@ export function ApiTokensScreen() {
                   <Chip
                     key={definition.key}
                     pressed={scopes.includes(definition.key)}
-                    title={definition.description}
+                    // 예전에는 서버가 준 한국어 설명이 툴팁이었다 — 영어
+                    // 화면에서 한국어가 떴다. 이름은 번역하고 툴팁에는
+                    // 정확한 권한 문자열을 둔다.
+                    title={definition.key}
                     onClick={() => {
                       setScopes((current) =>
                         current.includes(definition.key)
@@ -128,7 +131,7 @@ export function ApiTokensScreen() {
                       )
                     }}
                   >
-                    {definition.key}
+                    {t(`admin:permission.${definition.key}`)}
                   </Chip>
                 ))}
               </div>

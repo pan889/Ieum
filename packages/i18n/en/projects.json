@@ -16,14 +16,6 @@
   "detail.archived": "Archived",
   "detail.archive": "Archive project",
   "detail.subprojects": "{count, plural, one {# sub-project} other {# sub-projects}}",
-  "roles.title": "Roles and permissions",
-  "roles.assign": "Assign role",
-  "roles.scope.global": "Whole workspace",
-  "roles.scope.project": "This project",
-  "roles.scope.space": "This space",
-  "roles.scope.queue": "This queue",
-  "roles.builtin": "Built-in",
-  "roles.grantCount": "{count, plural, one {# permission} other {# permissions}}",
   "list.search": "Find a project",
   "list.noMatch": "No project matches that."
 }
