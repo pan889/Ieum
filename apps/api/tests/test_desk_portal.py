@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.config import Settings
 from ieum.core.context import Actor
 from ieum.core.exceptions import (
     ConflictError,
@@ -140,6 +141,14 @@ async def _customer_admin(session: AsyncSession) -> User:
         scope=Scope.global_(),
     )
     return person
+
+
+def _orgs(
+    session: AsyncSession, permissions: PermissionService, settings: Settings
+) -> CustomerOrgService:
+    """고객 조직 서비스. `settings` 를 드는 이유는 초대가 계정을 만들기
+    때문이다 — identity 의 초대가 비밀번호 정책 파라미터를 본다."""
+    return CustomerOrgService(session, permissions, settings)
 
 
 SUMMARY_FIELD = {"key": "summary", "label": "무엇이 필요하신가요", "required": True}
@@ -613,7 +622,8 @@ class TestSubmit:
         )
         assert view.issue.summary == "안 켜집니다"
         # 답은 **폼 키**로 되돌아온다. 커스텀 필드 키를 고객에게 보이지 않는다.
-        assert view.answers == {"device": "laptop"}
+        # 라벨도 함께 온다 — 화면이 키만 받으면 고객에게 `device` 를 보여 준다.
+        assert [(a.key, a.label, a.value) for a in view.answers] == [("device", "기기", "laptop")]
         assert view.ticket.channel == "portal"
         assert view.ticket.reporter_customer_id == customer.id
 
@@ -742,14 +752,14 @@ class TestVisibility:
         assert [v.issue.summary for v in page.items] == ["내 것"]
 
     async def test_the_same_organization_sees_each_other(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         _, _, _, request_type = await _portal_with_form(session, permissions, slug="org")
         admin = await _customer_admin(session)
         colleague_a = await _person(session, customer=True)
         colleague_b = await _person(session, customer=True)
         outsider = await _person(session, customer=True)
-        orgs = CustomerOrgService(session, permissions)
+        orgs = CustomerOrgService(session, permissions, settings)
         school = (
             await orgs.create(actor_for(admin), name="한빛초등학교", domains=[], note=None)
         ).organization
@@ -818,19 +828,19 @@ class TestVisibility:
 
 class TestCustomerOrganizations:
     async def test_a_stranger_cannot_list_them(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         nobody = await _person(session)
         with pytest.raises(PermissionDeniedError):
-            await CustomerOrgService(session, permissions).list_all(
+            await CustomerOrgService(session, permissions, settings).list_all(
                 actor_for(nobody), PageRequest(limit=10)
             )
 
     async def test_domains_are_normalized(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         admin = await _customer_admin(session)
-        view = await CustomerOrgService(session, permissions).create(
+        view = await CustomerOrgService(session, permissions, settings).create(
             actor_for(admin),
             name="한빛초",
             domains=["@HANBIT.example.com ", "hanbit.example.com", " other.example.org"],
@@ -841,22 +851,22 @@ class TestCustomerOrganizations:
 
     @pytest.mark.parametrize("bad", ["nodot", "has space.com"])
     async def test_a_bad_domain_is_refused(
-        self, session: AsyncSession, permissions: PermissionService, bad: str
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings, bad: str
     ) -> None:
         admin = await _customer_admin(session)
         with pytest.raises(ValidationError) as exc:
-            await CustomerOrgService(session, permissions).create(
+            await CustomerOrgService(session, permissions, settings).create(
                 actor_for(admin), name=f"org-{new_id()}", domains=[bad], note=None
             )
         assert exc.value.code == "desk.invalid_domain"
 
     async def test_an_internal_account_cannot_join(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         """내부 계정에 조직 가시성이 붙으면 '고객 조직' 이라는 개념이 흐려진다."""
         admin = await _customer_admin(session)
         insider = await _person(session, customer=False)
-        service = CustomerOrgService(session, permissions)
+        service = CustomerOrgService(session, permissions, settings)
         org = (
             await service.create(actor_for(admin), name=f"org-{new_id()}", domains=[], note=None)
         ).organization
@@ -865,12 +875,12 @@ class TestCustomerOrganizations:
         assert exc.value.code == "desk.not_a_customer"
 
     async def test_one_customer_belongs_to_one_organization(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         """두 번째 소속은 갈아 끼운다. 겹치면 티켓이 어느 조직 것인지 묻게 된다."""
         admin = await _customer_admin(session)
         customer = await _person(session, customer=True)
-        service = CustomerOrgService(session, permissions)
+        service = CustomerOrgService(session, permissions, settings)
         first = (
             await service.create(actor_for(admin), name=f"a-{new_id()}", domains=[], note=None)
         ).organization
@@ -885,12 +895,12 @@ class TestCustomerOrganizations:
         ]
 
     async def test_removing_from_the_wrong_organization_is_refused(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         """실수로 남의 조직을 비우게 하지 않는다."""
         admin = await _customer_admin(session)
         customer = await _person(session, customer=True)
-        service = CustomerOrgService(session, permissions)
+        service = CustomerOrgService(session, permissions, settings)
         mine = (
             await service.create(actor_for(admin), name=f"m-{new_id()}", domains=[], note=None)
         ).organization
@@ -903,12 +913,12 @@ class TestCustomerOrganizations:
         assert exc.value.code == "desk.not_a_member"
 
     async def test_archiving_keeps_the_memberships(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         """소속을 끊으면 같은 기관 동료가 보던 티켓이 조용히 사라진다."""
         admin = await _customer_admin(session)
         customer = await _person(session, customer=True)
-        service = CustomerOrgService(session, permissions)
+        service = CustomerOrgService(session, permissions, settings)
         org = (
             await service.create(actor_for(admin), name=f"k-{new_id()}", domains=[], note=None)
         ).organization
@@ -919,11 +929,11 @@ class TestCustomerOrganizations:
 
 class TestGuestOrganization:
     async def test_a_guest_lands_in_the_organization_that_claims_the_domain(
-        self, session: AsyncSession, permissions: PermissionService
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         admin = await _customer_admin(session)
         org = (
-            await CustomerOrgService(session, permissions).create(
+            await CustomerOrgService(session, permissions, settings).create(
                 actor_for(admin), name="한빛초", domains=["hanbit.example.com"], note=None
             )
         ).organization
@@ -978,3 +988,129 @@ class TestTicketExtension:
             .all()
         )
         assert rows == []
+
+
+class TestFormKindsCustomersCannotSee:
+    """선택지가 내부 데이터인 종류는 폼에 올릴 수 없다."""
+
+    @pytest.mark.parametrize("kind", ["user", "version"])
+    async def test_the_kind_is_refused(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        settings: Settings,
+        kind: str,
+    ) -> None:
+        """막지 않으면 포털이 그 필드를 그릴 방법이 없어서 **화면에 없는
+        필수 항목**이 생긴다 — 고객은 다 채웠는데 제출이 거절된다."""
+        await _field(session, key="who", kind=kind)
+        with pytest.raises(ValidationError) as exc:
+            await _portal_with_form(
+                session,
+                permissions,
+                slug=f"kind{kind[:3]}",
+                extra_fields=[{"key": "who", "label": "누구"}],
+                mapping={"who": "who"},
+            )
+        assert exc.value.code == "desk.field_kind_not_on_forms"
+
+
+class TestCreatingCustomers:
+    """`is_customer` 를 켜는 길. 한동안 **아무도 켜지 못했다.**
+
+    읽는 자리만 있고 쓰는 자리가 없어서, 고객 격리도 고객 조직도 고객 포털도
+    만들어 두었는데 고객 계정을 만들 길이 없었다.
+    """
+
+    async def test_an_invited_customer_lands_in_the_organization(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """초대와 소속이 **한 트랜잭션**이다. 소속을 워커에 맡기면 아웃박스가
+        훑기 전까지 소속 없는 고객이 존재하고, 그 사이 티켓은 조직 가시성을
+        잃는다."""
+        admin = await _customer_admin(session)
+        service = _orgs(session, permissions, settings)
+        org = (
+            await service.create(actor_for(admin), name=f"i-{new_id()}", domains=[], note=None)
+        ).organization
+        user = await service.invite_customer(
+            actor_for(admin),
+            org.id,
+            email="NEW-teacher@school.example.com",
+            display_name="  새 담당자  ",
+        )
+        assert user.is_customer is True, "이 통로로 만든 계정은 언제나 고객이다"
+        assert user.email == "new-teacher@school.example.com"
+        assert user.display_name == "새 담당자"
+        assert [u.id for u in await service.list_members(actor_for(admin), org.id)] == [user.id]
+
+    async def test_a_stranger_cannot_invite(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        admin = await _customer_admin(session)
+        nobody = await _person(session)
+        org = (
+            await _orgs(session, permissions, settings).create(
+                actor_for(admin), name=f"j-{new_id()}", domains=[], note=None
+            )
+        ).organization
+        with pytest.raises(PermissionDeniedError):
+            await _orgs(session, permissions, settings).invite_customer(
+                actor_for(nobody), org.id, email="x@y.example.com", display_name="X"
+            )
+
+    @pytest.mark.parametrize("bad", ["nope", "a@b", "no at sign"])
+    async def test_a_bad_address_is_refused(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        settings: Settings,
+        bad: str,
+    ) -> None:
+        admin = await _customer_admin(session)
+        org = (
+            await _orgs(session, permissions, settings).create(
+                actor_for(admin), name=f"k-{new_id()}", domains=[], note=None
+            )
+        ).organization
+        with pytest.raises(ValidationError) as exc:
+            await _orgs(session, permissions, settings).invite_customer(
+                actor_for(admin), org.id, email=bad, display_name="X"
+            )
+        assert exc.value.code == "desk.invalid_email"
+
+    async def test_the_domain_only_suggests(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """도메인은 **제안**이다. 소속을 만들지 않는다 — 사람이 확인한
+        소속이라야 ACL 이 사람의 결정으로 남는다."""
+        admin = await _customer_admin(session)
+        service = _orgs(session, permissions, settings)
+        org = (
+            await service.create(
+                actor_for(admin), name=f"l-{new_id()}", domains=["hint.example.com"], note=None
+            )
+        ).organization
+        assert (
+            await service.suggest_organization(actor_for(admin), "who@hint.example.com")
+        ) == org.id
+        assert (
+            await service.suggest_organization(actor_for(admin), "who@other.example.com")
+        ) is None
+
+
+class TestPortalIndex:
+    async def test_it_lists_open_portals_only(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """접힌 창구는 목록에도 없다. 있으면 눌러서 404 를 보게 된다."""
+        _, manager, portal, _ = await _portal_with_form(session, permissions, slug="listed")
+        service = CustomerPortalService(session, permissions)
+        assert "listed" in [p.slug for p in await service.list_open_portals()]
+
+        await PortalService(session, permissions).set_archived(
+            actor_for(manager),
+            portal.id,  # type: ignore[attr-defined]
+            archived=True,
+        )
+        assert "listed" not in [p.slug for p in await service.list_open_portals()]

@@ -177,6 +177,46 @@ class TestFixingACustomRole:
             await service.update_role(actor, role.id, grants=[perms.PROJECT_CREATE])
         assert exc.value.code == "org.permission_scope_mismatch"
 
+    async def test_a_global_role_may_carry_project_permissions(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**전역 역할은 좁은 스코프 권한을 담을 수 있다.**
+
+        전역 할당은 모든 프로젝트·스페이스를 덮으므로(`acl_for` 가
+        `is_global` 을 세우면 어떤 스코프에서도 통과한다) 정상이고, 시드의
+        Administrator 가 바로 그 모양이다 — `issue.create` 는 프로젝트
+        스코프 권한인데 전역 역할이 들고 있다.
+
+        한동안 이 방향까지 막혀 있었다. 그러면 관리자가 역할 화면에서
+        **시드 자신과 같은 역할을 만들 수 없다.** `test_seed_grants.py` 를
+        쓰다가 드러났다.
+        """
+        from ieum.modules.issues import permissions as issue_perms
+
+        person, _ = await _admin(session)
+        actor = actor_for(person)
+        service = RoleService(session, permissions)
+
+        role = await service.create_role(
+            actor,
+            name=f"Global {new_id()}",
+            scope_kind="global",
+            grants=[perms.PROJECT_VIEW],
+        )
+        updated = await service.update_role(
+            actor, role.id, grants=[perms.PROJECT_VIEW, issue_perms.ISSUE_CREATE]
+        )
+        assert updated.id == role.id
+
+        # 만들 때도 같아야 한다 — 한쪽만 열어 두면 만들고 나서 고칠 수 없다.
+        created = await service.create_role(
+            actor,
+            name=f"Global2 {new_id()}",
+            scope_kind="global",
+            grants=[issue_perms.ISSUE_CREATE],
+        )
+        assert created.scope_kind == "global"
+
     async def test_deleting_takes_the_assignments_with_it(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:

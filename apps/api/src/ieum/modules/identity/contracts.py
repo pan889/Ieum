@@ -11,6 +11,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.config import Settings
 from ieum.core.context import Actor
 from ieum.core.pagination import PageRequest
 from ieum.modules.identity import audit as _audit
@@ -147,3 +148,32 @@ def record_audit(
 #: 다른 모듈이 남기는 감사 행동. 이름의 정본은 `identity.audit` 이고, 조회
 #: 화면의 필터 목록도 거기서 나온다 — 여기서 새로 지어내면 목록에서 빠진다.
 AUDIT_SECURITY_MFA_POLICY_CHANGED = _audit.SECURITY_MFA_POLICY_CHANGED
+
+
+async def invite_customer(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    email: str,
+    display_name: str,
+    invited_by: UUID,
+) -> UserRef:
+    """고객 계정을 초대한다. `desk` 가 고객 조직 화면에서 쓴다.
+
+    **쓰는 계약**이다. 지금까지 이 파일은 읽기만 했는데, 고객 계정을 만드는
+    길이 필요하고 `user` 테이블은 identity 것이다 — desk 가 그 테이블을 직접
+    건드리면 모듈 경계가 무너진다.
+
+    `is_customer=True` 를 여기서 못 바꾸게 고정한 것이 요점이다: 이 통로로
+    만든 계정은 언제나 고객이다. desk 가 불린 값을 넘길 수 있게 두면, 다음
+    사람이 이걸로 내부 계정도 만들게 된다.
+    """
+    from ieum.modules.identity.service import UserService
+
+    user = await UserService(session, settings).invite(
+        email=email,
+        display_name=display_name,
+        invited_by=invited_by,
+        is_customer=True,
+    )
+    return _to_ref(user)

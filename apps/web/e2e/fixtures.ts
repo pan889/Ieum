@@ -55,7 +55,7 @@ export interface InvitedUser {
  */
 export async function inviteUser(
   page: Page,
-  options: { grants?: string[] } = {},
+  options: { grants?: string[]; isCustomer?: boolean } = {},
 ): Promise<InvitedUser> {
   const stamp = uniqueKey('U').toLowerCase()
   const user: InvitedUser = {
@@ -67,7 +67,13 @@ export async function inviteUser(
   const token = await accessToken(page)
   const created = await page.request.post(`${API}/api/v1/users/invite`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: { email: user.email, display_name: user.displayName, locale: 'en' },
+    data: {
+      email: user.email,
+      display_name: user.displayName,
+      locale: 'en',
+      // 고객 계정은 **만들 때만** 정한다. 나중에 뒤집는 길이 없다.
+      ...(options.isCustomer ? { is_customer: true } : {}),
+    },
   })
   expect(created.ok(), await created.text()).toBe(true)
   const { id } = (await created.json()) as { id: string }
@@ -98,6 +104,88 @@ export async function inviteUser(
 }
 
 /** 메일함에서 초대 링크를 찾아 열고 비밀번호를 정한다. */
+/**
+ * 관리자로 포털과 요청 폼을 하나 만든다. API 로 만드는 것이 맞다 —
+ * 화면으로 만들면 포털 스펙마다 관리 화면을 다시 거치게 되고, 관리 화면이
+ * 깨졌을 때 고객 쪽 스펙까지 함께 붉어져 원인이 흐려진다.
+ */
+export interface PortalFixture {
+  slug: string
+  requestTypeId: string
+  formLabel: string
+  /** 관리 화면의 프로젝트 선택 상자에서 이 창구를 찾는 데 쓴다. */
+  projectId: string
+  projectKey: string
+}
+
+export async function createPortal(
+  page: Page,
+  options: { isPublic?: boolean } = {},
+): Promise<PortalFixture> {
+  const token = await accessToken(page)
+  const headers = { Authorization: `Bearer ${token}` }
+  const stamp = uniqueKey('P').toLowerCase()
+
+  const key = projectKey()
+  const project = await page.request.post(`${API}/api/v1/projects`, {
+    headers,
+    data: { key, name: `Desk ${stamp}` },
+  })
+  expect(project.ok(), await project.text()).toBe(true)
+  const projectId = ((await project.json()) as { id: string }).id
+
+  const types = await page.request.get(`${API}/api/v1/issues/types?project_id=${projectId}`, {
+    headers,
+  })
+  expect(types.ok(), await types.text()).toBe(true)
+  const firstType = ((await types.json()) as { id: string }[])[0]
+  // 유형이 없으면 요청 폼을 만들 수 없다. 여기서 죽는 편이 낫다 — 뒤에서
+  // "요청 유형을 못 찾았다" 로 나오면 원인이 흐려진다.
+  expect(firstType, '프로젝트에 이슈 유형이 없다').toBeTruthy()
+  const issueTypeId = (firstType as { id: string }).id
+
+  const portal = await page.request.post(`${API}/api/v1/portals`, {
+    headers,
+    data: {
+      project_id: projectId,
+      name: `Support ${stamp}`,
+      slug: stamp,
+      is_public: options.isPublic ?? true,
+    },
+  })
+  expect(portal.ok(), await portal.text()).toBe(true)
+  const portalId = ((await portal.json()) as { id: string }).id
+
+  // 라벨은 **관리자가 입력한 데이터**다. 번역되지 않는다는 것을 스펙이
+  // 확인할 수 있도록, 영어 UI 에서도 눈에 띄는 글자로 둔다.
+  const formLabel = 'What is broken'
+  const requestType = await page.request.post(
+    `${API}/api/v1/portals/${portalId}/request-types`,
+    {
+      headers,
+      data: {
+        issue_type_id: issueTypeId,
+        name: `Broken thing ${stamp}`,
+        form_schema: {
+          fields: [
+            { key: 'summary', label: formLabel, required: true },
+            { key: 'description', label: 'Tell us more' },
+          ],
+        },
+        field_mapping: {},
+      },
+    },
+  )
+  expect(requestType.ok(), await requestType.text()).toBe(true)
+  return {
+    slug: stamp,
+    requestTypeId: ((await requestType.json()) as { id: string }).id,
+    formLabel,
+    projectId,
+    projectKey: key,
+  }
+}
+
 async function acceptInvite(page: Page, user: InvitedUser): Promise<void> {
   const link = await inviteLink(page, user.email)
   // 메일의 주소는 서버가 아는 호스트다. 테스트가 여는 호스트로 맞춘다.
@@ -275,6 +363,39 @@ export async function signIn(
  *
  * 코드를 계산하는 계정이 이것뿐인 이유는 `MFA_ADMIN` 주석에 있다.
  */
+/**
+ * 고객으로 들어간다. `signIn` 을 못 쓴다 — 그쪽은 앱 셸(로그아웃 버튼)과
+ * `/projects` 를 기다리는데, 고객은 그 화면에 **절대 도착하지 않는다.**
+ * 대신 자기 창구로 넘겨진다.
+ *
+ * 넘겨지는 자리가 이 헬퍼의 요점이다: 이 브라우저가 포털을 한 번도 열지
+ * 않았어도(기억해 둔 창구 없음) 서버의 창구 목록으로 찾아가야 한다.
+ */
+export async function signInAsCustomer(
+  page: Page,
+  who: { email: string; password: string },
+): Promise<void> {
+  await page.goto('/')
+  await page.getByLabel(/email|이메일/i).fill(who.email)
+  await page.getByLabel(/password|비밀번호/i).fill(who.password)
+  await page.getByRole('button', { name: /^(sign in|로그인)$/i }).click()
+
+  // **주소를 기다리지 않는다.** 창구가 하나면 그리로 넘겨지지만, 여럿이면
+  // 고르는 화면이 뜨고 주소는 `/` 에 남는다 — 개발 DB 에는 지난 실행이
+  // 남긴 창구가 여러 개 쌓여 있으므로 후자가 보통이다. 주소로 기다리면
+  // 스펙이 "창구가 하나일 때만" 통과한다.
+  //
+  // 대신 **고객 표면에 도착했는가**를 기다린다: 포털 헤더든 고르는 화면이든.
+  await expect(
+    page
+      .getByText(/uses the customer portal|고객 포털을 씁니다/i)
+      .or(page.getByRole('heading', { name: /what do you need help with|무엇을 도와/i }))
+      .first(),
+  ).toBeVisible({ timeout: 20_000 })
+  // 그리고 내부 앱이 아니다. 이것이 이 헬퍼의 계약이다.
+  await expect(page.getByRole('link', { name: /^projects$/i })).toHaveCount(0)
+}
+
 export async function signInWithMfa(page: Page): Promise<void> {
   // `signIn` 을 못 쓴다: 그쪽은 앱 셸(로그아웃 버튼)이 뜰 때까지 기다리는데,
   // 이 계정은 비밀번호만으로는 2단계 화면에서 멈춘다.

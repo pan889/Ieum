@@ -896,7 +896,20 @@ class UserService:
         locale: str = "en",
         timezone: str = "UTC",
         invited_by: UUID | None = None,
+        is_customer: bool = False,
     ) -> User:
+        """계정을 초대한다.
+
+        `is_customer` 는 **여기서만** 정한다. 나중에 바꾸는 길을 두지 않는다:
+        내부 계정을 고객으로 내리면 그 사람이 보던 프로젝트가 통째로 사라지고
+        (포털 밖은 기본 거절), 고객을 내부 계정으로 올리면 포털에서 쌓은
+        티켓의 신고자가 갑자기 내부 사람이 된다. 둘 다 조용히 일어나면
+        안 되는 변화다 — 계정을 새로 만드는 것이 정직하다.
+
+        한동안 이 플래그를 **아무도 켜지 못했다.** 읽는 자리만 있었고 쓰는
+        자리가 없어서, 고객 격리도 고객 조직도 고객 포털도 만들어 두었는데
+        고객 계정을 만들 길이 없었다.
+        """
         normalized = normalize_email(email)
         if await self._users.email_exists(normalized):
             raise ConflictError("이미 등록된 이메일이다.", code="identity.email_taken")
@@ -907,6 +920,7 @@ class UserService:
             locale=locale,
             timezone=timezone,
             status="invited",
+            is_customer=is_customer,
         )
         self._users.add(user)
         await self._s.flush()
@@ -921,7 +935,10 @@ class UserService:
         publish(
             self._s,
             identity_events.UserInvited(
-                aggregate_id=user.id, email=normalized, invited_by=invited_by
+                aggregate_id=user.id,
+                email=normalized,
+                invited_by=invited_by,
+                is_customer=is_customer,
             ),
         )
         return user

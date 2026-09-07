@@ -64,5 +64,7 @@
   "action.create": "Create",
   "nav.search": "Search",
   "nav.searchPlaceholder": "Search issues and docs",
-  "action.add": "Add"
+  "action.add": "Add",
+  "action.choose": "Choose…",
+  "state.matches": "Matches"
 }

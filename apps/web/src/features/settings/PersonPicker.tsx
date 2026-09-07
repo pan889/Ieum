@@ -59,7 +59,7 @@ export function PersonPicker({
       {people.isError ? <Alert>{describeError(people.error)}</Alert> : null}
 
       {trimmed.length > 0 ? (
-        <ul className="flex flex-col items-start gap-1" aria-label={label}>
+        <ul className="flex flex-col items-start gap-1" aria-label={t('common:state.matches')}>
           {matches.map((user) => (
             <li key={user.id}>
               <Button

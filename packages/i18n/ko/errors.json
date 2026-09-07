@@ -58,6 +58,7 @@
   "desk.customer_org_name_taken": "같은 이름의 고객 조직이 있습니다.",
   "desk.duplicate_form_key": "두 폼 필드의 키가 같습니다.",
   "desk.duplicate_mapping_target": "두 폼 필드가 같은 커스텀 필드를 가리켜 한쪽 답이 사라집니다.",
+  "desk.field_kind_not_on_forms": "이 종류는 선택지가 내부 데이터(사람·릴리스)라 포털 폼에 올릴 수 없습니다.",
   "desk.form_field_needs_label": "폼 필드에는 라벨이 있어야 합니다.",
   "desk.form_field_unmapped": "이 폼 필드의 답을 담을 곳이 없습니다. 커스텀 필드에 연결하세요.",
   "desk.form_needs_summary": "폼에는 요약 필드가 있어야 합니다. 요약이 없으면 큐에서 훑을 수 없습니다.",

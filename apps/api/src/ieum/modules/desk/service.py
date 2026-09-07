@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.config import Settings
 from ieum.core.context import Actor
 from ieum.core.exceptions import (
     ConflictError,
@@ -55,6 +56,15 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$")
 #: 예약 키가 만드는 위젯. 커스텀 필드가 아니므로 정의가 없다.
 RESERVED_KINDS = {"summary": "text", "description": "markdown"}
 
+#: 포털 폼에 올릴 수 없는 커스텀 필드 종류.
+#:
+#: `user` 와 `version` 은 선택지가 **내부 데이터**다 — 사람 목록과 릴리스
+#: 목록. 고객에게 그것을 펼쳐 보이는 것은 내주면 안 되는 것을 내주는 일이고,
+#: 애초에 고객이 담당자나 수정 버전을 고르는 모델이 아니다. 저장할 때 막지
+#: 않으면 포털이 그 필드를 그릴 방법이 없어서 **화면에 없는 필수 항목**이
+#: 생긴다 — 고객은 다 채웠는데 제출이 거절된다.
+FORBIDDEN_FORM_KINDS = ("user", "version")
+
 
 @dataclass(frozen=True, slots=True)
 class PortalView:
@@ -92,12 +102,28 @@ class PortalForm:
 
 
 @dataclass(frozen=True, slots=True)
+class Answer:
+    """제출된 답 하나.
+
+    `label` 이 함께 오는 이유: 화면이 `key` 만 받으면 고객에게 `device` 를
+    보여 준다. 라벨은 폼 스키마에 있고, 그 스키마는 서버가 갖고 있다 —
+    화면이 요청 유형을 다시 받아 짜맞추게 하면 폼이 꺼진 뒤에는 라벨을
+    잃는다. 라벨이 사라진 필드는 `key` 로 대신한다: 고객이 적은 값을
+    감추는 것보다 이름 없이 보여 주는 편이 낫다.
+    """
+
+    key: str
+    label: str
+    value: Any
+
+
+@dataclass(frozen=True, slots=True)
 class TicketView:
     ticket: TicketExt
     issue: issues.TicketIssue
     request_type_name: str | None
     #: 커스텀 필드 키를 폼 키로 되돌린 답. 고객에게 내부 키를 보이지 않는다.
-    answers: dict[str, Any]
+    answers: list[Answer]
 
 
 # ── 포털·요청 유형 관리 (내부) ─────────────────────────────────
@@ -475,6 +501,13 @@ class PortalService:
                 code="desk.unknown_field_definition",
                 details={"keys": missing},
             )
+        forbidden = sorted(key for key in targets if by_key[key].kind in FORBIDDEN_FORM_KINDS)
+        if forbidden:
+            raise ValidationError(
+                "이 종류는 선택지가 내부 데이터라 포털 폼에 올릴 수 없다.",
+                code="desk.field_kind_not_on_forms",
+                details={"keys": forbidden},
+            )
         # 정의가 필수인데 폼에 없으면 제출이 **언제나** 실패한다.
         required_missing = sorted(
             d.key for d in definitions if d.is_required and d.key not in set(targets)
@@ -527,9 +560,14 @@ class PortalService:
 class CustomerOrgService:
     """고객 조직과 소속. 소속이 티켓 가시성을 정한다 (auth.md 5절)."""
 
-    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+    def __init__(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
         self._s = session
         self._perms = permissions
+        # 초대는 계정을 만드는 일이고, identity 의 초대는 설정(비밀번호 정책
+        # 파라미터 등)을 든다. 그래서 여기까지 내려온다.
+        self._settings = settings
         self._orgs = CustomerOrganizationRepository(session)
         self._members = CustomerMembershipRepository(session)
 
@@ -670,6 +708,49 @@ class CustomerOrgService:
             )
         return removed
 
+    async def invite_customer(
+        self, actor: Actor, organization_id: UUID, *, email: str, display_name: str
+    ) -> identity.UserRef:
+        """고객을 초대하고 **바로 이 조직에 넣는다.**
+
+        한 트랜잭션이다. 초대만 하고 소속을 워커에 맡기면(이벤트) 아웃박스가
+        훑기 전까지 소속 없는 고객이 존재하고, 그 사이에 낸 티켓은 조직
+        가시성을 잃는다 — 15초짜리 창이지만 조용히 잘못되는 종류다.
+
+        조직이 경로에 있으므로 도메인 추측이 필요 없다. 도메인은 화면이
+        기본값을 **제안**하는 데만 쓴다: 사람이 확인한 소속이라야 ACL 이
+        사람의 결정으로 남는다.
+        """
+        await self._perms.require(self._s, actor, perms.CUSTOMER_MANAGE, scope=Scope.global_())
+        await self._require_org(organization_id)
+        clean_email = email.strip().lower()
+        if not EMAIL_PATTERN.match(clean_email):
+            raise ValidationError("이메일 모양이 아니다.", code="desk.invalid_email")
+        user = await identity.invite_customer(
+            self._s,
+            self._settings,
+            email=clean_email,
+            display_name=display_name.strip(),
+            invited_by=actor.user_id,
+        )
+        await self._members.set(user_id=user.id, organization_id=organization_id)
+        await self._s.flush()
+        identity.record_audit(
+            self._s,
+            action=AUDIT_CUSTOMER_MEMBERSHIP_CHANGED,
+            actor_id=actor.user_id,
+            target_type="user",
+            target_id=user.id,
+            metadata={"organization_id": str(organization_id), "invited": True},
+        )
+        return user
+
+    async def suggest_organization(self, actor: Actor, email: str) -> UUID | None:
+        """이 주소의 도메인을 주장하는 조직. 화면의 **기본값 제안**이다."""
+        await self._perms.require(self._s, actor, perms.CUSTOMER_MANAGE, scope=Scope.global_())
+        row = await self._orgs.find_by_domain(email.strip().lower().rpartition("@")[2])
+        return row.id if row else None
+
     @staticmethod
     def _clean_domains(raw: list[str]) -> list[str]:
         seen: list[str] = []
@@ -715,6 +796,21 @@ class CustomerPortalService:
         self._members = CustomerMembershipRepository(session)
         self._tickets = TicketRepository(session)
         self._orgs = CustomerOrganizationRepository(session)
+
+    async def list_open_portals(self) -> list[Portal]:
+        """접히지 않은 포털 전부. **로그인한 사람에게만** 낸다.
+
+        왜 필요한가: 초대를 받아 비밀번호를 정한 고객이 앱 뿌리로 들어오면
+        "어느 창구로 보낼지" 를 알 수 없다 — 서버는 고객과 포털을 묶지 않고
+        (한 고객이 여러 창구를 쓸 수 있다), 그 브라우저에는 기억해 둔 창구도
+        없다. 그러면 "포털을 쓰세요" 라고만 적힌 막다른 화면이 된다.
+
+        익명에게는 열지 않는다. 창구 이름은 고객에게 보이는 값이지만, 목록을
+        통째로 열어 두면 설치된 창구를 아무나 훑을 수 있다.
+
+        보통 하나뿐이다. 여럿이면 화면이 고르게 한다.
+        """
+        return await self._portals.list_for_projects_all()
 
     async def info(self, slug: str) -> Portal:
         """포털의 겉모습. 로그인 없이 열린다.
@@ -952,11 +1048,24 @@ class CustomerPortalService:
     ) -> TicketView:
         # 답을 폼 키로 되돌린다. 고객에게 커스텀 필드 키를 보여 주면 내부
         # 스키마가 새고, 폼 키가 바뀌면 화면이 답을 못 찾는다.
-        answers: dict[str, Any] = {}
+        #
+        # **폼에 적힌 순서대로** 낸다. 매핑(dict)의 순서는 편집할 때마다
+        # 바뀌므로, 그것을 따르면 같은 티켓이 볼 때마다 다르게 정렬된다.
+        answers: list[Answer] = []
         if request_type is not None:
-            for form_key, field_key in request_type.field_mapping.items():
-                if field_key in issue.custom_fields:
-                    answers[form_key] = issue.custom_fields[field_key]
+            labels = _form_labels(request_type)
+            order = list(labels) or list(request_type.field_mapping)
+            for form_key in order:
+                field_key = request_type.field_mapping.get(form_key)
+                if field_key is None or field_key not in issue.custom_fields:
+                    continue
+                answers.append(
+                    Answer(
+                        key=form_key,
+                        label=labels.get(form_key, form_key),
+                        value=issue.custom_fields[field_key],
+                    )
+                )
         return TicketView(
             ticket=ticket,
             issue=issue,
@@ -1017,6 +1126,21 @@ class CustomerPortalService:
                 continue
             custom[mapping[field_spec.key]] = value
         return summary, description, custom
+
+
+def _form_labels(request_type: RequestType) -> dict[str, str]:
+    """폼 키 → 라벨. 순서를 지킨 dict 다 (파이썬 dict 는 삽입 순서를 지킨다)."""
+    raw = request_type.form_schema.get("fields", [])
+    if not isinstance(raw, list):
+        return {}
+    labels: dict[str, str] = {}
+    for spec in raw:
+        if not isinstance(spec, dict):
+            continue
+        key = str(spec.get("key", ""))
+        if key:
+            labels[key] = str(spec.get("label", "")) or key
+    return labels
 
 
 def _guest_actor(email: str) -> Actor:

@@ -64,5 +64,7 @@
   "action.create": "만들기",
   "nav.search": "검색",
   "nav.searchPlaceholder": "이슈·문서 검색",
-  "action.add": "추가"
+  "action.add": "추가",
+  "action.choose": "고르세요…",
+  "state.matches": "맞는 항목"
 }

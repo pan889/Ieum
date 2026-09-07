@@ -356,8 +356,21 @@ class RoleService:
 
         전역 전용 권한을 프로젝트 역할에 넣으면 저장은 되고 평가에서 조용히
         무시된다 — "줬는데 안 된다" 가 된다.
+
+        **전역 역할은 무엇이든 담을 수 있다.** 전역 할당은 모든 프로젝트·
+        스페이스를 덮으므로(`OrgPermissionResolver.acl_for` 가 `is_global` 을
+        세우면 어떤 스코프에서도 통과한다), 프로젝트 스코프 권한을 전역
+        역할에 넣는 것은 정상이다 — 시드의 Administrator 가 바로 그 모양이다.
+
+        한동안 이 검사가 그 방향까지 막았다. 그러면 관리자가 역할 화면에서
+        전역 역할을 만들어 `issue.create` 를 넣을 수 없다 — **시드 자신이
+        하는 일을 UI 로는 할 수 없는** 상태였다. 막아야 하는 것은 반대
+        방향뿐이다: 좁은 역할에 전역 전용 권한.
         """
-        from ieum.core.permissions import registry
+        from ieum.core.permissions import ScopeKind, registry
+
+        if scope_kind == ScopeKind.GLOBAL.value:
+            return
 
         bad = [
             g for g in grants if scope_kind not in {k.value for k in registry.get(g).scope_kinds}

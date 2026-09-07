@@ -58,6 +58,7 @@
   "desk.customer_org_name_taken": "A customer organization with that name already exists.",
   "desk.duplicate_form_key": "Two form fields share the same key.",
   "desk.duplicate_mapping_target": "Two form fields point at the same custom field, so one answer would be lost.",
+  "desk.field_kind_not_on_forms": "This kind cannot go on a portal form — its choices are internal data (people, release versions).",
   "desk.form_field_needs_label": "Every form field needs a label.",
   "desk.form_field_unmapped": "This form field has nowhere to store its answer. Map it to a custom field.",
   "desk.form_needs_summary": "The form needs a summary field — a request without one cannot be scanned in a queue.",

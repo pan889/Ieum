@@ -57,6 +57,17 @@ def _bearer_token(authorization: str | None) -> str:
 #: 실수와 같은 모양이다(auth.md 3절).
 CUSTOMER_PREFIXES = ("/api/v1/portal/", "/api/v1/auth/")
 
+#: 접두사로는 안 잡히는 **정확히 이 경로**들.
+#:
+#: `/api/v1/portal` (끝에 슬래시가 없다)은 창구 목록이다. 로그인한 고객이
+#: "어느 창구로 갈지" 를 고를 때 쓴다. 그런데 접두사는 `/api/v1/portal/` 이라
+#: 슬래시가 없는 이 경로는 통과하지 못한다 — 실제로 만들자마자 403 이었다.
+#:
+#: **접두사에서 슬래시를 빼는 방법으로 고치지 않는다.** 그러면
+#: `/api/v1/portals/...`(데스크 **관리** API)까지 `startswith` 를 통과해
+#: 고객에게 통째로 열린다. 정확히 일치하는 목록은 그렇게 넓어지지 않는다.
+CUSTOMER_PATHS = ("/api/v1/portal",)
+
 
 def _refuse_customer_outside_portal(actor: Actor, request: Request) -> None:
     """고객 계정은 포털 밖을 볼 수 없다. **권한 검사 이전에** 막는다.
@@ -76,7 +87,8 @@ def _refuse_customer_outside_portal(actor: Actor, request: Request) -> None:
     """
     if not actor.is_customer:
         return
-    if request.url.path.startswith(CUSTOMER_PREFIXES):
+    path = request.url.path
+    if path.startswith(CUSTOMER_PREFIXES) or path in CUSTOMER_PATHS:
         return
     raise PermissionDeniedError("포털 사용자는 이 API 를 쓸 수 없다.")
 

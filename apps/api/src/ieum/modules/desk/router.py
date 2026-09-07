@@ -20,9 +20,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 
-from ieum.core.deps import CurrentActor, DbSession, PermissionDep
+from ieum.core.deps import AppSettings, CurrentActor, DbSession, PermissionDep
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.modules.desk.schemas import (
+    AnswerResponse,
+    CustomerInviteRequest,
     CustomerMemberResponse,
     CustomerOrgCreateRequest,
     CustomerOrgResponse,
@@ -119,7 +121,7 @@ def _ticket(view: TicketView) -> TicketResponse:
         created_at=view.issue.created_at,
         updated_at=view.issue.updated_at,
         request_type_name=view.request_type_name,
-        answers=view.answers,
+        answers=[AnswerResponse(key=a.key, label=a.label, value=a.value) for a in view.answers],
     )
 
 
@@ -341,12 +343,13 @@ class CustomerOrgPage(dict[str, Any]):
 async def list_customer_orgs(
     session: DbSession,
     permissions: PermissionDep,
+    settings: AppSettings,
     actor: CurrentActor,
     limit: Limit = DEFAULT_LIMIT,
     cursor: str | None = None,
     q: str | None = None,
 ) -> dict[str, Any]:
-    page = await CustomerOrgService(session, permissions).list_all(
+    page = await CustomerOrgService(session, permissions, settings).list_all(
         actor, PageRequest(limit=limit, cursor=cursor), query=q
     )
     return {
@@ -359,10 +362,11 @@ async def list_customer_orgs(
 async def create_customer_org(
     session: DbSession,
     permissions: PermissionDep,
+    settings: AppSettings,
     actor: CurrentActor,
     payload: CustomerOrgCreateRequest,
 ) -> CustomerOrgResponse:
-    view = await CustomerOrgService(session, permissions).create(
+    view = await CustomerOrgService(session, permissions, settings).create(
         actor, name=payload.name, domains=payload.domains, note=payload.note
     )
     await session.commit()
@@ -373,11 +377,12 @@ async def create_customer_org(
 async def update_customer_org(
     session: DbSession,
     permissions: PermissionDep,
+    settings: AppSettings,
     actor: CurrentActor,
     organization_id: UUID,
     payload: CustomerOrgUpdateRequest,
 ) -> CustomerOrgResponse:
-    view = await CustomerOrgService(session, permissions).update(
+    view = await CustomerOrgService(session, permissions, settings).update(
         actor, organization_id, name=payload.name, domains=payload.domains, note=payload.note
     )
     await session.commit()
@@ -386,9 +391,13 @@ async def update_customer_org(
 
 @customers_router.post("/{organization_id}/archive", response_model=CustomerOrgResponse)
 async def archive_customer_org(
-    session: DbSession, permissions: PermissionDep, actor: CurrentActor, organization_id: UUID
+    session: DbSession,
+    permissions: PermissionDep,
+    settings: AppSettings,
+    actor: CurrentActor,
+    organization_id: UUID,
 ) -> CustomerOrgResponse:
-    view = await CustomerOrgService(session, permissions).set_archived(
+    view = await CustomerOrgService(session, permissions, settings).set_archived(
         actor, organization_id, archived=True
     )
     await session.commit()
@@ -397,9 +406,13 @@ async def archive_customer_org(
 
 @customers_router.delete("/{organization_id}/archive", response_model=CustomerOrgResponse)
 async def restore_customer_org(
-    session: DbSession, permissions: PermissionDep, actor: CurrentActor, organization_id: UUID
+    session: DbSession,
+    permissions: PermissionDep,
+    settings: AppSettings,
+    actor: CurrentActor,
+    organization_id: UUID,
 ) -> CustomerOrgResponse:
-    view = await CustomerOrgService(session, permissions).set_archived(
+    view = await CustomerOrgService(session, permissions, settings).set_archived(
         actor, organization_id, archived=False
     )
     await session.commit()
@@ -408,9 +421,15 @@ async def restore_customer_org(
 
 @customers_router.get("/{organization_id}/members", response_model=list[CustomerMemberResponse])
 async def list_customer_members(
-    session: DbSession, permissions: PermissionDep, actor: CurrentActor, organization_id: UUID
+    session: DbSession,
+    permissions: PermissionDep,
+    settings: AppSettings,
+    actor: CurrentActor,
+    organization_id: UUID,
 ) -> list[CustomerMemberResponse]:
-    users = await CustomerOrgService(session, permissions).list_members(actor, organization_id)
+    users = await CustomerOrgService(session, permissions, settings).list_members(
+        actor, organization_id
+    )
     return [
         CustomerMemberResponse(
             user_id=u.id,
@@ -430,11 +449,12 @@ async def list_customer_members(
 async def add_customer_member(
     session: DbSession,
     permissions: PermissionDep,
+    settings: AppSettings,
     actor: CurrentActor,
     organization_id: UUID,
     payload: MembershipRequest,
 ) -> CustomerMemberResponse:
-    user = await CustomerOrgService(session, permissions).add_member(
+    user = await CustomerOrgService(session, permissions, settings).add_member(
         actor, organization_id, user_id=payload.user_id
     )
     await session.commit()
@@ -452,11 +472,12 @@ async def add_customer_member(
 async def remove_customer_member(
     session: DbSession,
     permissions: PermissionDep,
+    settings: AppSettings,
     actor: CurrentActor,
     organization_id: UUID,
     user_id: UUID,
 ) -> None:
-    await CustomerOrgService(session, permissions).remove_member(
+    await CustomerOrgService(session, permissions, settings).remove_member(
         actor, organization_id, user_id=user_id
     )
     await session.commit()
@@ -565,3 +586,66 @@ async def portal_my_request(
 ) -> TicketResponse:
     view = await CustomerPortalService(session, permissions).get_my_ticket(actor, slug, issue_id)
     return _ticket(view)
+
+
+@customers_router.post(
+    "/{organization_id}/invitations",
+    response_model=CustomerMemberResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def invite_customer(
+    session: DbSession,
+    permissions: PermissionDep,
+    settings: AppSettings,
+    actor: CurrentActor,
+    organization_id: UUID,
+    payload: CustomerInviteRequest,
+) -> CustomerMemberResponse:
+    """고객을 초대하고 이 조직에 넣는다. 한 트랜잭션이다."""
+    user = await CustomerOrgService(session, permissions, settings).invite_customer(
+        actor, organization_id, email=payload.email, display_name=payload.display_name
+    )
+    await session.commit()
+    return CustomerMemberResponse(
+        user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        status="active" if user.is_active else "inactive",
+    )
+
+
+@customers_router.get("/suggest")
+async def suggest_organization(
+    session: DbSession,
+    permissions: PermissionDep,
+    settings: AppSettings,
+    actor: CurrentActor,
+    email: str,
+) -> dict[str, str | None]:
+    """이 주소의 도메인을 주장하는 조직. 화면의 기본값 **제안**이다."""
+    found = await CustomerOrgService(session, permissions, settings).suggest_organization(
+        actor, email
+    )
+    return {"organization_id": str(found) if found else None}
+
+
+@portal_router.get("", response_model=list[PortalInfoResponse])
+async def my_portals(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor
+) -> list[PortalInfoResponse]:
+    """이 설치의 창구 목록. **로그인해야 열린다** (`actor` 의존성이 그것이다).
+
+    초대를 받아 비밀번호를 정한 고객이 앱 뿌리로 들어왔을 때 어디로 보낼지
+    정하는 데 쓴다. 익명에게 열어 두면 설치된 창구를 아무나 훑는다.
+    """
+    portals = await CustomerPortalService(session, permissions).list_open_portals()
+    return [
+        PortalInfoResponse(
+            slug=portal.slug,
+            name=portal.name,
+            description=portal.description,
+            theme=portal.theme,
+            allows_guests=portal.is_public,
+        )
+        for portal in portals
+    ]

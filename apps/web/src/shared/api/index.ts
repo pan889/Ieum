@@ -5,6 +5,7 @@ import {
   createAuditApi,
   createAuthApi,
   createBoardsApi,
+  createDeskApi,
   createFieldsApi,
   createGroupsApi,
   createIdpApi,
@@ -46,3 +47,4 @@ export const idpApi = createIdpApi(apiClient)
 export const groupsApi = createGroupsApi(apiClient)
 export const workflowsApi = createWorkflowsApi(apiClient)
 export const fieldsApi = createFieldsApi(apiClient)
+export const deskApi = createDeskApi(apiClient)

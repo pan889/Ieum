@@ -7,6 +7,8 @@ import {
 
 import { BoardScreen } from '@/features/boards/BoardScreen'
 import { BoardsScreen } from '@/features/boards/BoardsScreen'
+import { CustomerOrgsScreen } from '@/features/desk/CustomerOrgsScreen'
+import { PortalsScreen } from '@/features/desk/PortalsScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
 import { SpaceScreen } from '@/features/wiki/SpaceScreen'
@@ -152,6 +154,18 @@ const fieldsRoute = createRoute({
   component: FieldsScreen,
 })
 
+const portalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/portals',
+  component: PortalsScreen,
+})
+
+const customerOrgsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/customers',
+  component: CustomerOrgsScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -221,6 +235,8 @@ const routeTree = rootRoute.addChildren([
   rolesRoute,
   workflowsRoute,
   fieldsRoute,
+  portalsRoute,
+  customerOrgsRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

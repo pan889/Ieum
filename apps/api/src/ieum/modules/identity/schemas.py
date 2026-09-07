@@ -42,6 +42,9 @@ class InviteRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     locale: str = Field(default="en", max_length=16)
     timezone: str = Field(default="UTC", max_length=64)
+    #: 고객(포털 사용자). **만들 때만 정한다** — 나중에 뒤집으면 그 사람이
+    #: 보던 것이 통째로 바뀐다 (`UserService.invite` 참조).
+    is_customer: bool = False
 
 
 class AcceptInviteRequest(BaseModel):

@@ -154,6 +154,16 @@ class CustomerOrgResponse(BaseModel):
     member_count: int
 
 
+class CustomerInviteRequest(BaseModel):
+    """고객을 초대해 이 조직에 넣는다. `is_customer` 를 받지 않는다 — 이
+    통로로 만든 계정은 언제나 고객이다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=1, max_length=200)
+
+
 class MembershipRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -225,6 +235,15 @@ class GuestSubmitRequest(PortalSubmitRequest):
     name: str = Field(min_length=1, max_length=200)
 
 
+class AnswerResponse(BaseModel):
+    """제출된 답 하나. **라벨이 함께 온다** — 화면이 `key` 만 받으면 고객에게
+    `device` 를 보여 준다."""
+
+    key: str
+    label: str
+    value: Any
+
+
 class TicketResponse(BaseModel):
     """고객이 보는 티켓 한 건."""
 
@@ -237,8 +256,8 @@ class TicketResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     request_type_name: str | None
-    #: 폼 키로 되돌린 답. 커스텀 필드 키가 아니다.
-    answers: dict[str, Any]
+    #: 폼 키로 되돌린 답. 커스텀 필드 키가 아니고, 폼에 적힌 순서다.
+    answers: list[AnswerResponse]
 
 
 class TicketSummaryResponse(BaseModel):

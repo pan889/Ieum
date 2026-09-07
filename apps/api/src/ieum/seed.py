@@ -23,6 +23,7 @@ from ieum.modules.issues import permissions as issue_perms
 from ieum.modules.issues.models import IssueType, Workflow, WorkflowState, WorkflowTransition
 from ieum.modules.issues.repository import IssueTypeRepository, WorkflowRepository
 from ieum.modules.issues.workflow import DEFAULT_TRANSITIONS, DEFAULT_WORKFLOW_STATES
+from ieum.modules.notify import permissions as notify_perms
 from ieum.modules.org import permissions as org_perms
 from ieum.modules.org.models import Role
 from ieum.modules.org.repository import RoleRepository
@@ -41,6 +42,10 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             *issue_perms.ALL,
             *wiki_perms.ALL,
             *desk_perms.ALL,
+            # 한동안 빠져 있었다. 웹훅 화면은 M2 에 만들었는데 그 권한을
+            # 가진 내장 역할이 없어서, 관리자가 그 화면에서 403 을 봤다.
+            # `test_seed_grants.py` 가 이제 그 종류를 붙잡는다.
+            *notify_perms.ALL,
         ),
     ),
     "Member": (
@@ -70,6 +75,10 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             issue_perms.WORKLOG_EDIT_ANY,
             issue_perms.SECURITY_LEVEL_SET,
             issue_perms.BOARD_MANAGE,
+            # 프로젝트 관리자는 자기 프로젝트의 웹훅을 본다. 만드는 것은
+            # 데이터를 외부로 내보내는 일이라 step-up 대상이다.
+            notify_perms.WEBHOOK_VIEW,
+            notify_perms.WEBHOOK_MANAGE,
         ),
     ),
     "Project Member": (

@@ -201,6 +201,24 @@ class TestOneCharacterApart:
         r = await app_client.get(f"{BASE}/portal/no-such-portal", headers=headers)
         assert r.status_code == 404, r.text
 
+    async def test_the_portal_index_is_reachable(
+        self, app_client: httpx.AsyncClient, engine: object, settings: Settings
+    ) -> None:
+        """`/api/v1/portal` — 슬래시가 없다. 접두사로는 안 잡히는 자리다.
+
+        만들자마자 403 이었다. 로그인한 고객이 어느 창구로 갈지 고르는 목록
+        이므로, 여기가 막히면 초대를 받은 고객은 막다른 화면을 본다.
+        """
+        headers = await _customer_headers(app_client, engine, settings)
+        r = await app_client.get(f"{BASE}/portal", headers=headers)
+        assert r.status_code == 200, r.text
+        assert isinstance(r.json(), list)
+
+    async def test_the_portal_index_needs_a_login(self, app_client: httpx.AsyncClient) -> None:
+        """익명에게는 열지 않는다 — 설치된 창구를 아무나 훑게 하지 않는다."""
+        r = await app_client.get(f"{BASE}/portal")
+        assert r.status_code == 401, r.text
+
     async def test_the_customer_portal_surface_needs_no_login(
         self, app_client: httpx.AsyncClient
     ) -> None:
@@ -225,6 +243,20 @@ class TestInternalUsersAreUnaffected:
         r = await app_client.get(f"{BASE}/roles/permissions", headers=headers)
         assert r.status_code == 200, r.text
         assert len(r.json()) > 20
+
+
+def test_the_exact_path_list_stays_narrow() -> None:
+    """정확히 일치하는 허용 목록. 창구 목록 하나뿐이다.
+
+    이 목록이 필요한 이유가 곧 이 시험의 이유다: `/api/v1/portal` 은 접두사
+    `/api/v1/portal/` 에 걸리지 않는다. 접두사에서 슬래시를 빼서 고치면
+    `/api/v1/portals/...`(관리 API)까지 열리므로, 그 유혹을 막아 둔다.
+    """
+    from ieum.core.deps import CUSTOMER_PATHS
+
+    assert CUSTOMER_PATHS == ("/api/v1/portal",)
+    for path in CUSTOMER_PATHS:
+        assert not path.endswith("/"), f"{path}: 슬래시로 끝나면 접두사와 겹친다"
 
 
 def test_the_allow_list_stays_narrow() -> None:

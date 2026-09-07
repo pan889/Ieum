@@ -61,6 +61,11 @@ class PortalRepository:
         stmt = stmt.order_by(Portal.name)
         return list((await self._s.execute(stmt)).scalars().all())
 
+    async def list_for_projects_all(self) -> list[Portal]:
+        """접히지 않은 포털 전부. 로그인한 고객에게 창구를 고르게 할 때 쓴다."""
+        stmt = select(Portal).where(Portal.archived_at.is_(None)).order_by(Portal.name, Portal.id)
+        return list((await self._s.execute(stmt)).scalars().all())
+
 
 class RequestTypeRepository:
     def __init__(self, session: AsyncSession) -> None:

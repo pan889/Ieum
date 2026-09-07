@@ -428,6 +428,7 @@ async def invite_user(
         locale=body.locale,
         timezone=body.timezone,
         invited_by=actor.user_id,
+        is_customer=body.is_customer,
     )
     await session.commit()
     return UserResponse.model_validate(user)

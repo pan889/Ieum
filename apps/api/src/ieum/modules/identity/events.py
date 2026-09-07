@@ -17,6 +17,9 @@ class UserInvited(DomainEvent):
 
     email: str
     invited_by: UUID | None = None
+    #: 고객(포털 사용자)인가. 초대 메일이 어디를 가리켜야 하는지가 이것으로
+    #: 갈린다 — 내부 계정은 앱으로, 고객은 자기 창구로 간다.
+    is_customer: bool = False
 
 
 @events.register_event
