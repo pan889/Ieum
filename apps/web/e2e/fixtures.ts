@@ -211,6 +211,15 @@ export async function stepUpToken(page: Page): Promise<string> {
   return token
 }
 
+/**
+ * 시드 관리자의 액세스 토큰 — **2FA 를 통과하지 않은 것.**
+ *
+ * step-up 이 걸린 자리가 이것을 거절하는지 볼 때 쓴다. `stepUpToken` 과 짝이다.
+ */
+export async function plainAdminToken(page: Page): Promise<string> {
+  return accessToken(page)
+}
+
 /** 로그인한 사람의 액세스 토큰. 메모리에만 있어서 앱에게 물어야 한다. */
 async function accessToken(page: Page): Promise<string> {
   const response = await page.request.post(`${API}/api/v1/auth/login`, {

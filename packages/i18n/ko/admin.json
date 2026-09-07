@@ -39,5 +39,22 @@
   "sso.save": "추가",
   "sso.disable": "끄기",
   "sso.enable": "켜기",
-  "sso.disabled": "꺼짐"
+  "sso.disabled": "꺼짐",
+  "sso.kind": "프로토콜",
+  "sso.kind.oidc": "OpenID Connect",
+  "sso.kind.saml": "SAML 2.0",
+  "sso.metadataXml": "IdP 메타데이터 XML",
+  "sso.metadataHint": "IdP 가 주는 메타데이터를 그대로 붙여 주세요 — 발급자·로그인 주소·서명 인증서를 읽어 채웁니다.",
+  "sso.entityId": "IdP 엔티티 ID",
+  "sso.ssoUrl": "로그인 주소",
+  "sso.certificates": "서명 인증서",
+  "sso.certificatesHint": "한 줄에 하나. IdP 가 키를 교체하는 동안 둘 다 유효합니다.",
+  "sso.spPrivateKey": "우리 비밀키 (어설션 암호화용)",
+  "sso.spCertificate": "우리 인증서 (어설션 암호화용)",
+  "sso.wantEncrypted": "어설션 암호화를 요구",
+  "sso.allowIdpInitiated": "IdP 화면에서 시작하는 로그인 허용",
+  "sso.allowIdpInitiatedHint": "기본은 꺼짐: 우리가 시작한 요청과 묶을 수 없는 로그인입니다.",
+  "sso.samlRedirectHint": "이 응답 주소(ACS)를 IdP 에 등록해 주세요: {uri}",
+  "sso.metadataLink": "우리 SP 메타데이터",
+  "sso.certificateCount": "인증서 {count}장"
 }

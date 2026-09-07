@@ -45,6 +45,7 @@ from ieum.modules.identity.schemas import (
     RefreshRequest,
     SamlHandoffRequest,
     SamlProviderCreateRequest,
+    SamlProviderUpdateRequest,
     SessionResponse,
     SsoCallbackRequest,
     SsoProviderCreateRequest,
@@ -732,6 +733,32 @@ async def create_saml_provider(
             link_verified_email=body.link_verified_email,
             email_domains=tuple(body.email_domains),
         ),
+    )
+    await session.commit()
+    return IdpResponse.of(provider)
+
+
+@sso_admin_router.patch("/saml/providers/{provider_id}", response_model=IdpResponse)
+async def update_saml_provider(
+    provider_id: UUID,
+    body: SamlProviderUpdateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> IdpResponse:
+    """서명 인증서·SSO 주소를 갈아 끼운다. IdP 는 키를 돌린다 — 갈아 끼울 길이
+    없으면 교체하는 날 로그인이 끊기고 되돌릴 방법도 없다."""
+    entity_id: str | None = None
+    sso_url = (body.sso_url or "").strip() or None
+    certificates = tuple(saml.normalize_certificate(c) for c in body.certificates)
+    if body.metadata_xml:
+        read = saml.read_idp_metadata(body.metadata_xml)
+        entity_id, sso_url = read.entity_id, read.sso_url
+        certificates = read.certificates
+
+    provider = await IdentityProviderService(session, settings, permissions).update_saml(
+        actor, provider_id, entity_id=entity_id, sso_url=sso_url, certificates=certificates
     )
     await session.commit()
     return IdpResponse.of(provider)

@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.constants import OneLogin_Saml2_Constants
@@ -172,14 +172,34 @@ class Verified:
     in_response_to: str | None
 
 
-def authn_request(idp: IdpConfig, sp: SpEndpoints, *, relay_state: str) -> tuple[str, str]:
-    """(리다이렉트 URL, 요청 ID). 요청 ID 는 `InResponseTo` 로 돌아온다."""
+def _with_relay_state(url: str, relay_state: str) -> str:
+    """`RelayState` 를 **갈아 끼운다.**
+
+    라이브러리는 요청 ID 를 만든 뒤에야 알려 주므로 미리 넘길 수 없고, 그
+    사이에 자기 값(우리 ACS 주소)을 `RelayState` 에 이미 채워 둔다. 그래서
+    뒤에 하나 더 붙이면 파라미터가 둘이 되고, **어느 것을 읽는지가 IdP 마다
+    다르다** — 첫 값을 읽는 IdP 에서는 우리 값이 무시되고, 그러면 돌아온
+    응답을 우리가 시작한 흐름과 묶을 수 없다.
+    """
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "RelayState"]
+    query.append(("RelayState", relay_state))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def authn_request(idp: IdpConfig, sp: SpEndpoints) -> tuple[str, str]:
+    """(리다이렉트 URL, 요청 ID). 요청 ID 는 `InResponseTo` 로 돌아온다.
+
+    `RelayState` 에 요청 ID 를 싣는다. 규격이 80바이트로 제한하므로 봉인한
+    상태를 넣을 수 없고, 넣을 필요도 없다 — 이 ID 는 우리 DB 의 행을 가리키는
+    열쇠일 뿐이고, 위조해도 그 행이 없으면 걸린다.
+    """
     auth = OneLogin_Saml2_Auth(_request_data(sp.acs_url, {}), old_settings=settings_for(idp, sp))
-    url = auth.login(return_to=relay_state)
+    url = auth.login()
     request_id = auth.get_last_request_id()
     if not request_id:
         raise AuthenticationError("AuthnRequest 를 만들지 못했다.", code="auth.saml_request_failed")
-    return url, request_id
+    return _with_relay_state(url, request_id), request_id
 
 
 def metadata_xml(idp: IdpConfig, sp: SpEndpoints) -> str:

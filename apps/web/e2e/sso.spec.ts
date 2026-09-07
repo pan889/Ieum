@@ -16,7 +16,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { API, expect, signIn, stepUpToken, test } from './fixtures'
+import { API, expect, plainAdminToken, signIn, stepUpToken, test } from './fixtures'
 
 /** 브라우저가 보는 주소. `iss` 도 이것이다. */
 const IDP = process.env['E2E_IDP_URL'] ?? 'http://localhost:9099'
@@ -146,6 +146,92 @@ test('IdP 는 껐다 켤 수 있다', async ({ page, consoleErrors }) => {
   expect(on.ok(), await on.text()).toBe(true)
   await page.reload()
   await expect(button).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})
+
+/** IdP 가 주는 메타데이터. 여기서 발급자·SSO 주소·서명 인증서가 온다. */
+const SAML_METADATA = `${IDP}/saml/metadata`
+const SAML_NAME = 'Fake SAML'
+
+/**
+ * 가짜 IdP 를 SAML 로 등록된·켜진 상태로 만들고 (id, 이름) 을 돌려준다.
+ *
+ * **메타데이터를 매번 다시 읽어 갈아 끼운다.** 가짜 IdP 는 기동할 때마다 서명
+ * 키를 새로 만들므로, 컨테이너가 한 번 재시작하면 등록해 둔 인증서로는 어떤
+ * 어설션도 검증되지 않는다 — 실제 IdP 의 키 회전과 같은 상황이고, 그 길이
+ * 막혀 있으면 스펙이 "서명 검증 실패" 로 붉어진다.
+ */
+async function ensureSamlIdp(page: Page): Promise<{ id: string; name: string }> {
+  const metadata = await (await page.request.get(SAML_METADATA)).text()
+  const token = await stepUpToken(page)
+  const headers = { Authorization: `Bearer ${token}` }
+
+  const listed = await page.request.get(`${API}/api/v1/admin/sso/providers`, { headers })
+  expect(listed.ok(), await listed.text()).toBe(true)
+  const existing = (
+    (await listed.json()) as { id: string; name: string; kind: string }[]
+  ).find((row) => row.kind === 'saml')
+
+  if (existing) {
+    const rotated = await page.request.patch(
+      `${API}/api/v1/admin/sso/saml/providers/${existing.id}`,
+      { headers, data: { metadata_xml: metadata } },
+    )
+    expect(rotated.ok(), await rotated.text()).toBe(true)
+    const on = await page.request.post(
+      `${API}/api/v1/admin/sso/providers/${existing.id}/enable`,
+      { headers },
+    )
+    expect(on.ok(), await on.text()).toBe(true)
+    return { id: existing.id, name: existing.name }
+  }
+
+  const created = await page.request.post(`${API}/api/v1/admin/sso/saml/providers`, {
+    headers,
+    data: {
+      name: SAML_NAME,
+      metadata_xml: metadata,
+      groups_attribute: 'groups',
+      email_domains: ['corp.example.com'],
+    },
+  })
+  expect(created.ok(), await created.text()).toBe(true)
+  return { id: ((await created.json()) as { id: string }).id, name: SAML_NAME }
+}
+
+test('SAML IdP 로 로그인하면 계정이 만들어진다', async ({ page, consoleErrors }) => {
+  const idp = await ensureSamlIdp(page)
+
+  await page.goto('/')
+  const button = ssoButton(page, idp.name)
+  await expect(button).toBeVisible()
+  await button.click()
+
+  // IdP 가 폼을 스스로 보내 우리 ACS 로 POST 하고, ACS 는 브라우저를 화면으로
+  // 되돌린다. 화면은 1회용 코드를 토큰으로 바꾼다 — **이 왕복은 서버 테스트로
+  // 볼 수 없다**: 브라우저가 폼을 보내고 리다이렉트를 따라가야 성립한다.
+  await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible({ timeout: 25_000 })
+  await expect(page.getByText('SAML Person')).toBeVisible()
+  // 1회용 코드가 주소창에 남으면 기록·리퍼러로 샌다.
+  expect(page.url()).not.toContain('code=')
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('SAML 설정도 2FA 없이 만질 수 없다', async ({ page, consoleErrors }) => {
+  // 인증서를 바꾸면 **누구로든 로그인할 수 있다.** 등록과 같은 문이어야 한다.
+  const idp = await ensureSamlIdp(page)
+  await signIn(page)
+
+  const refused = await page.request.patch(
+    `${API}/api/v1/admin/sso/saml/providers/${idp.id}`,
+    {
+      headers: { Authorization: `Bearer ${await plainAdminToken(page)}` },
+      data: { certificates: ['AAAA'] },
+    },
+  )
+  expect(refused.status()).toBe(403)
 
   expect(consoleErrors).toEqual([])
 })

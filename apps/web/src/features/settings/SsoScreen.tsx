@@ -1,26 +1,31 @@
 /**
  * IdP 등록 (auth.md 4절).
  *
- * 이 설정을 쥐면 **누구로든 로그인할 수 있다** — 발급자와 JWKS 를 바꾸면
- * 자기 키로 서명한 토큰이 통과한다. 그래서 서버가 step-up 을 요구하고,
- * 2FA 를 등록하지 않은 관리자는 여기서 막힌다. 화면은 그 거절을 그대로
- * 보여 준다(숨기면 왜 안 되는지 알 수 없다).
+ * 이 설정을 쥐면 **누구로든 로그인할 수 있다** — 발급자와 검증 재료(OIDC 의
+ * JWKS, SAML 의 인증서)를 바꾸면 자기 키로 서명한 토큰이 통과한다. 그래서
+ * 서버가 step-up 을 요구하고, 2FA 를 등록하지 않은 관리자는 여기서 막힌다.
+ * 화면은 그 거절을 그대로 보여 준다(숨기면 왜 안 되는지 알 수 없다).
  *
- * 시크릿은 한 번 보내면 끝이다. 목록에도 응답에도 다시 나오지 않는다.
+ * 시크릿과 비밀키는 한 번 보내면 끝이다. 목록에도 응답에도 다시 나오지 않는다.
+ *
+ * 꺼진 IdP 도 목록에 남는다. 사라지면 다시 켤 대상을 고를 수 없고, 같은
+ * 발급자로 새로 등록하는 길은 서버가 막는다 — 그 IdP 를 영구히 잃는다.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { NewIdentityProvider } from '@ieum/api-client'
+import type { NewIdentityProvider, NewSamlProvider } from '@ieum/api-client'
 
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { idpApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Field, Select, Textarea } from '@/shared/ui/primitives'
 
-const EMPTY: NewIdentityProvider = {
+type Kind = 'oidc' | 'saml'
+
+const EMPTY_OIDC: NewIdentityProvider = {
   name: '',
   issuer: '',
   client_id: '',
@@ -30,31 +35,78 @@ const EMPTY: NewIdentityProvider = {
   jwks_uri: '',
 }
 
+const EMPTY_SAML = {
+  name: '',
+  metadata_xml: '',
+  entity_id: '',
+  sso_url: '',
+  certificates: '',
+  sp_private_key: '',
+  sp_certificate: '',
+  want_encrypted: false,
+  allow_idp_initiated: false,
+  groups_attribute: '',
+}
+
+/** 여러 줄로 받은 인증서를 목록으로. 빈 줄은 버린다. */
+function certificateLines(value: string): string[] {
+  return value
+    .split(/\n{2,}|\r?\n(?=-----BEGIN)/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+}
+
 export function SsoScreen() {
   const { t } = useTranslation(['admin', 'common'])
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
-  const [draft, setDraft] = useState<NewIdentityProvider>(EMPTY)
+  const [kind, setKind] = useState<Kind>('oidc')
+  const [oidc, setOidc] = useState<NewIdentityProvider>(EMPTY_OIDC)
+  const [saml, setSaml] = useState(EMPTY_SAML)
   const [domains, setDomains] = useState('')
 
   const providers = useQuery({ queryKey: ['idp'], queryFn: () => idpApi.list() })
 
+  const emailDomains = () =>
+    domains
+      .split(',')
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean)
+
+  const done = async () => {
+    setAdding(false)
+    setOidc(EMPTY_OIDC)
+    setSaml(EMPTY_SAML)
+    setDomains('')
+    await queryClient.invalidateQueries({ queryKey: ['idp'] })
+  }
+
   const create = useMutation({
-    mutationFn: () =>
-      idpApi.create({
-        ...draft,
+    mutationFn: () => {
+      if (kind === 'oidc') {
         // 쉼표로 적게 한다. 도메인이 하나뿐인 조직이 대부분이다.
-        email_domains: domains
-          .split(',')
-          .map((d) => d.trim().toLowerCase())
-          .filter(Boolean),
-      }),
-    onSuccess: async () => {
-      setAdding(false)
-      setDraft(EMPTY)
-      setDomains('')
-      await queryClient.invalidateQueries({ queryKey: ['idp'] })
+        return idpApi.create({ ...oidc, email_domains: emailDomains() })
+      }
+      const body: NewSamlProvider = {
+        name: saml.name,
+        want_encrypted: saml.want_encrypted,
+        allow_idp_initiated: saml.allow_idp_initiated,
+        email_domains: emailDomains(),
+      }
+      // 메타데이터를 붙였으면 나머지는 서버가 읽는다. 셋을 손으로 옮겨 적는
+      // 동안 한 글자가 틀리면 "인증서가 틀렸다" 로만 보인다.
+      if (saml.metadata_xml.trim()) body.metadata_xml = saml.metadata_xml.trim()
+      else {
+        body.entity_id = saml.entity_id.trim()
+        body.sso_url = saml.sso_url.trim()
+        body.certificates = certificateLines(saml.certificates)
+      }
+      if (saml.sp_private_key.trim()) body.sp_private_key = saml.sp_private_key.trim()
+      if (saml.sp_certificate.trim()) body.sp_certificate = saml.sp_certificate.trim()
+      if (saml.groups_attribute.trim()) body.groups_attribute = saml.groups_attribute.trim()
+      return idpApi.createSaml(body)
     },
+    onSuccess: done,
   })
 
   // 끄고 켜는 것은 한 쌍이다. 끄기만 있으면 일방통행이 되고, 같은 발급자로
@@ -65,11 +117,15 @@ export function SsoScreen() {
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['idp'] }) },
   })
 
-  const set = (key: keyof NewIdentityProvider) => (value: string) => {
-    setDraft((current) => ({ ...current, [key]: value }))
+  const setOidcField = (key: keyof NewIdentityProvider) => (value: string) => {
+    setOidc((current) => ({ ...current, [key]: value }))
+  }
+  const setSamlField = (key: keyof typeof EMPTY_SAML) => (value: string | boolean) => {
+    setSaml((current) => ({ ...current, [key]: value }))
   }
 
   const rows = providers.data ?? []
+  const name = kind === 'oidc' ? oidc.name : saml.name
 
   return (
     <section className="mx-auto flex max-w-3xl flex-col gap-5">
@@ -93,73 +149,171 @@ export function SsoScreen() {
             onSubmit={(event) => { event.preventDefault(); create.mutate() }}
           >
             {create.isError ? <Alert>{describeError(create.error)}</Alert> : null}
-            <Field
-              label={t('admin:sso.name')}
-              required
-              autoFocus
-              value={draft.name}
-              onChange={(e) => { set('name')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.issuer')}
-              required
-              placeholder="https://login.microsoftonline.com/…/v2.0"
-              value={draft.issuer}
-              onChange={(e) => { set('issuer')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.clientId')}
-              required
-              value={draft.client_id}
-              onChange={(e) => { set('client_id')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.clientSecret')}
-              type="password"
-              required
-              autoComplete="off"
-              value={draft.client_secret}
-              onChange={(e) => { set('client_secret')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.authorizationEndpoint')}
-              required
-              value={draft.authorization_endpoint}
-              onChange={(e) => { set('authorization_endpoint')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.tokenEndpoint')}
-              required
-              value={draft.token_endpoint}
-              onChange={(e) => { set('token_endpoint')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.jwksUri')}
-              required
-              value={draft.jwks_uri}
-              onChange={(e) => { set('jwks_uri')(e.target.value) }}
-            />
-            <Field
-              label={t('admin:sso.groupsClaim')}
-              placeholder="groups"
-              value={draft.groups_claim ?? ''}
-              onChange={(e) => { set('groups_claim')(e.target.value) }}
-            />
+            <Select
+              label={t('admin:sso.kind')}
+              value={kind}
+              onChange={(e) => { setKind(e.target.value as Kind) }}
+            >
+              <option value="oidc">{t('admin:sso.kind.oidc')}</option>
+              <option value="saml">{t('admin:sso.kind.saml')}</option>
+            </Select>
+
+            {kind === 'oidc' ? (
+              <>
+                <Field
+                  label={t('admin:sso.name')}
+                  required
+                  autoFocus
+                  value={oidc.name}
+                  onChange={(e) => { setOidcField('name')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.issuer')}
+                  required
+                  placeholder="https://login.microsoftonline.com/…/v2.0"
+                  value={oidc.issuer}
+                  onChange={(e) => { setOidcField('issuer')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.clientId')}
+                  required
+                  value={oidc.client_id}
+                  onChange={(e) => { setOidcField('client_id')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.clientSecret')}
+                  type="password"
+                  required
+                  autoComplete="off"
+                  value={oidc.client_secret}
+                  onChange={(e) => { setOidcField('client_secret')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.authorizationEndpoint')}
+                  required
+                  value={oidc.authorization_endpoint}
+                  onChange={(e) => { setOidcField('authorization_endpoint')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.tokenEndpoint')}
+                  required
+                  value={oidc.token_endpoint}
+                  onChange={(e) => { setOidcField('token_endpoint')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.jwksUri')}
+                  required
+                  value={oidc.jwks_uri}
+                  onChange={(e) => { setOidcField('jwks_uri')(e.target.value) }}
+                />
+                <Field
+                  label={t('admin:sso.groupsClaim')}
+                  placeholder="groups"
+                  value={oidc.groups_claim ?? ''}
+                  onChange={(e) => { setOidcField('groups_claim')(e.target.value) }}
+                />
+              </>
+            ) : (
+              <>
+                <Field
+                  label={t('admin:sso.name')}
+                  required
+                  autoFocus
+                  value={saml.name}
+                  onChange={(e) => { setSamlField('name')(e.target.value) }}
+                />
+                <Textarea
+                  label={t('admin:sso.metadataXml')}
+                  hint={t('admin:sso.metadataHint')}
+                  rows={5}
+                  value={saml.metadata_xml}
+                  onChange={(e) => { setSamlField('metadata_xml')(e.target.value) }}
+                />
+                {/* 메타데이터가 없을 때만 직접 받는다. 둘 다 채우게 하면
+                    어느 쪽이 이기는지 화면에서 알 수 없다. */}
+                {saml.metadata_xml.trim() ? null : (
+                  <>
+                    <Field
+                      label={t('admin:sso.entityId')}
+                      required
+                      value={saml.entity_id}
+                      onChange={(e) => { setSamlField('entity_id')(e.target.value) }}
+                    />
+                    <Field
+                      label={t('admin:sso.ssoUrl')}
+                      required
+                      value={saml.sso_url}
+                      onChange={(e) => { setSamlField('sso_url')(e.target.value) }}
+                    />
+                    <Textarea
+                      label={t('admin:sso.certificates')}
+                      hint={t('admin:sso.certificatesHint')}
+                      rows={4}
+                      value={saml.certificates}
+                      onChange={(e) => { setSamlField('certificates')(e.target.value) }}
+                    />
+                  </>
+                )}
+                <Field
+                  label={t('admin:sso.groupsClaim')}
+                  placeholder="groups"
+                  value={saml.groups_attribute}
+                  onChange={(e) => { setSamlField('groups_attribute')(e.target.value) }}
+                />
+                <Textarea
+                  label={t('admin:sso.spPrivateKey')}
+                  rows={3}
+                  autoComplete="off"
+                  value={saml.sp_private_key}
+                  onChange={(e) => { setSamlField('sp_private_key')(e.target.value) }}
+                />
+                <Textarea
+                  label={t('admin:sso.spCertificate')}
+                  rows={3}
+                  value={saml.sp_certificate}
+                  onChange={(e) => { setSamlField('sp_certificate')(e.target.value) }}
+                />
+                <label className="flex items-center gap-2 text-sm text-fg">
+                  <input
+                    type="checkbox"
+                    checked={saml.want_encrypted}
+                    onChange={(e) => { setSamlField('want_encrypted')(e.target.checked) }}
+                  />
+                  {t('admin:sso.wantEncrypted')}
+                </label>
+                <label className="flex flex-col gap-0.5 text-sm text-fg">
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={saml.allow_idp_initiated}
+                      onChange={(e) => {
+                        setSamlField('allow_idp_initiated')(e.target.checked)
+                      }}
+                    />
+                    {t('admin:sso.allowIdpInitiated')}
+                  </span>
+                  <span className="ml-6 text-xs text-muted">
+                    {t('admin:sso.allowIdpInitiatedHint')}
+                  </span>
+                </label>
+              </>
+            )}
+
             <Field
               label={t('admin:sso.emailDomains')}
               placeholder="corp.example.com, corp.example.co.kr"
               value={domains}
               onChange={(e) => { setDomains(e.target.value) }}
             />
-            {/* 콜백 주소는 서버가 정한다. IdP 에 등록할 값을 그대로 보여 준다 —
-                이걸 못 찾으면 설정이 끝나지 않는다. */}
+            {/* 돌아올 주소는 서버가 정한다. IdP 에 등록할 값을 그대로 보여
+                준다 — 이걸 못 찾으면 설정이 끝나지 않는다. */}
             <p className="text-xs text-muted">
-              {t('admin:sso.redirectHint', {
-                uri: `${window.location.origin}/auth/callback`,
-              })}
+              {kind === 'oidc'
+                ? t('admin:sso.redirectHint', { uri: `${window.location.origin}/auth/callback` })
+                : t('admin:sso.samlRedirectHint', { uri: '/api/v1/auth/saml/acs' })}
             </p>
             <div className="flex gap-2">
-              <Button type="submit" loading={create.isPending} disabled={!draft.name.trim()}>
+              <Button type="submit" loading={create.isPending} disabled={!name.trim()}>
                 {t('admin:sso.save')}
               </Button>
               <Button variant="ghost" onClick={() => { setAdding(false) }}>
@@ -182,6 +336,9 @@ export function SsoScreen() {
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <p className="text-sm font-medium">
                     {provider.name}
+                    <span className="ml-2 text-xs font-normal text-muted">
+                      {t(`admin:sso.kind.${provider.kind}`)}
+                    </span>
                     {/* 꺼진 것도 목록에 남는다. 표시가 없으면 왜 로그인
                         화면에 안 뜨는지 알 수 없다. */}
                     {!provider.is_enabled ? (
@@ -193,6 +350,20 @@ export function SsoScreen() {
                   <p className="truncate text-xs text-muted">{provider.issuer}</p>
                   {provider.email_domains.length > 0 ? (
                     <p className="text-xs text-muted">{provider.email_domains.join(', ')}</p>
+                  ) : null}
+                  {provider.kind === 'saml' ? (
+                    <p className="text-xs text-muted">
+                      <a
+                        className="underline"
+                        href={`/api/v1/auth/saml/${provider.id}/metadata`}
+                      >
+                        {t('admin:sso.metadataLink')}
+                      </a>
+                      {' · '}
+                      {t('admin:sso.certificateCount', {
+                        count: provider.saml_certificate_count,
+                      })}
+                    </p>
                   ) : null}
                 </div>
                 <Button

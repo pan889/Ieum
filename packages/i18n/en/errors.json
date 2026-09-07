@@ -161,5 +161,7 @@
   "identity.saml_metadata_incomplete": "The metadata must contain an issuer, an SSO URL, and a signing certificate.",
   "identity.saml_metadata_required": "Provide the metadata XML, or the issuer and SSO URL directly.",
   "identity.saml_certificate_required": "A signing certificate is required.",
-  "identity.saml_sp_key_required": "Requiring encrypted assertions needs an SP private key."
+  "identity.saml_sp_key_required": "Requiring encrypted assertions needs an SP private key.",
+  "identity.saml_issuer_mismatch": "That metadata is for a different issuer. Register it as a separate provider.",
+  "identity.saml_nothing_to_update": "Nothing to change."
 }

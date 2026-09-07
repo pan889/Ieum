@@ -7,7 +7,7 @@ import { AcceptInviteScreen } from '@/features/auth/AcceptInviteScreen'
 import { LoginScreen } from '@/features/auth/LoginScreen'
 import { MfaEnrollScreen } from '@/features/auth/MfaEnrollScreen'
 import { MfaScreen } from '@/features/auth/MfaScreen'
-import { SsoCallbackScreen } from '@/features/auth/SsoCallbackScreen'
+import { SAML_CALLBACK_PATH, SsoCallbackScreen } from '@/features/auth/SsoCallbackScreen'
 import { stageFor } from '@/features/auth/stage'
 import { useAuthStore } from '@/features/auth/store'
 import { authApi } from '@/shared/api'
@@ -32,8 +32,10 @@ export function App() {
   // 가른다 — 라우터에 넣으면 로그인한 사람만 초대를 받을 수 있게 된다.
   const invited = window.location.pathname === '/invite'
   // IdP 가 돌려보내는 자리도 로그인 **전에** 열려야 한다. 라우터에 넣으면
-  // 로그인하려는 사람이 도착할 곳이 없다.
-  const returning = window.location.pathname === '/auth/callback'
+  // 로그인하려는 사람이 도착할 곳이 없다. OIDC 와 SAML 이 같은 화면을 쓴다.
+  const returning =
+    window.location.pathname === '/auth/callback' ||
+    window.location.pathname.startsWith(SAML_CALLBACK_PATH)
 
   const me = useQuery({
     queryKey: ['auth', 'me'],

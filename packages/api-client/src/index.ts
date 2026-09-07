@@ -36,6 +36,7 @@ export {
   type IdentityProvider,
   type IdpApi,
   type NewIdentityProvider,
+  type NewSamlProvider,
 } from './projects'
 export {
   createIssuesApi,

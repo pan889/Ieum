@@ -245,6 +245,19 @@ class SamlProviderCreateRequest(BaseModel):
     email_domains: list[str] = Field(default_factory=list)
 
 
+class SamlProviderUpdateRequest(BaseModel):
+    """서명 인증서·SSO 주소 교체.
+
+    IdP 는 키를 돌린다. 갈아 끼울 길이 없으면 교체하는 날 로그인이 끊기고,
+    같은 발급자로 새로 등록하는 길은 유일 제약이 막는다 — 그 IdP 를 잃는다.
+    """
+
+    #: 붙이면 여기서 읽는다. 발급자는 바꿀 수 없다(그건 다른 IdP 다).
+    metadata_xml: str | None = Field(default=None, max_length=1_000_000)
+    sso_url: str | None = Field(default=None, max_length=512)
+    certificates: list[str] = Field(default_factory=list)
+
+
 class SamlHandoffRequest(BaseModel):
     """ACS 가 준 1회용 코드. 화면이 이걸 토큰으로 바꾼다."""
 

@@ -119,6 +119,38 @@ export function createAuthApi(client: ApiClient) {
         anonymous: true,
       }),
 
+    /**
+     * SAML 로그인 시작. **OIDC 와 갈린다** — 어느 쪽인지는 `provider.kind` 가
+     * 말해 준다. 화면이 찍으면 다른 종류의 IdP 에서 조용히 실패한다.
+     */
+    startSaml: (providerId: string) =>
+      client.post<{ authorization_url: string }>(
+        `${BASE}/saml/${providerId}/start`,
+        undefined,
+        { anonymous: true },
+      ),
+
+    /**
+     * ACS 가 준 1회용 코드를 세션으로 바꾼다.
+     *
+     * SAML 은 IdP 가 우리 서버로 직접 POST 하므로 화면이 그 응답을 읽지
+     * 못한다. 서버가 코드만 주소로 넘겨 주고, 그것을 여기서 바꾼다.
+     */
+    async completeSaml(code: string): Promise<TokenResponse> {
+      const tokens = await client.post<TokenResponse>(
+        `${BASE}/saml/exchange`,
+        { code },
+        { anonymous: true },
+      )
+      // 로컬 로그인·OIDC 와 **같이** 저장한다. 빠뜨리면 교환은 성공하는데
+      // 다음 요청이 401 을 받아 화면이 로그인으로 되돌아간다.
+      tokenStore.set({
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+      })
+      return tokens
+    },
+
     async completeSso(code: string, state: string): Promise<TokenResponse> {
       const tokens = await client.post<TokenResponse>(
         `${BASE}/sso/callback`,
@@ -151,4 +183,6 @@ export type AuthApi = ReturnType<typeof createAuthApi>
 export interface SsoProvider {
   id: string
   name: string
+  /** 시작하는 경로가 갈린다. 'oidc' | 'saml'. */
+  kind: string
 }

@@ -561,3 +561,79 @@ class TestSpMetadata:
         assert fetched.status_code == 200, fetched.text
         assert "EntityDescriptor" in fetched.text
         assert saml.sp_endpoints(get_settings().public_api_url).acs_url in fetched.text
+
+
+class TestCertificateRotation:
+    """IdP 는 키를 돌린다. 갈아 끼울 길이 없으면 교체하는 날 로그인이 끊긴다."""
+
+    async def test_a_rotated_certificate_takes_over(
+        self, app_client: httpx.AsyncClient, idp: FakeIdp, admin: dict[str, str]
+    ) -> None:
+        row = await _register(app_client, idp, admin)
+        # 같은 발급자, 새 키. 실제 회전이 이렇게 생겼다.
+        rotated = FakeIdp(entity_id=idp.entity_id, sso_url=idp.sso_url)
+        sp = saml.sp_endpoints(get_settings().public_api_url)
+
+        # 갈아 끼우기 **전에는** 새 키로 서명한 것이 통하지 않는다.
+        before = await _authn_request_id(app_client, row["id"])
+        refused = await _post_acs(
+            app_client,
+            rotated.response(acs_url=sp.acs_url, audience=sp.entity_id, in_response_to=before),
+            before,
+        )
+        assert refused.status_code == 401, refused.text
+
+        updated = await app_client.patch(
+            f"{BASE}/admin/sso/saml/providers/{row['id']}",
+            json={"metadata_xml": rotated.metadata_xml()},
+            headers=admin,
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["saml_certificate_count"] == 1
+
+        after = await _authn_request_id(app_client, row["id"])
+        landed = await _post_acs(
+            app_client,
+            rotated.response(
+                acs_url=sp.acs_url,
+                audience=sp.entity_id,
+                in_response_to=after,
+                assertion_id="_assertion-rotated",
+            ),
+            after,
+        )
+        assert landed.status_code == 303, landed.text
+
+    async def test_another_issuer_cannot_take_the_slot(
+        self, app_client: httpx.AsyncClient, idp: FakeIdp, admin: dict[str, str]
+    ) -> None:
+        """발급자가 다르면 다른 IdP 다.
+
+        그 자리에 새 신뢰 기준을 밀어 넣으면 기존 `user_identity` 가 엉뚱한
+        IdP 에 묶인다 — 남의 계정으로 들어가는 길이 된다.
+        """
+        row = await _register(app_client, idp, admin)
+        other = FakeIdp(entity_id="https://evil.example.com/metadata")
+        refused = await app_client.patch(
+            f"{BASE}/admin/sso/saml/providers/{row['id']}",
+            json={"metadata_xml": other.metadata_xml()},
+            headers=admin,
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"]["code"] == "identity.saml_issuer_mismatch"
+
+    async def test_rotation_needs_step_up(
+        self, app_client: httpx.AsyncClient, idp: FakeIdp, admin: dict[str, str]
+    ) -> None:
+        """검증 재료를 바꾸는 일이다. 등록과 같은 문이어야 한다."""
+        row = await _register(app_client, idp, admin)
+        plain = await app_client.post(
+            f"{BASE}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+        )
+        headers = {"Authorization": f"Bearer {plain.json()['access_token']}"}
+        refused = await app_client.patch(
+            f"{BASE}/admin/sso/saml/providers/{row['id']}",
+            json={"metadata_xml": idp.metadata_xml()},
+            headers=headers,
+        )
+        assert refused.status_code == 403, refused.text

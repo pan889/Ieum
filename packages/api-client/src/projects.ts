@@ -90,7 +90,11 @@ export interface IdentityProvider {
   kind: string
   is_enabled: boolean
   issuer: string
-  client_id: string
+  /** OIDC 만 채운다. */
+  client_id: string | null
+  saml_certificate_count: number
+  saml_allow_idp_initiated: boolean
+  saml_want_encrypted: boolean
   jit_provisioning: boolean
   link_verified_email: boolean
   email_domains: string[]
@@ -116,11 +120,32 @@ export interface NewIdentityProvider {
   trust_idp_mfa?: boolean
 }
 
+export interface NewSamlProvider {
+  name: string
+  /** 붙이면 발급자·SSO 주소·인증서를 서버가 읽어 채운다. */
+  metadata_xml?: string
+  entity_id?: string
+  sso_url?: string
+  certificates?: string[]
+  sp_private_key?: string
+  sp_certificate?: string
+  want_encrypted?: boolean
+  allow_idp_initiated?: boolean
+  email_attribute?: string
+  name_attribute?: string
+  groups_attribute?: string | null
+  jit_provisioning?: boolean
+  link_verified_email?: boolean
+  email_domains?: string[]
+}
+
 export function createIdpApi(client: ApiClient) {
   return {
     list: () => client.get<IdentityProvider[]>('/api/v1/admin/sso/providers'),
     create: (body: NewIdentityProvider) =>
       client.post<IdentityProvider>('/api/v1/admin/sso/providers', body),
+    createSaml: (body: NewSamlProvider) =>
+      client.post<IdentityProvider>('/api/v1/admin/sso/saml/providers', body),
     /** 지우지 않고 끈다 — 지우면 계정 연결이 따라 사라진다. */
     disable: (id: string) =>
       client.post<void>(`/api/v1/admin/sso/providers/${id}/disable`),

@@ -25,7 +25,12 @@ export function LoginScreen() {
   })
 
   const startSso = useMutation({
-    mutationFn: (providerId: string) => authApi.startSso(providerId),
+    // 종류에 따라 시작 경로가 갈린다. 여기서 찍으면 다른 종류의 IdP 버튼이
+    // 조용히 아무 일도 하지 않는다.
+    mutationFn: (provider: { id: string; kind: string }) =>
+      provider.kind === 'saml'
+        ? authApi.startSaml(provider.id)
+        : authApi.startSso(provider.id),
     onSuccess: ({ authorization_url }) => {
       // 브라우저를 IdP 로 보낸다. 돌아올 자리는 서버가 정해 뒀다.
       window.location.assign(authorization_url)
@@ -89,7 +94,7 @@ export function LoginScreen() {
               key={provider.id}
               variant="secondary"
               loading={startSso.isPending}
-              onClick={() => { startSso.mutate(provider.id) }}
+              onClick={() => { startSso.mutate({ id: provider.id, kind: provider.kind }) }}
             >
               {t('auth:sso.continueWith', { name: provider.name })}
             </Button>

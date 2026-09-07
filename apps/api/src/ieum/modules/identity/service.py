@@ -12,7 +12,6 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from urllib.parse import quote
 from uuid import UUID
 
 import pyotp
@@ -1394,17 +1393,13 @@ class SamlService:
     async def begin(self, provider_id: UUID) -> str:
         """AuthnRequest 를 보낼 주소. 요청 ID 를 기록해 두고 돌아올 때 맞춘다."""
         provider = await self._require_provider(provider_id)
-        url, request_id = saml.authn_request(self.config_for(provider), self.sp(), relay_state="")
+        url, request_id = saml.authn_request(self.config_for(provider), self.sp())
         self._flows.start(
             provider_id=provider.id,
             request_id=request_id,
             expires_at=in_seconds(self.FLOW_TTL_SECONDS),
         )
-        # RelayState 에 요청 ID 를 그대로 싣는다. 규격이 80바이트로 제한하므로
-        # 봉인한 상태를 넣을 수 없고, 넣을 필요도 없다 — 이 ID 는 우리 DB 의
-        # 행을 가리키는 열쇠일 뿐이고, 위조해도 그 행이 없으면 걸린다.
-        separator = "&" if "?" in url else "?"
-        return f"{url}{separator}RelayState={quote(request_id, safe='')}"
+        return url
 
     async def accept_response(
         self, *, saml_response: str, relay_state: str | None, ip: str | None
@@ -1651,6 +1646,47 @@ class IdentityProviderService:
             target_type="identity_provider",
             target_id=provider.id,
             metadata={"name": provider.name, "issuer": provider.issuer, "kind": "saml"},
+        )
+        return provider
+
+    async def update_saml(
+        self,
+        actor: Actor,
+        provider_id: UUID,
+        *,
+        entity_id: str | None,
+        sso_url: str | None,
+        certificates: tuple[str, ...],
+    ) -> IdentityProvider:
+        """서명 인증서·SSO 주소를 갈아 끼운다.
+
+        **발급자는 바꾸지 않는다.** 발급자가 다르면 다른 IdP 이고, 그 자리에
+        새 신뢰 기준을 밀어 넣으면 기존 `user_identity` 가 엉뚱한 IdP 에
+        묶인다 — 남의 계정으로 들어가는 길이 된다.
+        """
+        await self._require(actor)
+        provider = await self._providers.get(provider_id)
+        if provider is None or provider.kind != "saml":
+            raise NotFoundError("그 SAML IdP 를 찾을 수 없다.")
+        if entity_id and entity_id != provider.issuer:
+            raise ConflictError(
+                "발급자가 다르다. 다른 IdP 로 등록해야 한다.",
+                code="identity.saml_issuer_mismatch",
+                details={"registered": provider.issuer, "given": entity_id},
+            )
+        if not certificates and not sso_url:
+            raise ValidationError("바꿀 것이 없다.", code="identity.saml_nothing_to_update")
+
+        if certificates:
+            provider.saml_certificates = list(certificates)
+        if sso_url:
+            provider.authorization_endpoint = sso_url
+        AuditRepository(self._s).record(
+            action=audit.IDP_UPDATED,
+            actor_id=actor.user_id,
+            target_type="identity_provider",
+            target_id=provider.id,
+            metadata={"certificates": len(provider.saml_certificates), "sso_url": bool(sso_url)},
         )
         return provider
 

@@ -161,5 +161,7 @@
   "identity.saml_metadata_incomplete": "메타데이터에 발급자·SSO 주소·서명 인증서가 모두 있어야 합니다.",
   "identity.saml_metadata_required": "메타데이터 XML 이 없으면 발급자와 SSO 주소를 직접 입력해 주세요.",
   "identity.saml_certificate_required": "서명 인증서가 필요합니다.",
-  "identity.saml_sp_key_required": "어설션 암호화를 요구하려면 SP 비밀키가 필요합니다."
+  "identity.saml_sp_key_required": "어설션 암호화를 요구하려면 SP 비밀키가 필요합니다.",
+  "identity.saml_issuer_mismatch": "다른 발급자의 메타데이터입니다. 별도 IdP 로 등록해 주세요.",
+  "identity.saml_nothing_to_update": "바꿀 것이 없습니다."
 }

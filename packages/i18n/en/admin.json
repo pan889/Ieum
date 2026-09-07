@@ -39,5 +39,22 @@
   "sso.save": "Add provider",
   "sso.disable": "Disable",
   "sso.enable": "Enable",
-  "sso.disabled": "Disabled"
+  "sso.disabled": "Disabled",
+  "sso.kind": "Protocol",
+  "sso.kind.oidc": "OpenID Connect",
+  "sso.kind.saml": "SAML 2.0",
+  "sso.metadataXml": "IdP metadata XML",
+  "sso.metadataHint": "Paste the metadata your provider gives you — we'll read the issuer, sign-in URL and signing certificate from it.",
+  "sso.entityId": "IdP entity ID",
+  "sso.ssoUrl": "Sign-in URL",
+  "sso.certificates": "Signing certificates",
+  "sso.certificatesHint": "One per line. Both stay valid while your provider rotates keys.",
+  "sso.spPrivateKey": "Our private key (for encrypted assertions)",
+  "sso.spCertificate": "Our certificate (for encrypted assertions)",
+  "sso.wantEncrypted": "Require encrypted assertions",
+  "sso.allowIdpInitiated": "Allow sign-in started from the provider",
+  "sso.allowIdpInitiatedHint": "Off by default: we can't tie such a sign-in to a request we started.",
+  "sso.samlRedirectHint": "Register this reply URL (ACS) with your provider: {uri}",
+  "sso.metadataLink": "Our SP metadata",
+  "sso.certificateCount": "{count, plural, one {# certificate} other {# certificates}}"
 }
