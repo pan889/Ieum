@@ -28,6 +28,7 @@ from ieum.modules.desk.router import (
     calendars_router,
     canned_router,
     customers_router,
+    email_router,
     portal_router,
     portals_router,
     queues_router,
@@ -177,6 +178,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         canned_router,
         calendars_router,
         sla_router,
+        email_router,
         portal_router,
     ):
         app.include_router(router, prefix=API_PREFIX)

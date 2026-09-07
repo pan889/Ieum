@@ -37,6 +37,10 @@ from ieum.modules.desk.schemas import (
     CustomerOrgCreateRequest,
     CustomerOrgResponse,
     CustomerOrgUpdateRequest,
+    EmailChannelCreateRequest,
+    EmailChannelResponse,
+    EmailChannelUpdateRequest,
+    EmailInboundConfig,
     GuestSubmitRequest,
     MembershipRequest,
     PortalCreateRequest,
@@ -73,6 +77,8 @@ from ieum.modules.desk.service import (
     CustomerOrgService,
     CustomerOrgView,
     CustomerPortalService,
+    EmailChannelService,
+    EmailChannelView,
     PortalForm,
     PortalService,
     PortalView,
@@ -96,6 +102,8 @@ canned_router = APIRouter(prefix="/canned-responses", tags=["desk"])
 #: `desk.sla.manage`(전역 + step-up)가 필요하다.
 calendars_router = APIRouter(prefix="/business-calendars", tags=["desk"])
 sla_router = APIRouter(prefix="/sla-policies", tags=["desk"])
+#: 메일 채널 (C6). 프로젝트 단위 + step-up 이다 — 비밀번호를 받는 자리다.
+email_router = APIRouter(prefix="/email-channels", tags=["desk"])
 #: 고객이 쓰는 표면. 이 접두사만 고객 격리를 통과한다.
 portal_router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -1130,4 +1138,91 @@ async def delete_sla_policy(
     session: DbSession, permissions: PermissionDep, actor: CurrentActor, policy_id: UUID
 ) -> None:
     await SlaAdminService(session, permissions).delete_policy(actor, policy_id)
+    await session.commit()
+
+
+# ── 메일 채널 (C6) ─────────────────────────────────────────────
+
+
+def _channel(view: EmailChannelView) -> EmailChannelResponse:
+    return EmailChannelResponse(
+        id=view.channel.id,
+        project_id=view.channel.project_id,
+        address=view.channel.address,
+        outbound_from=view.channel.outbound_from,
+        inbound=EmailInboundConfig.model_validate(view.channel.inbound),
+        has_password=view.has_password,
+        default_request_type_id=view.channel.default_request_type_id,
+        request_type_name=view.request_type_name,
+        is_enabled=view.channel.is_enabled,
+        last_error=view.channel.last_error,
+        last_polled_at=view.channel.last_polled_at,
+    )
+
+
+@email_router.get("", response_model=list[EmailChannelResponse])
+async def list_email_channels(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    settings: AppSettings,
+    project_id: UUID,
+) -> list[EmailChannelResponse]:
+    rows = await EmailChannelService(session, permissions, settings).list_for(actor, project_id)
+    return [_channel(row) for row in rows]
+
+
+@email_router.post("", response_model=EmailChannelResponse, status_code=status.HTTP_201_CREATED)
+async def create_email_channel(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    settings: AppSettings,
+    payload: EmailChannelCreateRequest,
+) -> EmailChannelResponse:
+    view = await EmailChannelService(session, permissions, settings).create(
+        actor,
+        project_id=payload.project_id,
+        address=payload.address,
+        outbound_from=payload.outbound_from,
+        inbound=payload.inbound.model_dump(),
+        password=payload.password,
+        default_request_type_id=payload.default_request_type_id,
+    )
+    await session.commit()
+    return _channel(view)
+
+
+@email_router.patch("/{channel_id}", response_model=EmailChannelResponse)
+async def update_email_channel(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    settings: AppSettings,
+    channel_id: UUID,
+    payload: EmailChannelUpdateRequest,
+) -> EmailChannelResponse:
+    view = await EmailChannelService(session, permissions, settings).update(
+        actor,
+        channel_id,
+        address=payload.address,
+        outbound_from=payload.outbound_from,
+        inbound=payload.inbound.model_dump() if payload.inbound else None,
+        password=payload.password,
+        default_request_type_id=payload.default_request_type_id,
+        is_enabled=payload.is_enabled,
+    )
+    await session.commit()
+    return _channel(view)
+
+
+@email_router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_email_channel(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    settings: AppSettings,
+    channel_id: UUID,
+) -> None:
+    await EmailChannelService(session, permissions, settings).delete(actor, channel_id)
     await session.commit()

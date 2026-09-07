@@ -14,6 +14,7 @@ from ieum.db.session import dispose_engine, init_engine
 from ieum.worker.tasks import (
     task_deliver_webhooks,
     task_drain_outbox,
+    task_poll_email,
     task_send_digests,
     task_sweep,
 )
@@ -39,6 +40,10 @@ class WorkerSettings:
         task_deliver_webhooks,
         task_sweep,
         task_send_digests,
+        # 스윕이 이미 부르지만 따로도 등록한다. 관리자가 "지금 메일함을
+        # 훑어라" 를 시킬 자리가 있어야 한다 — 채널 설정을 고친 직후에
+        # 15초를 기다리며 되는지 아닌지 모르는 상태로 두지 않는다.
+        task_poll_email,
     ]
     # 아웃박스 지연은 사용자가 체감한다. 15초마다 훑는다. API 가 이벤트를
     # 넣을 때 큐에 바로 밀어 넣어 즉시 처리하는 건 M2 과제로 남긴다.
@@ -58,7 +63,11 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 10
-    job_timeout = 120
+    # **IMAP 왕복이 이 안에 들어가야 한다.** 메일 채널 하나가 응답하지 않으면
+    # 연결 타임아웃(20초)을 쓰고, 채널이 여러 개면 그만큼 쌓인다. 120초로
+    # 두면 채널 넷이 동시에 죽은 날 스윕이 통째로 잘리고 — 잘린 자리가
+    # 아웃박스 드레인 뒤라 알림도 함께 멈춘다.
+    job_timeout = 300
 
     # arq 는 이걸 **클래스 `__dict__` 에서 그대로** 꺼낸다(`get_kwargs`).
     # 그래서 값이어야 한다 — 메서드로 두면 함수 객체가 그대로 넘어가고

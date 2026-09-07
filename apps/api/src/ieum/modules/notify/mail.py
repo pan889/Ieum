@@ -24,6 +24,18 @@ class Mail:
     body: str
     #: 앱 안의 경로. 본문 끝에 절대 URL 로 붙인다.
     link: str | None = None
+    #: 이 통만 다른 From 으로 보낸다. 없으면 설정의 `mail_from`.
+    #:
+    #: 데스크의 메일 채널(C6)이 쓴다: 고객은 자기가 메일을 보낸 그 주소에서
+    #: 답이 오기를 기대하고, 우리 알림 주소에서 오면 회신이 그쪽으로 간다 —
+    #: 그 주소는 폴링하지 않으므로 회신이 사라진다.
+    from_address: str | None = None
+    #: 추가 헤더. `In-Reply-To`·`References`·`Message-ID` 가 여기로 온다.
+    #:
+    #: **발송 경로를 둘로 만들지 않으려고** 여기에 둔다. 데스크가 자기
+    #: aiosmtplib 호출을 따로 가지면 타임아웃·TLS·실패 처리가 두 벌이 되고,
+    #: 한쪽만 고쳐지는 날이 온다.
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 class MailSender:
@@ -37,9 +49,11 @@ class MailSender:
         커밋된 이벤트를 처리하는 중이므로, 실패는 로그로 남기고 넘어간다.
         """
         message = EmailMessage()
-        message["From"] = self._settings.mail_from
+        message["From"] = mail.from_address or self._settings.mail_from
         message["To"] = mail.to
         message["Subject"] = mail.subject
+        for name, value in mail.headers:
+            message[name] = value
 
         body = mail.body
         if mail.link:

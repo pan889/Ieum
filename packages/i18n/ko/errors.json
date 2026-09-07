@@ -68,6 +68,9 @@
   "desk.customer_org_name_taken": "같은 이름의 고객 조직이 있습니다.",
   "desk.duplicate_form_key": "두 폼 필드의 키가 같습니다.",
   "desk.duplicate_mapping_target": "두 폼 필드가 같은 커스텀 필드를 가리켜 한쪽 답이 사라집니다.",
+  "desk.email_address_taken": "그 주소를 쓰는 메일 채널이 이미 있습니다.",
+  "desk.email_inbound_invalid": "이 설정으로는 메일함에 접속할 수 없습니다 — 호스트·사용자·포트를 확인하세요.",
+  "desk.email_password_required": "메일함 비밀번호가 필요합니다.",
   "desk.field_kind_not_on_forms": "이 종류는 선택지가 내부 데이터(사람·릴리스)라 포털 폼에 올릴 수 없습니다.",
   "desk.form_field_needs_label": "폼 필드에는 라벨이 있어야 합니다.",
   "desk.form_field_unmapped": "이 폼 필드의 답을 담을 곳이 없습니다. 커스텀 필드에 연결하세요.",
@@ -230,5 +233,6 @@
   "wiki.space_key_taken": "이미 쓰이는 스페이스 키입니다.",
   "wiki.template_name_required": "템플릿 이름이 필요하다.",
   "wiki.title_too_long": "제목이 너무 깁니다.",
-  "wiki.too_many_labels": "라벨이 너무 많습니다(최대 {max}개)."
+  "wiki.too_many_labels": "라벨이 너무 많습니다(최대 {max}개).",
+  "desk.unknown_request_type": "이 프로젝트의 요청 유형이 아닙니다."
 }

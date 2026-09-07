@@ -68,6 +68,9 @@
   "desk.customer_org_name_taken": "A customer organization with that name already exists.",
   "desk.duplicate_form_key": "Two form fields share the same key.",
   "desk.duplicate_mapping_target": "Two form fields point at the same custom field, so one answer would be lost.",
+  "desk.email_address_taken": "Another email channel already uses that address.",
+  "desk.email_inbound_invalid": "That configuration cannot reach the mailbox — check the host, user, and port.",
+  "desk.email_password_required": "The mailbox password is required.",
   "desk.field_kind_not_on_forms": "This kind cannot go on a portal form — its choices are internal data (people, release versions).",
   "desk.form_field_needs_label": "Every form field needs a label.",
   "desk.form_field_unmapped": "This form field has nowhere to store its answer. Map it to a custom field.",
@@ -230,5 +233,6 @@
   "wiki.space_key_taken": "That space key is already in use.",
   "wiki.template_name_required": "Give the template a name.",
   "wiki.title_too_long": "That title is too long.",
-  "wiki.too_many_labels": "Too many labels ({max} at most)."
+  "wiki.too_many_labels": "Too many labels ({max} at most).",
+  "desk.unknown_request_type": "That request type does not belong to this project."
 }

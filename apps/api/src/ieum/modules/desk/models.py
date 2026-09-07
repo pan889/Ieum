@@ -36,6 +36,11 @@ TICKET_CHANNELS = ("portal", "email", "agent")
 #: 폼에서 이슈 자신의 컬럼으로 가는 예약 키. 매핑이 필요 없다.
 RESERVED_FORM_KEYS = ("summary", "description")
 
+#: 메일이 오간 방향. 받은 것과 보낸 것을 한 테이블에 두는 이유는 스레드를
+#: 잇는 근거(`message_id`)가 양쪽에 다 필요하기 때문이다 — 우리가 보낸 메일의
+#: id 를 모르면 고객의 회신이 어디에 붙는지 알 수 없다.
+EMAIL_DIRECTIONS = ("inbound", "outbound")
+
 
 class CustomerOrganization(Entity, Archivable):
     """고객 조직(학교·기관). 티켓 가시성의 단위다 (feature-map C13).
@@ -177,6 +182,15 @@ class TicketExt(Base):
     channel: Mapped[str] = mapped_column(String(16), nullable=False, default="portal")
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("customer_organization.id", ondelete="SET NULL"), nullable=True
+    )
+    #: 이 주소로 보낸 메일이 반송된 시각 (C6).
+    #:
+    #: **더 보내지 않는다.** 게스트 주소는 검증되지 않은 값이고, 반송은 그
+    #: 주소가 틀렸다는 유일한 신호다 — 계속 보내면 남의 주소를 적어 넣은
+    #: 경우 그 사람에게 계속 배달을 시도하게 된다. 상담원 화면에도 보여
+    #: 준다: 답을 썼는데 아무 것도 안 나가는 것을 모르면 안 된다.
+    email_bounced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     #: 1~5. 아직 응답이 없으면 NULL 이다 (C11 에서 채운다).
     csat_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
@@ -441,4 +455,95 @@ class SlaClock(Base):
             postgresql_where=text("completed_at IS NULL AND paused_at IS NULL"),
         ),
         Index("ix_sla_clock_policy_id", "policy_id"),
+    )
+
+
+class EmailChannel(Entity, Archivable):
+    """메일로 들어오는 창구 하나 (feature-map C6).
+
+    포털과 나란한 개념이다: 프로젝트 하나에 붙고, 들어온 것을 어떤 요청
+    유형으로 만들지 정한다.
+
+    **비밀은 JSONB 에 넣지 않는다.** data-model.md 는 `inbound` 한 칸에
+    "IMAP/SES 설정" 을 적어 두었지만, 그 안에 비밀번호가 들어가면 설정을
+    되돌려주는 API·로그·오류 보고에 그대로 실린다. 비밀번호만 따로 뽑아
+    `SecretBox` 로 암호화하고, JSONB 에는 호스트·포트·폴더처럼 보여도 되는
+    것만 남긴다 (conventions.md 보안 규칙: 비밀은 로그에 남기지 않는다).
+    """
+
+    __tablename__ = "email_channel"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    #: 고객이 메일을 보내는 주소. 이 주소로 받은 것이 이 채널의 티켓이 된다.
+    address: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    #: 우리가 보낼 때 쓰는 From. 받는 주소와 다를 수 있다(별칭·릴레이).
+    outbound_from: Mapped[str] = mapped_column(String(320), nullable=False)
+    #: 호스트·포트·사용자·폴더·TLS. **비밀번호는 여기 없다.**
+    inbound: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    #: IMAP 비밀번호. `SecretBox(purpose="desk.email")` 로 암호화해 둔다.
+    inbound_password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 메일로 온 요청이 어떤 폼의 티켓이 되는가. RESTRICT 다 — 쓰이는 중인
+    #: 요청 유형을 지우면 들어온 메일이 만들 수 없는 티켓을 약속하게 된다.
+    default_request_type_id: Mapped[UUID] = mapped_column(
+        ForeignKey("request_type.id", ondelete="RESTRICT"), nullable=False
+    )
+    #: 끄면 폴링하지 않는다. 지우는 것과 다르다 — 이미 만들어진 티켓의
+    #: `email_message` 행이 살아 있어야 스레드를 이을 수 있다.
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 마지막 폴링에서 무엇이 잘못됐는가. 비어 있으면 정상이다.
+    #:
+    #: **화면에 보여 준다.** 비밀번호가 틀렸거나 서버가 막혔을 때 조용히
+    #: 아무 메일도 안 들어오면, 관리자는 "고객이 안 보냈나" 로 읽는다.
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_email_channel_project_id", "project_id"),
+        Index("ix_email_channel_request_type_id", "default_request_type_id"),
+    )
+
+
+class EmailMessage(Entity):
+    """오간 메일 한 통의 기록.
+
+    **본문을 담지 않는다.** 표시용 본문은 이슈의 코멘트가 되고, 원문은
+    오브젝트 스토리지에 그대로 들어간다(`raw_key`) — 인용을 지운 것이 실은
+    필요했던 경우가 반드시 생기고, 그때 돌아갈 곳이 있어야 한다. 그리고 메일
+    원문은 첨부까지 담은 수 MB 짜리라 DB 에 둘 것이 아니다.
+
+    `message_id` 가 **유일하다.** IMAP 은 같은 메일을 두 번 줄 수 있고(폴링
+    중 연결이 끊기면), 그때 티켓에 같은 코멘트가 둘 생긴다.
+    """
+
+    __tablename__ = "email_message"
+
+    #: 어느 티켓의 대화인가. 채널을 못 찾아 티켓을 못 만든 메일도 기록하므로
+    #: 비어 있을 수 있다 — 그 경우가 "왜 이 메일이 안 들어왔나" 의 답이다.
+    issue_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("issue.id", ondelete="CASCADE"), nullable=True
+    )
+    channel_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("email_channel.id", ondelete="SET NULL"), nullable=True
+    )
+    message_id: Mapped[str] = mapped_column(String(998), nullable=False, unique=True)
+    in_reply_to: Mapped[str | None] = mapped_column(String(998), nullable=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    from_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    subject: Mapped[str] = mapped_column(String(998), nullable=False, default="")
+    #: 오브젝트 스토리지의 키. 원문 그대로.
+    raw_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    #: 티켓에 반영을 끝낸 시각. 비어 있으면 기록만 하고 넘긴 것이다.
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 반영하지 않은 이유(반송·자동 응답·주소 불일치). 비어 있으면 반영했다.
+    skipped_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(direction.in_(EMAIL_DIRECTIONS), name="email_message_direction"),
+        Index("ix_email_message_issue_id", "issue_id"),
+        # 스레드 매칭이 이 컬럼으로 찾는다. 없으면 회신마다 테이블 전체를 읽는다.
+        Index("ix_email_message_in_reply_to", "in_reply_to"),
     )

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.config import Settings
 from ieum.core.context import Actor
+from ieum.core.crypto import SecretBox
 from ieum.core.exceptions import (
     ConflictError,
     NotFoundError,
@@ -34,6 +35,7 @@ from ieum.modules.desk.models import (
     BusinessCalendarRow,
     CannedResponse,
     CustomerOrganization,
+    EmailChannel,
     Portal,
     Queue,
     RequestType,
@@ -1156,7 +1158,7 @@ class CustomerPortalService:
         issue = await issues.create_ticket(
             self._s,
             self._perms,
-            _guest_actor(clean_email),
+            guest_actor(clean_email),
             project_id=portal.project_id,
             issue_type_id=form.request_type.issue_type_id,
             summary=summary,
@@ -1370,7 +1372,7 @@ def _form_labels(request_type: RequestType) -> dict[str, str]:
     return labels
 
 
-def _guest_actor(email: str) -> Actor:
+def guest_actor(email: str) -> Actor:
     """게스트용 액터. **사용자 id 가 없다.**
 
     `Actor.user_id` 는 non-null 이므로 nil UUID 를 쓴다. 이슈의
@@ -1994,3 +1996,232 @@ class SlaAdminService:
         if exclude is not None:
             stmt = stmt.where(SlaPolicy.id != exclude)
         return bool((await self._s.execute(stmt)).scalar_one())
+
+
+@dataclass(frozen=True, slots=True)
+class EmailChannelView:
+    """화면에 내려가는 채널. **비밀번호가 없다.**
+
+    `has_password` 만 준다: 관리자는 "설정돼 있는가" 를 알아야 하고, 값 자체를
+    되돌려 받을 이유는 없다. 되돌려주면 그 값이 브라우저의 메모리·로그·오류
+    보고를 거쳐 다니게 된다.
+    """
+
+    channel: EmailChannel
+    #: 이 채널이 만드는 요청 유형의 이름. id 만 주면 화면이 목록을 또 받아
+    #: 짜맞춰야 한다 — SLA 정책의 달력 이름과 같은 판단이다.
+    request_type_name: str
+    has_password: bool
+
+
+class EmailChannelService:
+    """메일 채널 정의 (feature-map C6). **프로젝트 + step-up 이다.**
+
+    비밀번호를 받는 자리이고, 받는 주소를 바꾸면 그 뒤로 오는 고객의 메일이
+    다른 프로젝트의 티켓이 된다 (permissions.py 의 `EMAIL_MANAGE`).
+    """
+
+    def __init__(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        self._s = session
+        self._perms = permissions
+        self._box = SecretBox(settings.secret_key.get_secret_value(), purpose="desk.email")
+
+    async def list_for(self, actor: Actor, project_id: UUID) -> list[EmailChannelView]:
+        await self._perms.require(
+            self._s, actor, perms.EMAIL_MANAGE, scope=Scope.project(project_id)
+        )
+        rows = (
+            await self._s.execute(
+                select(EmailChannel, RequestType.name)
+                .join(RequestType, RequestType.id == EmailChannel.default_request_type_id)
+                .where(
+                    EmailChannel.project_id == project_id,
+                    EmailChannel.archived_at.is_(None),
+                )
+                .order_by(EmailChannel.address)
+            )
+        ).all()
+        return [
+            EmailChannelView(
+                channel=channel,
+                request_type_name=name,
+                has_password=bool(channel.inbound_password_enc),
+            )
+            for channel, name in rows
+        ]
+
+    async def create(
+        self,
+        actor: Actor,
+        *,
+        project_id: UUID,
+        address: str,
+        outbound_from: str,
+        inbound: dict[str, Any],
+        password: str | None,
+        default_request_type_id: UUID,
+    ) -> EmailChannelView:
+        await self._perms.require(
+            self._s, actor, perms.EMAIL_MANAGE, scope=Scope.project(project_id)
+        )
+        clean_address = self._validated_address(address)
+        clean_from = self._validated_address(outbound_from)
+        request_type = await self._request_type_in(project_id, default_request_type_id)
+        config = self._validated_inbound(inbound, password=password)
+
+        if await self._address_taken(clean_address):
+            raise ConflictError("그 주소를 쓰는 채널이 있다.", code="desk.email_address_taken")
+
+        row = EmailChannel(
+            project_id=project_id,
+            address=clean_address,
+            outbound_from=clean_from,
+            inbound=config,
+            inbound_password_enc=self._box.encrypt(password) if password else None,
+            default_request_type_id=request_type.id,
+        )
+        self._s.add(row)
+        await self._s.flush()
+        log.info("desk.email_channel.created", channel_id=str(row.id), address=clean_address)
+        return EmailChannelView(
+            channel=row,
+            request_type_name=request_type.name,
+            has_password=bool(row.inbound_password_enc),
+        )
+
+    async def update(
+        self,
+        actor: Actor,
+        channel_id: UUID,
+        *,
+        address: str | None = None,
+        outbound_from: str | None = None,
+        inbound: dict[str, Any] | None = None,
+        password: str | None = None,
+        default_request_type_id: UUID | None = None,
+        is_enabled: bool | None = None,
+    ) -> EmailChannelView:
+        """고친다. **비밀번호를 안 보내면 그대로 둔다.**
+
+        빈 문자열을 "지우기" 로 읽지 않는다: 폼이 비밀번호 칸을 비워 두고
+        보내는 것이 정상 동작이라(값을 되돌려주지 않으므로) 그것을 지우기로
+        읽으면 이름만 고쳐도 메일 수신이 멈춘다.
+        """
+        row = await self._s.get(EmailChannel, channel_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("메일 채널을 찾을 수 없다.")
+        await self._perms.require(
+            self._s, actor, perms.EMAIL_MANAGE, scope=Scope.project(row.project_id)
+        )
+
+        if address is not None:
+            clean = self._validated_address(address)
+            if clean != row.address and await self._address_taken(clean):
+                raise ConflictError("그 주소를 쓰는 채널이 있다.", code="desk.email_address_taken")
+            row.address = clean
+        if outbound_from is not None:
+            row.outbound_from = self._validated_address(outbound_from)
+        if default_request_type_id is not None:
+            row.default_request_type_id = (
+                await self._request_type_in(row.project_id, default_request_type_id)
+            ).id
+        if inbound is not None:
+            # 비밀번호가 이미 저장돼 있으면 설정만 바꿔도 성립한다.
+            row.inbound = self._validated_inbound(
+                inbound, password=password or ("kept" if row.inbound_password_enc else None)
+            )
+        if password:
+            row.inbound_password_enc = self._box.encrypt(password)
+        if is_enabled is not None:
+            row.is_enabled = is_enabled
+            if is_enabled:
+                # 다시 켤 때 지난 오류를 지운다. 남겨 두면 관리자는 아직
+                # 망가진 줄 알고 그 메시지를 다시는 믿지 않게 된다.
+                row.last_error = None
+        await self._s.flush()
+        request_type = await self._s.get(RequestType, row.default_request_type_id)
+        return EmailChannelView(
+            channel=row,
+            request_type_name=request_type.name if request_type else "",
+            has_password=bool(row.inbound_password_enc),
+        )
+
+    async def delete(self, actor: Actor, channel_id: UUID) -> None:
+        """보관한다. **오간 메일의 기록은 그대로 둔다** — 지난 티켓의 스레드가
+        채널을 지우는 것으로 끊기면 안 된다."""
+        row = await self._s.get(EmailChannel, channel_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("메일 채널을 찾을 수 없다.")
+        await self._perms.require(
+            self._s, actor, perms.EMAIL_MANAGE, scope=Scope.project(row.project_id)
+        )
+        row.archived_at = utcnow()
+        await self._s.flush()
+
+    # ── 내부 ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _validated_address(raw: str) -> str:
+        clean = raw.strip().lower()
+        if not EMAIL_PATTERN.match(clean):
+            raise ValidationError("이메일 모양이 아니다.", code="desk.invalid_email")
+        return clean
+
+    async def _address_taken(self, address: str) -> bool:
+        """보관한 채널까지 본다. `address` 가 DB 에서 유일하기 때문이다 —
+        보관한 것을 안 보면 저장이 IntegrityError 로 500 이 되고, 관리자는
+        무엇이 막았는지 못 듣는다."""
+        found = await self._s.execute(
+            select(EmailChannel.id).where(EmailChannel.address == address).limit(1)
+        )
+        return found.first() is not None
+
+    async def _request_type_in(self, project_id: UUID, request_type_id: UUID) -> RequestType:
+        """이 프로젝트의 요청 유형인가.
+
+        안 보면 다른 프로젝트의 폼으로 티켓을 만들게 되고, 그 티켓은 이
+        프로젝트의 큐에 안 걸린다 — 메일은 들어왔는데 아무도 못 본다.
+        """
+        row = await self._s.get(RequestType, request_type_id)
+        if row is None or row.archived_at is not None:
+            raise ValidationError("그 요청 유형이 없다.", code="desk.unknown_request_type")
+        portal = await self._portals_get(row.portal_id)
+        if portal is None or portal.project_id != project_id:
+            raise ValidationError(
+                "이 프로젝트의 요청 유형이 아니다.", code="desk.unknown_request_type"
+            )
+        return row
+
+    async def _portals_get(self, portal_id: UUID) -> Portal | None:
+        return await self._s.get(Portal, portal_id)
+
+    @staticmethod
+    def _validated_inbound(config: dict[str, Any], *, password: str | None) -> dict[str, Any]:
+        """설정을 저장 전에 IMAP 파서에 넣어 본다.
+
+        **저장되고 폴링만 실패하는 것을 만들지 않는다.** 그 실패는 채널의
+        `last_error` 로만 보이고, 관리자는 저장이 성공했으니 됐다고 믿는다 —
+        SLA 정책·큐 조건과 같은 판단이다.
+
+        비밀번호는 여기서 모양만 쓰인다(파서가 요구한다). 값은 따로 암호화해
+        저장한다.
+        """
+        from ieum.modules.desk.imap import ImapError, ImapSettings
+
+        if not password:
+            raise ValidationError(
+                "메일함 비밀번호가 필요하다.", code="desk.email_password_required"
+            )
+        allowed = {"host", "port", "user", "folder", "use_ssl"}
+        unknown = set(config) - allowed
+        if unknown:
+            raise ValidationError(
+                f"모르는 설정: {sorted(unknown)}", code="desk.email_inbound_invalid"
+            )
+        try:
+            ImapSettings.parse(config, password)
+        except ImapError as exc:
+            raise ValidationError(str(exc), code="desk.email_inbound_invalid") from exc
+        return {key: config[key] for key in sorted(config)}

@@ -378,7 +378,8 @@ class TestSweep:
 
     파이프라인을 더하면 이 시험이 붉어지는 것이 의도다 — 더한 사람이 그것을
     보고 여기 적어야 하고, 그러면 스윕이 무엇을 하는지 한 자리에 남는다.
-    SLA 위반 스윕(C4)과 에스컬레이션 스윕(C5)을 더할 때 실제로 붉어졌다.
+    SLA 위반 스윕(C4)·에스컬레이션 스윕(C5)·메일 수신(C6)을 더할 때 실제로
+    붉어졌다. 세 번 다 이 시험이 먼저 알려 줬다.
     """
 
     async def test_runs_both_pipelines(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
@@ -389,6 +390,7 @@ class TestSweep:
             "attachments": 0,
             "sla_breaches": 0,
             "sla_escalations": 0,
+            "emails": 0,
         }
 
     async def test_idle_sweep_is_cheap(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
@@ -398,4 +400,5 @@ class TestSweep:
             "attachments": 0,
             "sla_breaches": 0,
             "sla_escalations": 0,
+            "emails": 0,
         }

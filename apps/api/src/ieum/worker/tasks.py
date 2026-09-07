@@ -17,12 +17,14 @@ from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.config import get_settings
 from ieum.core.attachments import AttachmentService
 from ieum.core.crypto import SecretBox
 from ieum.core.logging import get_logger
 from ieum.core.outbox import dispatch, fetch_unpublished, publish
+from ieum.core.permissions import get_permission_service
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import session_scope
@@ -32,7 +34,12 @@ from ieum.modules.desk.clock import (
     sweep_breaches,
     sweep_escalations,
 )
+from ieum.modules.desk.email import EmailError, parse_message
 from ieum.modules.desk.events import SlaBreached, SlaEscalated
+from ieum.modules.desk.imap import ImapError, ImapSettings, fetch_unseen
+from ieum.modules.desk.inbound import handle_inbound
+from ieum.modules.desk.models import EmailChannel
+from ieum.modules.desk.outbound import OutboundContext, collect_reply_mail
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.issues import contracts as issue_contracts
@@ -71,6 +78,7 @@ async def drain_outbox() -> int:
 
         handler_ctx = HandlerContext(session=session, settings=settings)
         identity_ctx = IdentityContext(session=session, settings=settings)
+        desk_ctx = OutboundContext(session=session, settings=settings)
         for row in rows:
             from ieum.core.events import EventEnvelope
 
@@ -85,6 +93,9 @@ async def drain_outbox() -> int:
                 notification_ids.extend(await handle_issue_event(handler_ctx, envelope))
                 notification_ids.extend(await handle_page_event(handler_ctx, envelope))
                 standalone.extend(await collect_invite_mail(identity_ctx, envelope))
+                # 메일 채널의 회신 (C6). 알림과 따로 나가는 이유: 받는 사람이
+                # 우리 사용자가 아니라 **고객**이고, 인앱 알림을 볼 수 없다.
+                standalone.extend(await collect_reply_mail(desk_ctx, envelope))
                 await enqueue_webhooks(handler_ctx, envelope)
                 # SLA 클럭 (C4). 여기서 도는 이유는 요청 경로에서 재면 아무도
                 # 열어 보지 않은 티켓이 영원히 위반이 아니게 되기 때문이다.
@@ -286,6 +297,99 @@ async def sweep_sla_escalations() -> int:
     return count
 
 
+async def poll_email() -> int:
+    """메일 채널을 훑어 받은 것을 티켓으로 만든다. 처리한 통 수를 돌려준다.
+
+    **채널마다 세션을 새로 연다.** 한 채널이 죽어도 다른 채널이 멈추지 않아야
+    하고, IMAP 왕복(수 초)이 도는 동안 DB 트랜잭션을 붙잡고 있을 이유가 없다.
+
+    실패는 채널의 `last_error` 에 적는다 — 비밀번호가 틀렸거나 서버가 막혔을
+    때 조용히 아무 메일도 안 들어오면, 관리자는 "고객이 안 보냈나" 로 읽는다.
+    """
+    settings = get_settings()
+    async with session_scope() as session:
+        channels = list(
+            (
+                await session.execute(
+                    select(EmailChannel).where(
+                        EmailChannel.is_enabled.is_(True),
+                        EmailChannel.archived_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        wanted = [(row.id, dict(row.inbound), row.inbound_password_enc) for row in channels]
+
+    if not wanted:
+        return 0
+
+    box = SecretBox(settings.secret_key.get_secret_value(), purpose="desk.email")
+    store = ObjectStore(settings)
+    handled = 0
+    for channel_id, inbound_config, password_enc in wanted:
+        try:
+            if not password_enc:
+                raise ImapError("비밀번호가 설정되지 않았다")
+            imap_settings = ImapSettings.parse(inbound_config, box.decrypt(password_enc))
+            raws = await fetch_unseen(imap_settings)
+        except Exception as exc:
+            # `ImapError` 만 잡지 않는다. 복호화 실패·설정 오류도 같은 자리에
+            # 적혀야 관리자가 무엇이 막았는지 한 곳에서 본다.
+            reason = f"{type(exc).__name__}: {exc}"
+            log.error("desk.email.poll_failed", channel_id=str(channel_id), error=reason)
+            async with session_scope() as session:
+                await _note_poll(session, channel_id, error=reason[:500])
+            continue
+
+        for raw in raws:
+            # **한 통씩 커밋한다.** 한 통이 죽어도 앞의 것을 잃지 않는다 —
+            # 메일은 다시 가져올 수 없다(읽음으로 표시했다).
+            async with session_scope() as session:
+                channel = await session.get(EmailChannel, channel_id)
+                if channel is None:
+                    break
+                try:
+                    parsed = parse_message(raw)
+                except EmailError as exc:
+                    log.warning(
+                        "desk.email.unreadable",
+                        channel_id=str(channel_id),
+                        error=str(exc)[:200],
+                    )
+                    continue
+                await handle_inbound(
+                    session,
+                    get_permission_service(),
+                    channel=channel,
+                    parsed=parsed,
+                    raw=raw,
+                    store=store,
+                )
+                handled += 1
+
+        async with session_scope() as session:
+            await _note_poll(session, channel_id, error=None)
+
+    if handled:
+        log.info("desk.email.polled", messages=handled, channels=len(wanted))
+    return handled
+
+
+async def _note_poll(session: AsyncSession, channel_id: Any, *, error: str | None) -> None:
+    """폴링 결과를 채널에 적는다. 성공하면 지난 오류를 지운다.
+
+    **지우는 것이 중요하다.** 고친 뒤에도 오류가 남아 있으면 관리자는 아직
+    망가진 줄 알고, 그 메시지를 다시는 믿지 않게 된다.
+    """
+    channel = await session.get(EmailChannel, channel_id)
+    if channel is None:
+        return
+    channel.last_error = error
+    channel.last_polled_at = utcnow()
+
+
 async def sweep() -> dict[str, int]:
     """주기 실행 진입점. 파이프라인을 한 번씩 돌린다."""
     started = utcnow()
@@ -299,8 +403,13 @@ async def sweep() -> dict[str, int]:
     # 그때 아웃박스에 "위반했다" 가 "그래서 이걸 했다" 보다 먼저 들어가야
     # 읽는 순서가 일어난 순서와 같다.
     sla_escalations = await sweep_sla_escalations()
+    # **메일 수신은 드레인 **앞**이 아니라 뒤다.** 여기서 만든 티켓의
+    # `desk.ticket.submitted` 는 다음 주기의 드레인이 집는다 — 같은 주기에
+    # 처리하려면 드레인을 두 번 돌려야 하고, 그러면 한 주기의 길이가 IMAP
+    # 왕복에 묶인다.
+    emails = await poll_email()
     elapsed = (utcnow() - started).total_seconds()
-    if processed or delivered or attachments or sla_breaches or sla_escalations:
+    if processed or delivered or attachments or sla_breaches or sla_escalations or emails:
         log.info(
             "worker.sweep",
             outbox=processed,
@@ -308,6 +417,7 @@ async def sweep() -> dict[str, int]:
             attachments=attachments,
             sla_breaches=sla_breaches,
             sla_escalations=sla_escalations,
+            emails=emails,
             duration_s=round(elapsed, 2),
         )
     return {
@@ -316,6 +426,7 @@ async def sweep() -> dict[str, int]:
         "attachments": attachments,
         "sla_breaches": sla_breaches,
         "sla_escalations": sla_escalations,
+        "emails": emails,
     }
 
 
@@ -354,6 +465,10 @@ async def task_deliver_webhooks(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> i
 
 async def task_sweep(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> dict[str, int]:
     return await sweep()
+
+
+async def task_poll_email(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:
+    return await poll_email()
 
 
 async def task_sweep_attachments(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:

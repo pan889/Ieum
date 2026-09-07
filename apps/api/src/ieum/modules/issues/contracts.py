@@ -255,6 +255,31 @@ class PublicComment:
     edited_at: datetime | None
 
 
+async def get_public_comment(session: AsyncSession, comment_id: UUID) -> PublicComment | None:
+    """코멘트 하나. **내부 노트면 `None` 이다.**
+
+    이벤트 페이로드에 본문을 싣지 않고 이 함수로 읽는 이유가 둘 있다:
+
+    1. 아웃박스에 내부 노트 본문이 복사되지 않는다. 페이로드는 로그·재처리·
+       디버깅에서 통째로 찍히는 값이고, 그 자리에 고객에게 보이면 안 되는 글이
+       있으면 안 된다.
+    2. **거절이 구조가 된다.** 부르는 쪽(desk 의 메일 발송)이 `is_internal`
+       플래그를 잘못 읽어도 여기서 못 가져간다 — 자물쇠가 둘이 된다.
+    """
+    from ieum.modules.issues.models import IssueComment
+
+    row = await session.get(IssueComment, comment_id)
+    if row is None or row.is_internal or row.archived_at is not None:
+        return None
+    return PublicComment(
+        id=row.id,
+        author_id=row.author_id,
+        body=row.body,
+        created_at=row.created_at,
+        edited_at=row.edited_at,
+    )
+
+
 async def list_public_comments(session: AsyncSession, issue_id: UUID) -> list[PublicComment]:
     """공개 코멘트만. **내부 노트는 SQL 단계에서 빠진다.**
 
@@ -278,13 +303,17 @@ async def list_public_comments(session: AsyncSession, issue_id: UUID) -> list[Pu
 
 
 async def add_public_comment(
-    session: AsyncSession, actor: Actor, issue_id: UUID, body: str
+    session: AsyncSession, actor: Actor, issue_id: UUID, body: str, *, anonymous: bool = False
 ) -> PublicComment:
     """고객의 회신. **언제나 공개**이고 권한을 보지 않는다.
 
+    `anonymous` 면 작성자를 남기지 않는다 — 메일로 온 회신(C6)이 그렇다.
+    게스트 액터의 `user_id` 는 nil UUID 이고, 그것을 작성자로 넣으면 FK 가
+    거절한다. `create_ticket` 과 같은 판단이다.
+
     `CommentService.add` 를 쓰지 않는 이유는 그쪽이 `issue.comment.add` 를
     요구하기 때문이다 — 고객에게 그 권한을 주면 포털 밖의 이슈에도 코멘트를
-    달 수 있게 된다. `create_ticket` 과 같은 판단이다.
+    달 수 있게 된다.
 
     알림은 나간다: 상담원이 회신을 못 보면 티켓이 멈춘다.
     """
@@ -307,7 +336,12 @@ async def add_public_comment(
         raise NotFoundError("요청을 찾을 수 없다.")
 
     comment = CommentRepository(session).add(
-        IssueComment(issue_id=issue_id, author_id=actor.user_id, body=text, is_internal=False)
+        IssueComment(
+            issue_id=issue_id,
+            author_id=None if anonymous else actor.user_id,
+            body=text,
+            is_internal=False,
+        )
     )
     await session.flush()
 

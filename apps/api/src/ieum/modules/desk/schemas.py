@@ -517,3 +517,71 @@ class SlaPolicyUpdateRequest(BaseModel):
     pause_state_ids: list[UUID] | None = None
     escalations: list[dict[str, Any]] | None = None
     is_enabled: bool | None = None
+
+
+# ── 메일 채널 (C6) ─────────────────────────────────────────────
+
+
+class EmailInboundConfig(BaseModel):
+    """IMAP 접속 설정. **비밀번호가 없다** — 따로 받고 따로 저장한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = Field(min_length=1, max_length=253)
+    user: str = Field(min_length=1, max_length=320)
+    port: int = Field(default=993, ge=1, le=65535)
+    folder: str = Field(default="INBOX", max_length=200)
+    #: 평문 IMAP. **기본은 아니다** — 비밀번호가 그대로 나간다.
+    use_ssl: bool = True
+
+
+class EmailChannelResponse(BaseModel):
+    """화면에 내려가는 채널. **비밀번호가 없다.**
+
+    `has_password` 만 준다: 관리자는 "설정돼 있는가" 를 알아야 하고, 값 자체를
+    되돌려 받을 이유는 없다 — 되돌려주면 그 값이 브라우저의 메모리·로그·오류
+    보고를 거쳐 다니게 된다.
+    """
+
+    id: UUID
+    project_id: UUID
+    address: str
+    outbound_from: str
+    inbound: EmailInboundConfig
+    has_password: bool
+    default_request_type_id: UUID
+    #: id 만 주면 화면이 요청 유형 목록을 또 받아 짜맞춰야 한다.
+    request_type_name: str
+    is_enabled: bool
+    #: 마지막 폴링에서 무엇이 잘못됐는가. **화면에 보여 준다** — 조용히 아무
+    #: 메일도 안 들어오면 관리자는 "고객이 안 보냈나" 로 읽는다.
+    last_error: str | None
+    last_polled_at: datetime | None
+
+
+class EmailChannelCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    address: str = Field(min_length=3, max_length=320)
+    outbound_from: str = Field(min_length=3, max_length=320)
+    inbound: EmailInboundConfig
+    password: str = Field(min_length=1, max_length=512)
+    default_request_type_id: UUID
+
+
+class EmailChannelUpdateRequest(BaseModel):
+    """**`password` 를 안 보내면 그대로 둔다.**
+
+    폼은 비밀번호를 되돌려 받지 않으므로 그 칸을 비워 두고 저장한다. 빈 값을
+    "지우기" 로 읽으면 이름만 고쳐도 메일 수신이 멈춘다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    address: str | None = Field(default=None, min_length=3, max_length=320)
+    outbound_from: str | None = Field(default=None, min_length=3, max_length=320)
+    inbound: EmailInboundConfig | None = None
+    password: str | None = Field(default=None, min_length=1, max_length=512)
+    default_request_type_id: UUID | None = None
+    is_enabled: bool | None = None
