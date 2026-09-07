@@ -431,12 +431,67 @@ export interface SlaPolicyPatch {
   is_enabled?: boolean
 }
 
+/** IMAP 접속 설정. **비밀번호가 없다** — 따로 보내고 되돌려 받지 않는다. */
+export interface EmailInbound {
+  host: string
+  user: string
+  port: number
+  folder: string
+  /** 평문 IMAP. 기본은 아니다 — 비밀번호가 그대로 나간다. */
+  use_ssl: boolean
+}
+
+export interface EmailChannel {
+  id: string
+  project_id: string
+  address: string
+  outbound_from: string
+  inbound: EmailInbound
+  /**
+   * 비밀번호가 설정돼 있는가. **값 자체는 오지 않는다** — 되돌려주면 그것이
+   * 브라우저의 메모리·로그·오류 보고를 거쳐 다니게 된다.
+   */
+  has_password: boolean
+  default_request_type_id: string
+  /** id 만 주면 화면이 요청 유형 목록을 또 받아 짜맞춰야 한다. */
+  request_type_name: string
+  is_enabled: boolean
+  /**
+   * 마지막 폴링에서 무엇이 잘못됐는가.
+   *
+   * **화면에 보여 준다.** 조용히 아무 메일도 안 들어오면 관리자는 "고객이
+   * 안 보냈나" 로 읽는다.
+   */
+  last_error: string | null
+  last_polled_at: string | null
+}
+
+export interface NewEmailChannel {
+  project_id: string
+  address: string
+  outbound_from: string
+  inbound: EmailInbound
+  password: string
+  default_request_type_id: string
+}
+
+/** **`password` 를 안 보내면 그대로 둔다.** 폼은 그 칸을 비워 두고 저장한다. */
+export interface EmailChannelPatch {
+  address?: string
+  outbound_from?: string
+  inbound?: EmailInbound
+  password?: string
+  default_request_type_id?: string
+  is_enabled?: boolean
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
 const QUEUES = '/api/v1/queues'
 const CANNED = '/api/v1/canned-responses'
 const CALENDARS = '/api/v1/business-calendars'
 const SLA = '/api/v1/sla-policies'
+const EMAIL = '/api/v1/email-channels'
 /** 고객 표면. 이 접두사만 고객 격리를 통과한다 (auth.md 5절). */
 const PORTAL = '/api/v1/portal'
 
@@ -600,6 +655,14 @@ export function createDeskApi(client: ApiClient) {
     deleteSlaPolicy: (id: string) => client.delete<void>(`${SLA}/${id}`),
     listPauseStateOptions: (projectId: string) =>
       client.get<WorkflowStateOption[]>(`${SLA}/states?project_id=${projectId}`),
+
+    // 메일 채널 (C6)
+    listEmailChannels: (projectId: string) =>
+      client.get<EmailChannel[]>(`${EMAIL}?project_id=${projectId}`),
+    createEmailChannel: (body: NewEmailChannel) => client.post<EmailChannel>(EMAIL, body),
+    updateEmailChannel: (id: string, body: EmailChannelPatch) =>
+      client.patch<EmailChannel>(`${EMAIL}/${id}`, body),
+    deleteEmailChannel: (id: string) => client.delete<void>(`${EMAIL}/${id}`),
   }
 }
 

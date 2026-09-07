@@ -110,6 +110,50 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
   )
 })
 
+type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
+  label: string
+  hint?: string
+}
+
+/**
+ * 체크박스 하나.
+ *
+ * **힌트를 라벨 안에 넣지 않는다.** 손으로 조립하면 그렇게 되기 쉽고, 그러면
+ * 접근성 이름이 "SSL 로 접속 끄면 비밀번호가 평문으로…" 처럼 두 문장을 이어
+ * 붙인 것이 된다 — 이름으로 찾는 모든 것이(스크린 리더도, 브라우저 시험도)
+ * 그 칸을 못 찾는다. `Field` 와 같은 방식으로 `aria-describedby` 로 잇는다.
+ *
+ * 이 프리미티브가 없어서 화면마다 손으로 짰고, 매번 조금씩 다르게 틀렸다.
+ */
+export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Checkbox(
+  { label, hint, className, ...rest },
+  ref,
+) {
+  const id = useId()
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="flex items-center gap-2">
+        <input
+          ref={ref}
+          id={id}
+          type="checkbox"
+          aria-describedby={hint ? `${id}-hint` : undefined}
+          className={className}
+          {...rest}
+        />
+        <label htmlFor={id} className="text-sm text-fg">
+          {label}
+        </label>
+      </span>
+      {hint ? (
+        <p id={`${id}-hint`} className="ml-6 text-xs text-muted">
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  )
+})
+
 export function Alert({
   tone = 'danger',
   children,

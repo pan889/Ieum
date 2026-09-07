@@ -10,6 +10,7 @@ import { BoardsScreen } from '@/features/boards/BoardsScreen'
 import { CustomerOrgsScreen } from '@/features/desk/CustomerOrgsScreen'
 import { PortalsScreen } from '@/features/desk/PortalsScreen'
 import { QueuesScreen } from '@/features/desk/QueuesScreen'
+import { EmailChannelsScreen } from '@/features/desk/EmailChannelsScreen'
 import { SlaScreen } from '@/features/desk/SlaScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
@@ -188,6 +189,17 @@ const slaRoute = createRoute({
   component: SlaScreen,
 })
 
+/**
+ * 메일 채널 (C6). SLA 와 같은 이유로 `/settings/` 아래다 — 메일함
+ * 비밀번호를 받고, 받는 주소를 바꾸면 그 뒤로 오는 고객의 메일이 다른
+ * 프로젝트의 티켓이 된다.
+ */
+const emailChannelsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/email-channels',
+  component: EmailChannelsScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -261,6 +273,7 @@ const routeTree = rootRoute.addChildren([
   customerOrgsRoute,
   deskRoute,
   slaRoute,
+  emailChannelsRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

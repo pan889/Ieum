@@ -31,6 +31,7 @@ const ORG = [
   { to: '/settings/portals', labelKey: 'desk:portals.title' },
   { to: '/settings/customers', labelKey: 'desk:customers.title' },
   { to: '/settings/sla', labelKey: 'desk:sla.policies' },
+  { to: '/settings/email-channels', labelKey: 'desk:email.title' },
   { to: '/settings/audit', labelKey: 'admin:audit.title' },
   { to: '/settings/security', labelKey: 'admin:security.title' },
   { to: '/settings/sso', labelKey: 'admin:sso.title' },
