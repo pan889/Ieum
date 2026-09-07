@@ -7,6 +7,8 @@ export interface TokenResponse {
   token_type: string
   expires_in: number
   mfa_required: boolean
+  /** 강제인데 등록된 자격증명이 없다. 확인이 아니라 **등록**으로 가야 한다. */
+  mfa_enrollment_required: boolean
 }
 
 export interface CurrentUser {

@@ -30,6 +30,7 @@ from ieum.core.crypto import (
 from ieum.core.exceptions import (
     AuthenticationError,
     ConflictError,
+    MFAEnrollmentRequiredError,
     MFARequiredError,
     NotFoundError,
     PermissionDeniedError,
@@ -62,6 +63,7 @@ from ieum.modules.identity.repository import (
     UserRepository,
     normalize_email,
 )
+from ieum.modules.org import contracts as org
 
 log = get_logger(__name__)
 
@@ -80,6 +82,8 @@ class IssuedTokens:
     expires_in: int
     session_id: UUID
     mfa_required: bool
+    #: 강제인데 자격증명이 하나도 없다. 화면은 확인이 아니라 **등록**으로 간다.
+    mfa_enrollment_required: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,9 +154,20 @@ class AuthService:
         self._attempts.record(email=email, ip=ip, succeeded=True)
         user.last_login_at = utcnow()
 
-        mfa_required = await self._mfa.has_any_confirmed(user.id) or user.require_mfa
+        enrolled = await self._mfa.has_any_confirmed(user.id)
+        # 개인 플래그는 identity 것, 조직·역할 정책은 org 것이다(모듈 경계).
+        enforced = user.require_mfa or await org.mfa_required_for(
+            self._s, user_id=user.id, group_ids=await self._users.group_ids_for(user.id)
+        )
+        mfa_required = enrolled or enforced
         tokens = await self._issue_session(
-            user, ip=ip, user_agent=user_agent, mfa_satisfied=not mfa_required
+            user,
+            ip=ip,
+            user_agent=user_agent,
+            mfa_satisfied=not mfa_required,
+            # 켜라고는 하는데 켤 것이 없다. 확인 화면으로 보내면 만들 수 없는
+            # 코드를 요구받아 계정이 잠긴다.
+            enrollment_required=enforced and not enrolled,
         )
 
         self._audit.record(
@@ -293,7 +308,11 @@ class AuthService:
 
         # MFA 미완료 세션은 등록·검증 API 외 모든 요청이 막힌다 (auth.md 3절).
         if require_mfa and row.mfa_satisfied_at is None:
-            raise MFARequiredError()
+            # 등록할 것이 있느냐로 갈라 던진다. 뭉뚱그리면 아직 등록도 안 한
+            # 사람에게 "코드를 넣으라" 는 화면이 뜨고 계정이 잠긴다.
+            if await self._mfa.has_any_confirmed(user.id):
+                raise MFARequiredError()
+            raise MFAEnrollmentRequiredError()
 
         actor = Actor(
             user_id=user.id,
@@ -317,6 +336,7 @@ class AuthService:
         family_id: UUID | None = None,
         mfa_satisfied: bool = True,
         mfa_satisfied_at: datetime | None = None,
+        enrollment_required: bool = False,
     ) -> IssuedTokens:
         access_token = new_token()
         refresh_token = new_token()
@@ -342,6 +362,7 @@ class AuthService:
             expires_in=self._settings.access_token_ttl_seconds,
             session_id=session_id,
             mfa_required=satisfied_at is None,
+            mfa_enrollment_required=enrollment_required,
         )
 
     async def _guard_rate_limit(self, *, email: str, ip: str | None) -> None:
@@ -420,7 +441,13 @@ class MFAService:
         )
 
     async def confirm_totp_enrollment(
-        self, *, user_id: UUID, credential_id: UUID, code: str, mfa_satisfied: bool
+        self,
+        *,
+        user_id: UUID,
+        credential_id: UUID,
+        code: str,
+        mfa_satisfied: bool,
+        session_id: UUID | None = None,
     ) -> None:
         credential = await self._mfa.get(credential_id)
         if credential is None or credential.user_id != user_id or credential.kind != "totp":
@@ -441,6 +468,13 @@ class MFAService:
         credential.confirmed_at = now
         credential.last_used_at = now
         credential.last_timestep = matched
+
+        # 방금 맞힌 코드가 곧 소지 증명이다. 이 세션을 여기서 만족시키지
+        # 않으면 등록을 마치자마자 같은 인증기의 코드를 또 넣으라고 한다.
+        if session_id is not None and not mfa_satisfied:
+            row = await SessionRepository(self._s).get(session_id)
+            if row is not None and row.revoked_at is None:
+                row.mfa_satisfied_at = now
 
         self._audit.record(
             action=audit.MFA_ENROLLED,

@@ -11,6 +11,8 @@ from ieum.core.context import Actor
 from ieum.core.exceptions import ConflictError, NotFoundError, ValidationError
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
+from ieum.modules.identity import contracts as identity
+from ieum.modules.org import contracts
 from ieum.modules.org import permissions as perms
 from ieum.modules.org.models import Project, Role, RoleAssignment, Workspace
 from ieum.modules.org.repository import (
@@ -158,6 +160,7 @@ class RoleService:
         scope_kind: str,
         grants: list[str],
         description: str | None = None,
+        require_mfa: bool = False,
     ) -> Role:
         await self._perms.require(self._s, actor, perms.ROLE_MANAGE, scope=Scope.global_())
         self._validate_grants(grants)
@@ -165,7 +168,9 @@ class RoleService:
         if await self._roles.get_by_name(name, scope_kind) is not None:
             raise ConflictError("같은 이름·스코프의 역할이 이미 있다.")
 
-        role = Role(name=name, scope_kind=scope_kind, description=description)
+        role = Role(
+            name=name, scope_kind=scope_kind, description=description, require_mfa=require_mfa
+        )
         self._roles.add(role)
         await self._s.flush()
         for permission in grants:
@@ -223,3 +228,42 @@ class WorkspaceService:
         self._repo.add(workspace)
         await self._s.flush()
         return workspace
+
+
+class SecurityPolicyService:
+    """조직 전체 보안 정책 (auth.md 3절).
+
+    지금은 2FA 강제 하나뿐이지만, IdP 스위치와 로컬 로그인 비활성화가 이
+    자리로 온다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+
+    async def get(self, actor: Actor) -> bool:
+        await self._perms.require(self._s, actor, perms.SECURITY_MANAGE, scope=Scope.global_())
+        return await contracts.workspace_requires_mfa(self._s)
+
+    async def set_require_mfa(self, actor: Actor, *, required: bool) -> bool:
+        """켜는 것과 끄는 것의 무게가 다르다.
+
+        켤 때는 step-up 을 요구하지 않는다 — 2FA 를 켜려면 2FA 가 있어야
+        한다면, 아직 아무도 안 쓰는 조직은 영영 켤 수 없다. 끌 때는
+        요구한다: 보호를 푸는 일이고, 그때는 이미 모두가 2FA 를 갖고 있다.
+        """
+        await self._perms.require(self._s, actor, perms.SECURITY_MANAGE, scope=Scope.global_())
+        current = await contracts.workspace_requires_mfa(self._s)
+        if current and not required:
+            self._perms.require_step_up(actor)
+
+        value = await contracts.set_workspace_requires_mfa(self._s, required=required)
+        if value != current:
+            identity.record_audit(
+                self._s,
+                action=identity.AUDIT_SECURITY_MFA_POLICY_CHANGED,
+                actor_id=actor.user_id,
+                target_type="workspace",
+                metadata={"require_mfa": value},
+            )
+        return value

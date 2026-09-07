@@ -10,6 +10,7 @@ import {
   createProjectsApi,
   createRolesApi,
   createSearchApi,
+  createSecurityApi,
   createUsersApi,
   createWikiApi,
 } from '@ieum/api-client'
@@ -36,3 +37,4 @@ export const notificationsApi = createNotificationsApi(apiClient)
 export const apiTokensApi = createApiTokensApi(apiClient)
 export const rolesApi = createRolesApi(apiClient)
 export const auditApi = createAuditApi(apiClient)
+export const securityApi = createSecurityApi(apiClient)

@@ -268,6 +268,14 @@ class PermissionService:
         assert isinstance(result, Acl)
         return result
 
+    def require_step_up(self, actor: Actor) -> None:
+        """권한과 별개로 step-up 만 요구한다.
+
+        같은 엔드포인트인데 방향에 따라 무게가 다른 경우가 있다 — 보호를
+        거는 일과 푸는 일처럼. 권한 정의에 붙이면 양쪽이 같아진다.
+        """
+        self._require_step_up(actor)
+
     def _require_step_up(self, actor: Actor) -> None:
         """민감 작업은 최근 N분 내 MFA 재확인을 요구한다."""
         if actor.via_api_token:

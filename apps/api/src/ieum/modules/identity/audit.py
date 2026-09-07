@@ -42,6 +42,9 @@ USER_ACTIVATED = "identity.user.activated"
 USER_LOCALE_CHANGED = "identity.user.locale_changed"
 USER_PASSWORD_CHANGED = "identity.user.password_changed"  # noqa: S105 - 행동 이름이다
 
+# ── 보안 정책 ───────────────────────────────────────────────────
+SECURITY_MFA_POLICY_CHANGED = "org.security.mfa_policy_changed"
+
 # ── 토큰 ────────────────────────────────────────────────────────
 TOKEN_ISSUED = "identity.token.issued"  # noqa: S105 - 행동 이름이다
 TOKEN_REVOKED = "identity.token.revoked"  # noqa: S105 - 행동 이름이다
@@ -64,6 +67,7 @@ ACTIONS = (
     USER_ACTIVATED,
     USER_LOCALE_CHANGED,
     USER_PASSWORD_CHANGED,
+    SECURITY_MFA_POLICY_CHANGED,
     TOKEN_ISSUED,
     TOKEN_REVOKED,
 )
@@ -166,6 +170,7 @@ __all__ = [
     "MFA_FAILED",
     "MFA_VERIFIED",
     "REFRESH_REUSE_DETECTED",
+    "SECURITY_MFA_POLICY_CHANGED",
     "SESSION_REVOKED",
     "SESSION_REVOKED_ALL",
     "TOKEN_ISSUED",

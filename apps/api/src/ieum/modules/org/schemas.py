@@ -42,6 +42,8 @@ class RoleCreateRequest(BaseModel):
     scope_kind: str = Field(pattern="^(global|project|space|queue)$")
     description: str | None = Field(default=None, max_length=1000)
     grants: list[str] = Field(default_factory=list)
+    #: 이 역할을 받은 사람에게 2FA 를 강제한다 (auth.md 3절).
+    require_mfa: bool = False
 
 
 class RoleResponse(BaseModel):
@@ -52,6 +54,7 @@ class RoleResponse(BaseModel):
     description: str | None
     scope_kind: str
     is_builtin: bool
+    require_mfa: bool
 
 
 class RoleAssignRequest(BaseModel):
@@ -67,3 +70,13 @@ class PermissionDefResponse(BaseModel):
     description: str
     scope_kinds: list[str]
     requires_step_up: bool
+
+
+class SecurityPolicyResponse(BaseModel):
+    """조직 전체 보안 정책. 지금은 2FA 강제 하나뿐이다."""
+
+    require_mfa: bool
+
+
+class SecurityPolicyRequest(BaseModel):
+    require_mfa: bool

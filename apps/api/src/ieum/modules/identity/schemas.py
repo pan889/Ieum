@@ -32,6 +32,9 @@ class TokenResponse(BaseModel):
     expires_in: int
     #: True 면 MFA 를 완료하기 전까지 일반 API 가 막힌다.
     mfa_required: bool = False
+    #: 강제인데 등록된 자격증명이 없다. 화면은 확인이 아니라 **등록**으로 간다 —
+    #: 확인 화면을 띄우면 만들 수 없는 코드를 요구받아 계정이 잠긴다.
+    mfa_enrollment_required: bool = False
 
 
 class InviteRequest(BaseModel):

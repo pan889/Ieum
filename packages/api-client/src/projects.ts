@@ -65,3 +65,19 @@ export function createRolesApi(client: ApiClient) {
 }
 
 export type RolesApi = ReturnType<typeof createRolesApi>
+
+
+export interface SecurityPolicy {
+  /** 조직 전체 2FA 강제. 정책은 **다음 로그인부터** 문다. */
+  require_mfa: boolean
+}
+
+export function createSecurityApi(client: ApiClient) {
+  return {
+    get: () => client.get<SecurityPolicy>('/api/v1/admin/security'),
+    setRequireMfa: (required: boolean) =>
+      client.put<SecurityPolicy>('/api/v1/admin/security', { require_mfa: required }),
+  }
+}
+
+export type SecurityApi = ReturnType<typeof createSecurityApi>

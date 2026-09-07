@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import Acl
-from ieum.modules.org.models import EntityLink, Project
-from ieum.modules.org.repository import ProjectRepository
+from ieum.modules.org.models import EntityLink, Project, Role, RoleAssignment
+from ieum.modules.org.repository import ProjectRepository, WorkspaceRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,3 +183,68 @@ async def drop_links(session: AsyncSession, *, entity_type: str, entity_id: UUID
             )
         )
     )
+
+
+# ── MFA 강제 정책 ───────────────────────────────────────────────
+#
+# 정책은 org 가 소유한다(조직 설정과 역할). identity 가 이 두 테이블을 직접
+# 보면 모듈 경계를 넘는다 — 그래서 여기서 하나의 판정으로 내준다.
+
+#: 조직 전체 강제 스위치가 사는 자리. `Workspace.settings` 는 JSONB 라
+#: 컬럼을 늘리지 않고도 설정을 담을 수 있다.
+MFA_SETTING = "require_mfa"
+
+
+async def workspace_requires_mfa(session: AsyncSession) -> bool:
+    """조직 전체 강제 스위치. 설치가 아직 없으면 강제하지 않는다."""
+    workspace = await WorkspaceRepository(session).get_single()
+    return bool(workspace and workspace.settings.get(MFA_SETTING) is True)
+
+
+async def set_workspace_requires_mfa(session: AsyncSession, *, required: bool) -> bool:
+    """스위치를 바꾸고 새 값을 돌려준다. 설치가 없으면 아무것도 안 한다."""
+    workspace = await WorkspaceRepository(session).get_single()
+    if workspace is None:
+        return False
+    # JSONB 는 통째로 갈아 끼워야 변경으로 잡힌다. 키만 바꾸면 SQLAlchemy 가
+    # dict 를 같은 객체로 보고 UPDATE 를 내지 않는다.
+    workspace.settings = {**workspace.settings, MFA_SETTING: required}
+    await session.flush()
+    return required
+
+
+async def mfa_required_for(
+    session: AsyncSession, *, user_id: UUID, group_ids: Iterable[UUID] = ()
+) -> bool:
+    """이 사람이 2FA 를 **반드시** 켜야 하는가.
+
+    조직 전체 스위치가 켜져 있거나, 받은 역할 중 하나라도 요구하면 참이다.
+    사용자 개인 플래그(`user.require_mfa`)는 identity 가 따로 본다 — 그건
+    org 의 것이 아니다.
+
+    그룹까지 보는 이유는 역할이 그룹에도 붙기 때문이다. 그룹으로 관리자
+    역할을 받은 사람이 정책을 비껴가면 정책이 아니다.
+    """
+    if await workspace_requires_mfa(session):
+        return True
+
+    principals: list[tuple[str, UUID]] = [("user", user_id)]
+    principals.extend(("group", gid) for gid in group_ids)
+    stmt = (
+        select(Role.id)
+        .join(RoleAssignment, RoleAssignment.role_id == Role.id)
+        .where(Role.require_mfa.is_(True))
+        .where(
+            or_(
+                *[
+                    and_(
+                        RoleAssignment.principal_kind == kind,
+                        RoleAssignment.principal_id == pid,
+                    )
+                    for kind, pid in principals
+                ]
+            )
+        )
+        .limit(1)
+    )
+    return (await session.execute(stmt)).first() is not None

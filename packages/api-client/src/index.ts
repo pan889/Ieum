@@ -28,6 +28,9 @@ export {
   createRolesApi,
   type PermissionDef,
   type RolesApi,
+  createSecurityApi,
+  type SecurityApi,
+  type SecurityPolicy,
 } from './projects'
 export {
   createIssuesApi,

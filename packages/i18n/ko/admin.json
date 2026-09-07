@@ -14,5 +14,12 @@
   "audit.target": "대상",
   "audit.ip": "IP",
   "audit.details": "상세",
-  "audit.systemActor": "시스템"
+  "audit.systemActor": "시스템",
+  "security.title": "보안",
+  "security.description": "이 조직의 모든 사람에게 적용되는 정책입니다.",
+  "security.requireMfa": "2단계 인증 필수",
+  "security.requireMfaHint": "모든 사람이 인증 앱을 등록해야 Ieum 을 쓸 수 있습니다.",
+  "security.turnOn": "켜기",
+  "security.turnOff": "끄기",
+  "security.appliesNextSignIn": "각자 다음에 로그인할 때부터 적용됩니다. 이미 열려 있는 세션은 그대로 유지됩니다."
 }

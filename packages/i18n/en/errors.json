@@ -133,5 +133,6 @@
   "wiki.comment_parent_not_found": "That comment is gone — reload and try again.",
   "wiki.comment_nesting_too_deep": "Replies can't have replies. Reply to the original comment instead.",
   "wiki.template_name_required": "Give the template a name.",
-  "wiki.copy_into_descendant": "A page can't be copied into its own child."
+  "wiki.copy_into_descendant": "A page can't be copied into its own child.",
+  "auth.mfa_enrollment_required": "Your organization requires two-factor authentication. Set it up to continue."
 }

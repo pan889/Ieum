@@ -14,5 +14,12 @@
   "audit.target": "Target",
   "audit.ip": "IP",
   "audit.details": "Details",
-  "audit.systemActor": "System"
+  "audit.systemActor": "System",
+  "security.title": "Security",
+  "security.description": "Policies that apply to everyone in this organization.",
+  "security.requireMfa": "Require two-factor authentication",
+  "security.requireMfaHint": "Everyone must set up an authenticator app before they can use Ieum.",
+  "security.turnOn": "Turn on",
+  "security.turnOff": "Turn off",
+  "security.appliesNextSignIn": "This applies the next time each person signs in. Sessions that are already open keep working."
 }

@@ -43,7 +43,8 @@ export function App() {
       return
     }
     if (!me.isError) return
-    setStage(hasCode(me.error, 'auth.mfa_required') ? 'mfa-required' : 'anonymous')
+    if (hasCode(me.error, 'auth.mfa_enrollment_required')) setStage('mfa-enroll')
+    else setStage(hasCode(me.error, 'auth.mfa_required') ? 'mfa-required' : 'anonymous')
   }, [me.data, me.isError, me.error, setUser, setStage])
 
   // 사용자 설정 locale 이 브라우저 추정값을 이긴다 (i18n.md 3절).

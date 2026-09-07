@@ -18,11 +18,14 @@ from ieum.modules.org.schemas import (
     RoleAssignRequest,
     RoleCreateRequest,
     RoleResponse,
+    SecurityPolicyRequest,
+    SecurityPolicyResponse,
 )
-from ieum.modules.org.service import ProjectService, RoleService
+from ieum.modules.org.service import ProjectService, RoleService, SecurityPolicyService
 
 projects_router = APIRouter(prefix="/projects", tags=["projects"])
 roles_router = APIRouter(prefix="/roles", tags=["roles"])
+security_router = APIRouter(prefix="/admin/security", tags=["security"])
 
 
 @projects_router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -119,6 +122,7 @@ async def create_role(
         scope_kind=body.scope_kind,
         grants=body.grants,
         description=body.description,
+        require_mfa=body.require_mfa,
     )
     await session.commit()
     return RoleResponse.model_validate(role)
@@ -141,3 +145,26 @@ async def assign_role(
         principal_id=body.principal_id,
     )
     await session.commit()
+
+
+@security_router.get("", response_model=SecurityPolicyResponse)
+async def get_security_policy(
+    actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> SecurityPolicyResponse:
+    required = await SecurityPolicyService(session, permissions).get(actor)
+    return SecurityPolicyResponse(require_mfa=required)
+
+
+@security_router.put("", response_model=SecurityPolicyResponse)
+async def set_security_policy(
+    body: SecurityPolicyRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+) -> SecurityPolicyResponse:
+    """조직 전체 2FA 강제. 끄는 쪽만 step-up 을 요구한다 (서비스 참고)."""
+    required = await SecurityPolicyService(session, permissions).set_require_mfa(
+        actor, required=body.require_mfa
+    )
+    await session.commit()
+    return SecurityPolicyResponse(require_mfa=required)

@@ -42,7 +42,7 @@ from ieum.modules.notify.router import (
     webhooks_router,
 )
 from ieum.modules.org.repository import OrgPermissionResolver
-from ieum.modules.org.router import projects_router, roles_router
+from ieum.modules.org.router import projects_router, roles_router, security_router
 from ieum.modules.search.router import router as unified_search_router
 from ieum.modules.wiki import attachments as wiki_attachments
 from ieum.modules.wiki.contracts import page_model as wiki_page_model
@@ -142,6 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         audit_router,
         projects_router,
         roles_router,
+        security_router,
         issues_router,
         boards_router,
         attachments_router,

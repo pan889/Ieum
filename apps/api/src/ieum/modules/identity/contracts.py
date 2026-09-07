@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
 from ieum.core.pagination import PageRequest
+from ieum.modules.identity import audit as _audit
 from ieum.modules.identity.models import User
-from ieum.modules.identity.repository import UserRepository
+from ieum.modules.identity.repository import AuditRepository, UserRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,3 +94,32 @@ async def load_actor(session: AsyncSession, user_id: UUID) -> Actor | None:
         timezone=user.timezone,
         group_ids=await repo.group_ids_for(user.id),
     )
+
+
+def record_audit(
+    session: AsyncSession,
+    *,
+    action: str,
+    actor_id: UUID | None = None,
+    target_type: str | None = None,
+    target_id: UUID | None = None,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    """감사 로그 한 줄. 다른 모듈은 이 길로만 남긴다.
+
+    `audit_log` 테이블은 identity 것이다. 남기는 쪽마다 저장소를 직접 열면
+    모듈 경계가 무너지고, 무엇을 기록하는지도 흩어진다. 행동 이름은
+    `identity.audit` 의 상수를 쓴다 — 조회 화면의 필터 목록이 거기서 온다.
+    """
+    AuditRepository(session).record(
+        action=action,
+        actor_id=actor_id,
+        target_type=target_type,
+        target_id=target_id,
+        metadata=metadata,
+    )
+
+
+#: 다른 모듈이 남기는 감사 행동. 이름의 정본은 `identity.audit` 이고, 조회
+#: 화면의 필터 목록도 거기서 나온다 — 여기서 새로 지어내면 목록에서 빠진다.
+AUDIT_SECURITY_MFA_POLICY_CHANGED = _audit.SECURITY_MFA_POLICY_CHANGED

@@ -22,6 +22,8 @@ pytestmark = pytest.mark.integration
 BASE = "/api/v1"
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "seed-admin-password-1234"
+#: 초대받아 만든 임시 계정의 비밀번호. 테스트 전용이다.
+INVITED_PASSWORD = "nobody-password-1234"
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -591,3 +593,142 @@ async def _invited_user(client: httpx.AsyncClient, settings: Settings) -> dict[s
     signed_in = await client.post(f"{BASE}/auth/login", json={"email": email, "password": password})
     assert signed_in.status_code == 200, signed_in.text
     return _auth(dict(signed_in.json()))
+
+
+class TestMFAPolicy:
+    """조직·역할 정책으로 2FA 를 강제한다 (auth.md 3절).
+
+    켜 놓고 등록할 길을 안 열어 주면 계정이 잠긴다. 그 회귀를 여기서 막는다.
+
+    정책을 켠 **뒤에** 로그인하면 그 세션은 미완료 상태라 정책 API 까지
+    막힌다. 그래서 스위치는 켜기 **전에** 잡아 둔 세션으로 다룬다 — 실제
+    관리자도 화면을 열어 둔 채 켠다.
+    """
+
+    @staticmethod
+    async def _turn_on(client: httpx.AsyncClient, headers: dict[str, str]) -> httpx.Response:
+        return await client.put(
+            f"{BASE}/admin/security", json={"require_mfa": True}, headers=headers
+        )
+
+    async def test_policy_forces_enrollment_not_a_dead_end(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """켜라고는 하는데 켤 것이 없으면, 확인 화면은 만들 수 없는 코드를
+        요구한다. 등록으로 보내야 한다."""
+        admin = _auth(await _login(app_client))
+        assert (await self._turn_on(app_client, admin)).status_code == 200
+
+        body = await self._relogin(app_client, ADMIN_EMAIL, ADMIN_PASSWORD)
+        assert body["mfa_required"] is True
+        assert body["mfa_enrollment_required"] is True
+
+        # 보호된 API 도 "등록하라" 고 말한다. "코드를 넣으라" 가 아니다.
+        me = await app_client.get(f"{BASE}/auth/me", headers=_auth(body))
+        assert me.status_code == 403
+        assert me.json()["error"]["code"] == "auth.mfa_enrollment_required"
+
+    async def test_already_open_sessions_keep_working(self, app_client: httpx.AsyncClient) -> None:
+        """정책은 **다음 로그인부터** 문다. 켜는 순간 모두가 튕겨 나가면
+        관리자 자신도 스위치를 되돌릴 수 없다."""
+        admin = _auth(await _login(app_client))
+        assert (await self._turn_on(app_client, admin)).status_code == 200
+        assert (await app_client.get(f"{BASE}/auth/me", headers=admin)).status_code == 200
+
+    async def test_a_role_can_require_it(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        """관리자·상담원처럼 남의 데이터를 보는 자리에 붙인다. 조직 전체를
+        켜지 않고도 강제할 수 있어야 한다."""
+        admin = _auth(await _login(app_client))
+        invited = await _invited_user(app_client, settings)
+        me = (await app_client.get(f"{BASE}/auth/me", headers=invited)).json()
+
+        role = await app_client.post(
+            f"{BASE}/roles",
+            json={
+                "name": f"Auditor {uuid4().hex[:6]}",
+                "scope_kind": "global",
+                "grants": ["identity.audit.view"],
+                "require_mfa": True,
+            },
+            headers=admin,
+        )
+        assert role.status_code == 201, role.text
+        assert role.json()["require_mfa"] is True
+
+        assigned = await app_client.post(
+            f"{BASE}/roles/assignments",
+            json={
+                "role_id": role.json()["id"],
+                "scope_kind": "global",
+                "principal_kind": "user",
+                "principal_id": me["id"],
+            },
+            headers=admin,
+        )
+        assert assigned.status_code == 204, assigned.text
+
+        again = await self._relogin(app_client, me["email"])
+        assert again["mfa_enrollment_required"] is True
+        # 역할을 안 받은 사람은 그대로다. 정책이 조직 전체로 새면 안 된다.
+        untouched = await self._relogin(app_client, ADMIN_EMAIL, ADMIN_PASSWORD)
+        assert untouched["mfa_enrollment_required"] is False
+
+    async def test_enrolling_opens_the_session_right_away(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """방금 맞힌 코드가 소지 증명이다. 또 물으면 사람은 "안 되는구나" 로
+        읽는다."""
+        admin = _auth(await _login(app_client))
+        assert (await self._turn_on(app_client, admin)).status_code == 200
+
+        tokens = await self._relogin(app_client, ADMIN_EMAIL, ADMIN_PASSWORD)
+        pending = _auth(tokens)
+        assert tokens["mfa_enrollment_required"] is True
+
+        enrollment = await app_client.post(f"{BASE}/auth/mfa/totp/enroll", headers=pending)
+        assert enrollment.status_code == 200, enrollment.text
+        confirmed = await app_client.post(
+            f"{BASE}/auth/mfa/totp/{enrollment.json()['credential_id']}/confirm",
+            json={"code": pyotp.TOTP(enrollment.json()["secret"]).now()},
+            headers=pending,
+        )
+        assert confirmed.status_code == 204, confirmed.text
+
+        # 등록을 마친 그 세션이 바로 열려야 한다.
+        me = await app_client.get(f"{BASE}/auth/me", headers=pending)
+        assert me.status_code == 200, me.text
+
+    async def test_the_policy_is_audited(self, app_client: httpx.AsyncClient) -> None:
+        admin = _auth(await _login(app_client))
+        await self._turn_on(app_client, admin)
+
+        rows = (
+            await app_client.get(
+                f"{BASE}/audit?action=org.security.mfa_policy_changed", headers=admin
+            )
+        ).json()["items"]
+        assert rows, "보안 정책 변경은 반드시 남는다"
+        assert rows[0]["metadata"]["require_mfa"] is True
+
+    async def test_without_the_permission_it_is_refused(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        invited = await _invited_user(app_client, settings)
+        read = await app_client.get(f"{BASE}/admin/security", headers=invited)
+        assert read.status_code == 403
+        write = await app_client.put(
+            f"{BASE}/admin/security", json={"require_mfa": True}, headers=invited
+        )
+        assert write.status_code == 403
+
+    @staticmethod
+    async def _relogin(
+        client: httpx.AsyncClient, email: str, password: str = INVITED_PASSWORD
+    ) -> dict[str, Any]:
+        signed_in = await client.post(
+            f"{BASE}/auth/login", json={"email": email, "password": password}
+        )
+        assert signed_in.status_code == 200, signed_in.text
+        return dict(signed_in.json())

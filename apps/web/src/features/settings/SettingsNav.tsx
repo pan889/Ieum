@@ -16,6 +16,7 @@ const TABS = [
   { to: '/settings/tokens', labelKey: 'auth:tokens.title' },
   { to: '/settings/sessions', labelKey: 'auth:sessions.title' },
   { to: '/settings/audit', labelKey: 'admin:audit.title' },
+  { to: '/settings/security', labelKey: 'admin:security.title' },
 ] as const
 
 export function SettingsNav() {

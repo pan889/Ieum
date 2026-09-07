@@ -81,6 +81,18 @@ class MFARequiredError(IeumError):
     status_code = 403
 
 
+class MFAEnrollmentRequiredError(IeumError):
+    """2FA 를 **등록**해야 한다. 아직 자격증명이 하나도 없다.
+
+    `MFARequiredError` 와 갈라 두는 이유는 화면이 갈 곳이 다르기 때문이다.
+    같은 코드로 뭉뚱그리면 아직 등록도 안 한 사람에게 "코드를 넣으라" 는
+    화면이 뜨고, 만들 수 없는 코드를 요구받아 계정이 잠긴다.
+    """
+
+    code = "auth.mfa_enrollment_required"
+    status_code = 403
+
+
 class StepUpRequiredError(IeumError):
     """민감한 작업이라 최근 MFA 재확인이 필요하다."""
 

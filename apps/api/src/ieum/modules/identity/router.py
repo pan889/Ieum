@@ -65,6 +65,7 @@ def _tokens(issued: IssuedTokens) -> TokenResponse:
         refresh_token=issued.refresh_token,
         expires_in=issued.expires_in,
         mfa_required=issued.mfa_required,
+        mfa_enrollment_required=issued.mfa_enrollment_required,
     )
 
 
@@ -200,6 +201,9 @@ async def confirm_totp(
         credential_id=credential_id,
         code=body.code,
         mfa_satisfied=actor.mfa_satisfied_at is not None,
+        # 강제 등록 흐름에서 이 세션을 바로 열어 준다. 방금 맞힌 코드가
+        # 소지 증명인데 또 물으면 사람은 "안 되는구나" 로 읽는다.
+        session_id=actor.session_id,
     )
     await session.commit()
 
