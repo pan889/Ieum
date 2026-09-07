@@ -74,7 +74,9 @@ class Role(Entity):
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     #: 이 역할을 받은 사람에게 2FA 를 강제한다 (auth.md 3절). 관리자·상담원처럼
     #: 남의 데이터를 볼 수 있는 자리에 붙인다.
-    require_mfa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    require_mfa: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     __table_args__ = (
         CheckConstraint(scope_kind.in_(SCOPE_KINDS), name="role_scope_kind"),

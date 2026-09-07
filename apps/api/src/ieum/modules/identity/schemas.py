@@ -178,6 +178,9 @@ class SsoProviderResponse(BaseModel):
 
     id: UUID
     name: str
+    #: 시작하는 경로가 갈린다(OIDC 는 인가 URL, SAML 은 AuthnRequest).
+    #: 종류를 안 주면 화면이 둘 중 하나를 찍어야 한다.
+    kind: str
 
 
 class SsoStartResponse(BaseModel):
@@ -191,6 +194,8 @@ class SsoCallbackRequest(BaseModel):
 
 
 class SsoProviderCreateRequest(BaseModel):
+    """OIDC IdP 등록. SAML 은 필요한 값이 달라 요청도 따로 받는다."""
+
     name: str = Field(min_length=1, max_length=100)
     issuer: str = Field(min_length=1, max_length=512)
     client_id: str = Field(min_length=1, max_length=512)
@@ -208,6 +213,44 @@ class SsoProviderCreateRequest(BaseModel):
     trust_idp_mfa: bool = False
 
 
+class SamlProviderCreateRequest(BaseModel):
+    """SAML IdP 등록.
+
+    `entity_id`·`sso_url`·인증서는 IdP 의 메타데이터 XML 에서 온다. 손으로
+    옮겨 적게 하지 않으려면 `metadata_xml` 을 그대로 붙여도 되게 한다 —
+    서버가 읽어 채운다.
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+    #: 붙이면 나머지를 여기서 읽는다. 아래 셋은 비워도 된다.
+    metadata_xml: str | None = Field(default=None, max_length=1_000_000)
+    entity_id: str | None = Field(default=None, max_length=512)
+    sso_url: str | None = Field(default=None, max_length=512)
+    #: 서명 인증서. **여럿 받는다** — 회전 중에는 둘이 동시에 유효하다.
+    certificates: list[str] = Field(default_factory=list)
+
+    #: 암호화된 어설션을 열 우리 키. 넣으면 암호화를 요구할 수 있다.
+    sp_private_key: str | None = Field(default=None, max_length=100_000)
+    sp_certificate: str | None = Field(default=None, max_length=100_000)
+    want_encrypted: bool = False
+    allow_idp_initiated: bool = False
+
+    #: 속성 이름. IdP 마다 다르다.
+    email_attribute: str = Field(default="email", max_length=64)
+    name_attribute: str = Field(default="name", max_length=64)
+    groups_attribute: str | None = Field(default=None, max_length=64)
+
+    jit_provisioning: bool = True
+    link_verified_email: bool = True
+    email_domains: list[str] = Field(default_factory=list)
+
+
+class SamlHandoffRequest(BaseModel):
+    """ACS 가 준 1회용 코드. 화면이 이걸 토큰으로 바꾼다."""
+
+    code: str = Field(min_length=1, max_length=512)
+
+
 class IdpResponse(BaseModel):
     """관리 화면용. **시크릿은 절대 나가지 않는다** — 저장도 암호문뿐이다."""
 
@@ -218,9 +261,35 @@ class IdpResponse(BaseModel):
     kind: str
     is_enabled: bool
     issuer: str
-    client_id: str
+    #: OIDC 만 채운다.
+    client_id: str | None
     jit_provisioning: bool
     link_verified_email: bool
     email_domains: list[str]
     trust_idp_mfa: bool
     groups_claim: str | None
+    #: SAML 만. 인증서 **내용은 내보내지 않는다** — 공개 값이긴 하지만 목록
+    #: 화면에 필요한 것은 "몇 장 들고 있나" 뿐이다.
+    saml_certificate_count: int = 0
+    saml_allow_idp_initiated: bool = False
+    saml_want_encrypted: bool = False
+
+    @classmethod
+    def of(cls, provider: Any) -> IdpResponse:
+        """`from_attributes` 로는 안 된다 — 인증서는 개수만 내보낸다."""
+        return cls(
+            id=provider.id,
+            name=provider.name,
+            kind=provider.kind,
+            is_enabled=provider.is_enabled,
+            issuer=provider.issuer,
+            client_id=provider.client_id,
+            jit_provisioning=provider.jit_provisioning,
+            link_verified_email=provider.link_verified_email,
+            email_domains=list(provider.email_domains),
+            trust_idp_mfa=provider.trust_idp_mfa,
+            groups_claim=provider.groups_claim,
+            saml_certificate_count=len(provider.saml_certificates or []),
+            saml_allow_idp_initiated=provider.saml_allow_idp_initiated,
+            saml_want_encrypted=provider.saml_want_encrypted,
+        )

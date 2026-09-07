@@ -81,7 +81,9 @@ jobs:
         run: uv run --project apps/api pytest apps/api/tests -q --cov=ieum --cov-report=term
 
       - name: 마이그레이션 검사
-        # 모델을 고치고 마이그레이션을 안 만든 경우를 잡는다.
+        # 모델을 고치고 마이그레이션을 안 만든 경우를 잡는다. `server_default`
+        # 도 본다 — 마이그레이션이 백필용으로 붙인 것을 모델이 선언하지 않으면
+        # 드리프트로 잡힌다. 실제로 넷이 쌓여 있었다.
         run: |
           uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head
           uv run --project apps/api alembic -c apps/api/alembic.ini check

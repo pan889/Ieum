@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import CursorResult, Select, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page, PageRequest
@@ -20,6 +21,8 @@ from ieum.modules.identity.models import (
     IdentityProvider,
     LoginAttempt,
     MFACredential,
+    SamlFlow,
+    SamlSeenAssertion,
     User,
     UserGroup,
     UserIdentity,
@@ -145,6 +148,13 @@ class IdentityProviderRepository:
         stmt = select(IdentityProvider).order_by(IdentityProvider.name)
         return list((await self._s.execute(stmt)).scalars().all())
 
+    async def find_saml(self, issuer: str) -> IdentityProvider | None:
+        """같은 발급자로 등록된 SAML IdP. 부분 유일 인덱스와 짝이다."""
+        stmt = select(IdentityProvider).where(
+            IdentityProvider.issuer == issuer, IdentityProvider.kind == "saml"
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
     async def find(self, issuer: str, client_id: str) -> IdentityProvider | None:
         """같은 (발급자, 클라이언트) 로 이미 등록된 것. 유일 제약과 짝이다 —
         먼저 물어보지 않으면 두 번째 등록이 500 으로 떨어진다."""
@@ -186,6 +196,59 @@ class IdentityProviderRepository:
             .where(GroupMember.user_id == user_id)
             .where(GroupMember.group_id.in_(list(group_ids)))
         )
+
+
+class SamlRepository:
+    """SAML 흐름과 재생 방지 기록."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    def start(self, *, provider_id: UUID, request_id: str | None, expires_at: datetime) -> SamlFlow:
+        flow = SamlFlow(provider_id=provider_id, request_id=request_id, expires_at=expires_at)
+        self._s.add(flow)
+        return flow
+
+    async def by_request_id(self, request_id: str) -> SamlFlow | None:
+        stmt = select(SamlFlow).where(SamlFlow.request_id == request_id)
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def by_handoff(self, handoff_hash: str) -> SamlFlow | None:
+        stmt = select(SamlFlow).where(SamlFlow.handoff_hash == handoff_hash)
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    async def remember_assertion(
+        self, *, provider_id: UUID, assertion_id: str, expires_at: datetime
+    ) -> bool:
+        """처음 보는 어설션이면 기록하고 True. 이미 있으면 False (= 재생).
+
+        `INSERT ... ON CONFLICT DO NOTHING` 으로 한 문장에 판단한다. 먼저
+        SELECT 하고 나중에 INSERT 하면 두 요청이 같은 어설션을 동시에 들고
+        와서 둘 다 통과한다 — 재생을 막겠다는 자리에서 경합을 남기는 셈이다.
+        """
+        stmt = (
+            pg_insert(SamlSeenAssertion)
+            .values(
+                provider_id=provider_id,
+                assertion_id=assertion_id,
+                expires_at=expires_at,
+            )
+            .on_conflict_do_nothing(index_elements=[SamlSeenAssertion.assertion_id])
+            .returning(SamlSeenAssertion.id)
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none() is not None
+
+    async def forget_expired(self) -> int:
+        """지난 것을 버린다. 어설션 자신의 유효 시간이 지나면 서명이 맞아도
+        검증에서 걸리므로, 기록을 남겨 둘 이유가 없다."""
+        now = utcnow()
+        seen: CursorResult[Any] = await self._s.execute(  # type: ignore[assignment]
+            delete(SamlSeenAssertion).where(SamlSeenAssertion.expires_at < now)
+        )
+        flows: CursorResult[Any] = await self._s.execute(  # type: ignore[assignment]
+            delete(SamlFlow).where(SamlFlow.expires_at < now)
+        )
+        return int(seen.rowcount or 0) + int(flows.rowcount or 0)
 
 
 class SessionRepository:

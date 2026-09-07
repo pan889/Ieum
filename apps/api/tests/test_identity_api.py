@@ -5,7 +5,6 @@ auth.md 7절의 "테스트 필수 항목"을 여기서 고정한다.
 
 from __future__ import annotations
 
-import os
 from datetime import timedelta
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
@@ -24,12 +23,6 @@ ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "seed-admin-password-1234"
 #: 초대받아 만든 임시 계정의 비밀번호. 테스트 전용이다.
 INVITED_PASSWORD = "nobody-password-1234"
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _seed_env() -> None:
-    os.environ.setdefault("SEED_ADMIN_EMAIL", ADMIN_EMAIL)
-    os.environ.setdefault("SEED_ADMIN_PASSWORD", ADMIN_PASSWORD)
 
 
 async def _login(client: httpx.AsyncClient) -> dict[str, Any]:
@@ -880,7 +873,10 @@ class TestIdpAdmin:
         assert public.status_code == 200, public.text
         rows = public.json()
         assert rows and rows[0]["name"] == "Corp"
-        assert set(rows[0]) == {"id", "name"}, rows[0]
+        # 종류는 준다 — 시작하는 경로가 갈려서(OIDC/SAML) 화면이 알아야 한다.
+        # 그 밖에는 아무것도 나가지 않는다.
+        assert set(rows[0]) == {"id", "name", "kind"}, rows[0]
+        assert rows[0]["kind"] == "oidc"
 
     async def test_disabling_hides_it_from_the_login_screen(
         self, app_client: httpx.AsyncClient

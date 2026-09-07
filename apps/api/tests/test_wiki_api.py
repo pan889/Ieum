@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import os
 import secrets
 import zipfile
 from typing import Any
@@ -16,12 +15,6 @@ pytestmark = pytest.mark.integration
 BASE = "/api/v1"
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "seed-admin-password-1234"
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _seed_env() -> None:
-    os.environ.setdefault("SEED_ADMIN_EMAIL", ADMIN_EMAIL)
-    os.environ.setdefault("SEED_ADMIN_PASSWORD", ADMIN_PASSWORD)
 
 
 async def _auth(client: httpx.AsyncClient) -> dict[str, str]:

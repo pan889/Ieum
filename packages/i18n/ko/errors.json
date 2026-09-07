@@ -145,5 +145,21 @@
   "auth.sso_no_account": "아직 이 조직에 계정이 없습니다. 관리자에게 초대를 요청해 주세요.",
   "auth.sso_email_required": "IdP 가 검증된 이메일 주소를 주지 않았습니다.",
   "identity.invalid_email": "올바른 이메일 주소가 아닙니다.",
-  "identity.idp_already_registered": "이 발급자와 클라이언트 ID 로 이미 등록돼 있습니다."
+  "identity.idp_already_registered": "이 발급자와 클라이언트 ID 로 이미 등록돼 있습니다.",
+  "auth.saml_handoff_expired": "로그인 결과가 만료됐습니다. 다시 시도해 주세요.",
+  "auth.saml_idp_initiated_not_allowed": "이 IdP 는 여기서 시작한 로그인만 허용합니다.",
+  "auth.saml_invalid_handoff": "로그인 결과를 확인할 수 없습니다. 다시 시도해 주세요.",
+  "auth.saml_invalid_response": "IdP 가 보낸 응답을 확인할 수 없습니다.",
+  "auth.saml_name_id_required": "IdP 가 NameID 를 보내지 않았습니다.",
+  "auth.saml_replayed": "이미 사용된 로그인 응답입니다. 처음부터 다시 시도해 주세요.",
+  "auth.saml_request_failed": "그 IdP 로 로그인을 시작할 수 없습니다.",
+  "auth.saml_unknown_issuer": "등록되지 않은 IdP 입니다.",
+  "auth.saml_unknown_request": "로그인 요청을 확인할 수 없습니다. 다시 시도해 주세요.",
+  "auth.saml_missing_response": "IdP 가 응답을 보내지 않았습니다.",
+  "identity.saml_certificate_invalid": "인증서를 읽을 수 없습니다. base64 또는 PEM 문자열을 붙여 주세요.",
+  "identity.saml_metadata_invalid": "메타데이터 XML 을 읽을 수 없습니다.",
+  "identity.saml_metadata_incomplete": "메타데이터에 발급자·SSO 주소·서명 인증서가 모두 있어야 합니다.",
+  "identity.saml_metadata_required": "메타데이터 XML 이 없으면 발급자와 SSO 주소를 직접 입력해 주세요.",
+  "identity.saml_certificate_required": "서명 인증서가 필요합니다.",
+  "identity.saml_sp_key_required": "어설션 암호화를 요구하려면 SP 비밀키가 필요합니다."
 }

@@ -144,7 +144,19 @@ packages = ["ieum"]
 [[tool.mypy.overrides]]
 # boto3/botocore 는 타입 스텁을 따로 배포한다(boto3-stubs). 전체를 깔면
 # 설치가 무거워지므로, 우리가 쓰는 좁은 표면은 storage.py 안에서 좁혔다.
-module = ["arq.*", "testcontainers.*", "boto3.*", "botocore.*", "moto.*"]
+#
+# onelogin(python3-saml)·xmlsec 은 스텁이 없다. 그래서 `saml.py` 가 타입
+# 경계다 — 라이브러리와 닿는 자리를 그 파일 안으로 몰아 두고, 밖으로는
+# 우리 dataclass 만 내보낸다. 이 override 를 다른 모듈로 넓히지 않는다.
+module = [
+    "arq.*",
+    "testcontainers.*",
+    "boto3.*",
+    "botocore.*",
+    "moto.*",
+    "onelogin.*",
+    "xmlsec.*",
+]
 ignore_missing_imports = true
 
 # ── pytest ──────────────────────────────────────────────────────

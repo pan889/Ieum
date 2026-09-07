@@ -30,6 +30,9 @@ from ieum.core.exceptions import AuthenticationError, ValidationError
 from ieum.core.logging import get_logger
 from ieum.core.time import in_seconds, utcnow
 
+#: OIDC 와 SAML 이 같은 것을 낸다. 검증 뒤의 처리를 한 벌로 두기 위한 것이다.
+from ieum.modules.identity.sso import Claims
+
 log = get_logger(__name__)
 
 STATE_PURPOSE = "identity.oidc.state"
@@ -53,18 +56,6 @@ class Flow:
     nonce: str
     code_verifier: str
     redirect_uri: str
-
-
-@dataclass(frozen=True, slots=True)
-class Claims:
-    """ID 토큰에서 꺼낸 것. 여기까지 왔으면 서명·발급자·수신자가 확인됐다."""
-
-    subject: str
-    email: str | None
-    name: str | None
-    groups: list[str]
-    #: IdP 가 2차 요소를 실제로 요구했는가 (`amr`/`acr`).
-    mfa_satisfied: bool
 
 
 def _box(settings: Settings) -> SecretBox:

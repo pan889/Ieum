@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     env: Environment = "development"
     debug: bool = False
     base_url: str = "http://localhost:5173"
+    #: API 가 **밖에서 보이는** 주소. SAML 은 IdP 가 우리 ACS 로 직접 POST 하고
+    #: 메타데이터에 그 주소를 적어 두므로, 화면 주소로는 안 된다. 운영에서는
+    #: 보통 화면과 같은 오리진(`/api/v1`)이라 비워 두면 `base_url` 을 쓴다 —
+    #: 개발 스택처럼 포트가 갈린 곳에서만 따로 준다.
+    api_url: str | None = None
 
     # 이 키에서 애플리케이션 레벨 암호화 키를 파생한다 (D-15).
     secret_key: SecretStr = SecretStr("")
@@ -135,6 +140,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env == "production"
+
+    @property
+    def public_api_url(self) -> str:
+        """IdP 가 우리를 부를 때 쓰는 주소. 비어 있으면 화면 주소와 같은 곳이다."""
+        return (self.api_url or self.base_url).rstrip("/")
 
 
 @lru_cache(maxsize=1)

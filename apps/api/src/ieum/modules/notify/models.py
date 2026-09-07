@@ -98,7 +98,9 @@ class NotificationPreference(Entity):
     )
     in_app: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     #: `instant`(알림마다) · `daily`(하루치를 한 통으로) · `off`.
-    email_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="instant")
+    email_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="instant", server_default=text("'instant'")
+    )
     #: 마지막 다이제스트를 보낸 시각. 하루에 두 번 보내지 않기 위한 자물쇠다.
     last_digest_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None

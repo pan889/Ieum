@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
+from urllib.parse import quote
 from uuid import UUID
 
 import pyotp
@@ -52,7 +53,7 @@ from ieum.core.permissions import (
     registry,
 )
 from ieum.core.time import in_seconds, utcnow
-from ieum.modules.identity import audit, oidc
+from ieum.modules.identity import audit, oidc, saml
 from ieum.modules.identity import events as identity_events
 from ieum.modules.identity import permissions as perms
 from ieum.modules.identity.models import (
@@ -60,6 +61,7 @@ from ieum.modules.identity.models import (
     AuditLog,
     IdentityProvider,
     MFACredential,
+    SamlFlow,
     User,
     UserGroup,
     UserSession,
@@ -71,10 +73,12 @@ from ieum.modules.identity.repository import (
     IdentityProviderRepository,
     LoginAttemptRepository,
     MFARepository,
+    SamlRepository,
     SessionRepository,
     UserRepository,
     normalize_email,
 )
+from ieum.modules.identity.sso import Claims
 from ieum.modules.org import contracts as org
 
 log = get_logger(__name__)
@@ -1102,9 +1106,10 @@ class SsoService:
             code_verifier=verifier,
             redirect_uri=redirect_uri,
         )
+        client_id, _, _, _ = self._oidc_config(provider)
         return oidc.authorization_url(
             endpoint=provider.authorization_endpoint,
-            client_id=provider.client_id,
+            client_id=client_id,
             scopes=provider.scopes,
             redirect_uri=redirect_uri,
             state=oidc.seal_state(flow, self._settings),
@@ -1119,19 +1124,20 @@ class SsoService:
         flow = oidc.open_state(state, self._settings)
         provider = await self._require_provider(flow.provider_id)
 
+        client_id, secret_enc, token_endpoint, jwks_uri = self._oidc_config(provider)
         tokens = await oidc.exchange_code(
-            token_endpoint=provider.token_endpoint,
-            client_id=provider.client_id,
-            client_secret=self._secret_box().decrypt(provider.client_secret_enc),
+            token_endpoint=token_endpoint,
+            client_id=client_id,
+            client_secret=self._secret_box().decrypt(secret_enc),
             code=code,
             redirect_uri=flow.redirect_uri,
             code_verifier=flow.code_verifier,
         )
         raw = oidc.verify_id_token(
             tokens["id_token"],
-            jwks_client=_jwks_client(provider.jwks_uri),
+            jwks_client=_jwks_client(jwks_uri),
             issuer=provider.issuer,
-            client_id=provider.client_id,
+            client_id=client_id,
             nonce=flow.nonce,
         )
         claims = oidc.read_claims(
@@ -1141,25 +1147,53 @@ class SsoService:
             groups_claim=provider.groups_claim,
             trust_idp_mfa=provider.trust_idp_mfa,
         )
+        user = await self.accept(provider, claims, ip=ip)
+        return await self.open_session(
+            user, ip=ip, user_agent=user_agent, idp_verified_mfa=claims.mfa_satisfied
+        )
 
+    async def accept(
+        self, provider: IdentityProvider, claims: Claims, *, ip: str | None = None
+    ) -> User:
+        """검증을 통과한 클레임을 받아들인다. **OIDC 와 SAML 이 여기서 만난다.**
+
+        프로토콜마다 검증하는 방식은 다르지만, 통과한 뒤에 하는 일은 하나다 —
+        누구인지 찾고, 없으면 만들고, 그룹을 맞춘다. 두 벌로 두면 한쪽만
+        고치는 날이 오고, 그때 고쳐지지 않은 쪽이 구멍이 된다.
+
+        세션은 여기서 열지 않는다. SAML 은 ACS(브라우저 POST)와 화면이 갈려
+        있어, 받아들이는 시점과 세션을 여는 시점이 다르다.
+        """
         user = await self._resolve_user(provider, claims)
         await self._sync_groups(user, claims.groups)
         user.last_login_at = utcnow()
-
-        issued = await self._auth.issue_for_sso(
-            user, ip=ip, user_agent=user_agent, idp_verified_mfa=claims.mfa_satisfied
-        )
         self._audit.record(
             action=audit.SSO_LOGIN_SUCCEEDED,
             actor_id=user.id,
             target_type="user",
             target_id=user.id,
             ip=ip,
-            metadata={"provider": provider.name, "idp_mfa": claims.mfa_satisfied},
+            metadata={
+                "provider": provider.name,
+                "kind": provider.kind,
+                "idp_mfa": claims.mfa_satisfied,
+            },
         )
-        return issued
+        return user
 
-    async def _resolve_user(self, provider: IdentityProvider, claims: oidc.Claims) -> User:
+    async def open_session(
+        self,
+        user: User,
+        *,
+        ip: str | None,
+        user_agent: str | None,
+        idp_verified_mfa: bool,
+    ) -> IssuedTokens:
+        return await self._auth.issue_for_sso(
+            user, ip=ip, user_agent=user_agent, idp_verified_mfa=idp_verified_mfa
+        )
+
+    async def _resolve_user(self, provider: IdentityProvider, claims: Claims) -> User:
         """`sub` 로 찾는다. 이메일은 **처음 잇는 순간**에만 쓴다.
 
         `sub` 는 IdP 안에서 바뀌지 않는 값이다. 이메일로 매번 찾으면, 주소를
@@ -1199,7 +1233,7 @@ class SsoService:
             )
         return await self._provision(provider, claims)
 
-    async def _provision(self, provider: IdentityProvider, claims: oidc.Claims) -> User:
+    async def _provision(self, provider: IdentityProvider, claims: Claims) -> User:
         assert claims.email is not None
         user = User(
             email=normalize_email(claims.email),
@@ -1246,12 +1280,52 @@ class SsoService:
         provider = await self._providers.get(provider_id)
         if provider is None or not provider.is_enabled:
             raise NotFoundError("그 IdP 를 찾을 수 없다.")
+        if provider.kind != "oidc":
+            # SAML 은 다른 경로(`SamlService`)를 쓴다. 여기로 오면 설정이
+            # 잘못 연결된 것이다 — 반쯤 진행하고 터지는 것보다 낫다.
+            raise NotFoundError("그 IdP 는 OIDC 가 아니다.")
         return provider
+
+    @staticmethod
+    def _oidc_config(provider: IdentityProvider) -> tuple[str, str, str, str]:
+        """(client_id, client_secret_enc, token_endpoint, jwks_uri).
+
+        DB 의 CHECK 가 `kind='oidc'` 행에 이 넷을 요구한다. 그래도 여기서 한 번
+        더 본다 — 제약을 지나온 행만 온다는 보장을 코드가 스스로 들고 있어야
+        타입도 서고, 마이그레이션 사고가 나도 로그인 도중에 터지지 않는다.
+        """
+        client_id = provider.client_id
+        secret = provider.client_secret_enc
+        token_endpoint = provider.token_endpoint
+        jwks_uri = provider.jwks_uri
+        if not (client_id and secret and token_endpoint and jwks_uri):
+            raise NotFoundError("그 IdP 설정이 완전하지 않다.")
+        return client_id, secret, token_endpoint, jwks_uri
 
     def _secret_box(self) -> SecretBox:
         return SecretBox(
             self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class NewSamlProvider:
+    """SAML IdP 등록 입력. SP 비밀키만 따로 받는다 — 저장 전에 봉해야 한다."""
+
+    name: str
+    entity_id: str
+    sso_url: str
+    certificates: tuple[str, ...]
+    sp_private_key: str | None = None
+    sp_certificate: str | None = None
+    want_encrypted: bool = False
+    allow_idp_initiated: bool = False
+    email_attribute: str = "email"
+    name_attribute: str = "name"
+    groups_attribute: str | None = None
+    jit_provisioning: bool = True
+    link_verified_email: bool = True
+    email_domains: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1273,6 +1347,185 @@ class NewProvider:
     link_verified_email: bool = True
     email_domains: tuple[str, ...] = ()
     trust_idp_mfa: bool = False
+
+
+class SamlService:
+    """SAML 2.0 SP (auth.md 4절).
+
+    검증은 `saml` 모듈이 한다(그 안에서 python3-saml 이 한다). 여기서는 그
+    앞뒤를 붙인다: 흐름을 기록해 두고, 라이브러리가 안 보는 재생을 막고,
+    통과한 결과를 `SsoService` 에 넘긴다 — OIDC 와 같은 자리로 들어간다.
+
+    **ACS 는 화면이 부르는 자리가 아니다.** IdP 가 브라우저를 통해 POST 하므로
+    응답 본문을 화면이 읽을 수 없다. 그래서 검증을 통과하면 1회용 코드를
+    만들어 주소로 넘기고, 화면이 그것을 토큰으로 바꾼다. 토큰을 주소에 실으면
+    브라우저 기록과 리퍼러에 남는다.
+    """
+
+    #: 사람이 IdP 화면에 머무는 시간. 넉넉하되 무한하지 않게.
+    FLOW_TTL_SECONDS = 15 * 60
+    #: 핸드오프는 리다이렉트 한 번이다. 짧게 둔다.
+    HANDOFF_TTL_SECONDS = 120
+
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        self._s = session
+        self._settings = settings
+        self._providers = IdentityProviderRepository(session)
+        self._flows = SamlRepository(session)
+        self._sso = SsoService(session, settings)
+
+    def sp(self) -> saml.SpEndpoints:
+        return saml.sp_endpoints(self._settings.public_api_url)
+
+    def config_for(self, provider: IdentityProvider) -> saml.IdpConfig:
+        key = provider.saml_sp_key_enc
+        return saml.IdpConfig(
+            entity_id=provider.issuer,
+            sso_url=provider.authorization_endpoint,
+            certificates=tuple(str(c) for c in provider.saml_certificates),
+            sp_private_key=self._secret_box().decrypt(key) if key else None,
+            sp_certificate=provider.saml_sp_certificate,
+            want_assertions_encrypted=provider.saml_want_encrypted,
+            email_attribute=provider.email_claim,
+            name_attribute=provider.name_claim,
+            groups_attribute=provider.groups_claim,
+        )
+
+    async def begin(self, provider_id: UUID) -> str:
+        """AuthnRequest 를 보낼 주소. 요청 ID 를 기록해 두고 돌아올 때 맞춘다."""
+        provider = await self._require_provider(provider_id)
+        url, request_id = saml.authn_request(self.config_for(provider), self.sp(), relay_state="")
+        self._flows.start(
+            provider_id=provider.id,
+            request_id=request_id,
+            expires_at=in_seconds(self.FLOW_TTL_SECONDS),
+        )
+        # RelayState 에 요청 ID 를 그대로 싣는다. 규격이 80바이트로 제한하므로
+        # 봉인한 상태를 넣을 수 없고, 넣을 필요도 없다 — 이 ID 는 우리 DB 의
+        # 행을 가리키는 열쇠일 뿐이고, 위조해도 그 행이 없으면 걸린다.
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}RelayState={quote(request_id, safe='')}"
+
+    async def accept_response(
+        self, *, saml_response: str, relay_state: str | None, ip: str | None
+    ) -> str:
+        """ACS. 검증을 통과하면 1회용 핸드오프 코드를 돌려준다."""
+        flow, provider, request_id = await self._flow_for(saml_response, relay_state)
+
+        verified = saml.verify_response(
+            saml_response=saml_response,
+            idp=self.config_for(provider),
+            sp=self.sp(),
+            request_id=request_id,
+        )
+        # 라이브러리는 요청 하나만 본다. "전에 본 어설션" 은 우리가 막는다.
+        fresh = await self._flows.remember_assertion(
+            provider_id=provider.id,
+            assertion_id=verified.assertion_id,
+            # 어설션이 만료 시각을 안 주면 흐름 만료를 쓴다. 기록이 너무 짧게
+            # 사라지면 그 사이에 재생이 통한다.
+            expires_at=verified.expires_at or in_seconds(self.FLOW_TTL_SECONDS),
+        )
+        if not fresh:
+            log.warning("auth.saml_replay_rejected", provider=str(provider.id))
+            raise AuthenticationError("이미 사용된 SAML 응답이다.", code="auth.saml_replayed")
+
+        user = await self._sso.accept(provider, verified.claims, ip=ip)
+        code = secrets.token_urlsafe(32)
+        flow.user_id = user.id
+        flow.handoff_hash = hash_token(code)
+        flow.idp_verified_mfa = verified.claims.mfa_satisfied
+        flow.expires_at = in_seconds(self.HANDOFF_TTL_SECONDS)
+        return code
+
+    async def exchange(self, code: str, *, ip: str | None, user_agent: str | None) -> IssuedTokens:
+        """핸드오프 코드를 세션으로. 한 번만 통한다."""
+        flow = await self._flows.by_handoff(hash_token(code))
+        if flow is None or flow.consumed_at is not None or flow.user_id is None:
+            raise AuthenticationError(
+                "로그인 결과를 확인할 수 없다.", code="auth.saml_invalid_handoff"
+            )
+        if flow.expires_at <= utcnow():
+            raise AuthenticationError(
+                "로그인 결과가 만료됐다. 다시 시도해 달라.", code="auth.saml_handoff_expired"
+            )
+        # 먼저 닫는다. 세션을 열다 실패해도 코드는 소진돼야 한다.
+        flow.consumed_at = utcnow()
+
+        user = await UserRepository(self._s).get(flow.user_id)
+        if user is None or not user.is_active:
+            raise AuthenticationError("계정을 사용할 수 없다.")
+        return await self._sso.open_session(
+            user, ip=ip, user_agent=user_agent, idp_verified_mfa=flow.idp_verified_mfa
+        )
+
+    async def metadata(self, provider_id: UUID) -> str:
+        """IdP 에 등록할 SP 메타데이터. 값을 손으로 옮겨 적게 하지 않는다."""
+        provider = await self._require_provider(provider_id)
+        return saml.metadata_xml(self.config_for(provider), self.sp())
+
+    async def _flow_for(
+        self, saml_response: str, relay_state: str | None
+    ) -> tuple[SamlFlow, IdentityProvider, str | None]:
+        """어느 흐름의 응답인가.
+
+        RelayState 가 있으면 우리가 시작한 흐름이다. 없으면 IdP 화면에서
+        시작한 것이고, 그건 **허용한 IdP 에서만** 받는다 — `InResponseTo` 가
+        없으면 우리가 시작한 흐름과 묶을 수 없어, 남이 시킨 로그인을 그대로
+        태우게 된다(로그인 CSRF).
+        """
+        if relay_state:
+            flow = await self._flows.by_request_id(relay_state)
+            if flow is None or flow.expires_at <= utcnow():
+                raise AuthenticationError(
+                    "로그인 요청을 확인할 수 없다.", code="auth.saml_unknown_request"
+                )
+            if flow.handoff_hash is not None:
+                # 이 흐름은 이미 응답을 받았다. 두 번째는 재생이다.
+                raise AuthenticationError("이미 사용된 로그인 요청이다.", code="auth.saml_replayed")
+            provider = await self._require_provider(flow.provider_id)
+            return flow, provider, flow.request_id
+
+        issuer = saml.peek_issuer(saml_response)
+        provider = await self._provider_by_issuer(issuer)
+        if not provider.saml_allow_idp_initiated:
+            raise AuthenticationError(
+                "이 IdP 는 IdP 에서 시작하는 로그인을 허용하지 않는다.",
+                code="auth.saml_idp_initiated_not_allowed",
+            )
+        flow = self._flows.start(
+            provider_id=provider.id,
+            request_id=None,
+            expires_at=in_seconds(self.HANDOFF_TTL_SECONDS),
+        )
+        await self._s.flush()
+        return flow, provider, None
+
+    async def _provider_by_issuer(self, issuer: str | None) -> IdentityProvider:
+        if issuer:
+            for provider in await self._providers.enabled():
+                if provider.kind == "saml" and provider.issuer == issuer:
+                    return provider
+        raise AuthenticationError(
+            "그 발급자의 IdP 가 등록돼 있지 않다.", code="auth.saml_unknown_issuer"
+        )
+
+    async def _require_provider(self, provider_id: UUID) -> IdentityProvider:
+        provider = await self._providers.get(provider_id)
+        if provider is None or not provider.is_enabled:
+            raise NotFoundError("그 IdP 를 찾을 수 없다.")
+        if provider.kind != "saml":
+            raise NotFoundError("그 IdP 는 SAML 이 아니다.")
+        if not provider.saml_certificates:
+            # 인증서가 없으면 **무엇도 검증할 수 없다.** DB 의 CHECK 가 막지만
+            # 여기서도 본다 — 검증 없이 지나가는 길을 만들지 않는다.
+            raise NotFoundError("그 IdP 에 서명 인증서가 없다.")
+        return provider
+
+    def _secret_box(self) -> SecretBox:
+        return SecretBox(
+            self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret"
+        )
 
 
 class IdentityProviderService:
@@ -1339,6 +1592,65 @@ class IdentityProviderService:
             target_type="identity_provider",
             target_id=provider.id,
             metadata={"name": provider.name, "issuer": provider.issuer},
+        )
+        return provider
+
+    async def create_saml(self, actor: Actor, new: NewSamlProvider) -> IdentityProvider:
+        """SAML IdP 를 등록한다. OIDC 와 같은 step-up 을 요구한다.
+
+        인증서가 없으면 **무엇도 검증할 수 없다.** 서비스에서 먼저 막는다 —
+        DB 의 CHECK 가 최종 방어선이지만, 거기서 걸리면 사용자에게는 "내부
+        오류" 로만 보인다.
+        """
+        await self._require(actor)
+        if not new.certificates:
+            raise ValidationError(
+                "서명 인증서가 필요하다.", code="identity.saml_certificate_required"
+            )
+        if new.want_encrypted and not new.sp_private_key:
+            # 암호화를 요구하면서 열 키가 없으면 모든 로그인이 실패한다.
+            raise ValidationError(
+                "어설션 암호화를 요구하려면 SP 비밀키가 필요하다.",
+                code="identity.saml_sp_key_required",
+            )
+
+        duplicate = await self._providers.find_saml(new.entity_id)
+        if duplicate is not None:
+            raise ConflictError(
+                "이 발급자로 이미 등록돼 있다.",
+                code="identity.idp_already_registered",
+                details={"provider_id": str(duplicate.id), "is_enabled": duplicate.is_enabled},
+            )
+
+        box = SecretBox(self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret")
+        provider = self._providers.add(
+            IdentityProvider(
+                name=new.name,
+                kind="saml",
+                is_enabled=True,
+                issuer=new.entity_id,
+                authorization_endpoint=new.sso_url,
+                saml_certificates=list(new.certificates),
+                # 평문 비밀키는 여기서 끝난다.
+                saml_sp_key_enc=box.encrypt(new.sp_private_key) if new.sp_private_key else None,
+                saml_sp_certificate=new.sp_certificate,
+                saml_want_encrypted=new.want_encrypted,
+                saml_allow_idp_initiated=new.allow_idp_initiated,
+                email_claim=new.email_attribute,
+                name_claim=new.name_attribute,
+                groups_claim=new.groups_attribute,
+                jit_provisioning=new.jit_provisioning,
+                link_verified_email=new.link_verified_email,
+                email_domains=list(new.email_domains),
+            )
+        )
+        await self._s.flush()
+        AuditRepository(self._s).record(
+            action=audit.IDP_CREATED,
+            actor_id=actor.user_id,
+            target_type="identity_provider",
+            target_id=provider.id,
+            metadata={"name": provider.name, "issuer": provider.issuer, "kind": "saml"},
         )
         return provider
 

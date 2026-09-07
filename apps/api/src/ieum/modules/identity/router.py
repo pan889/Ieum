@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Query, Request, Response, status
+from fastapi.responses import RedirectResponse, StreamingResponse
 
 from ieum.config import get_settings
 from ieum.core.deps import (
@@ -25,6 +26,7 @@ from ieum.core.permissions import Scope, get_permission_service
 from ieum.core.time import utcnow
 from ieum.modules.identity import audit as audit_log
 from ieum.modules.identity import permissions as perms
+from ieum.modules.identity import saml
 from ieum.modules.identity.repository import AuditFilter
 from ieum.modules.identity.schemas import (
     AcceptInviteRequest,
@@ -41,6 +43,8 @@ from ieum.modules.identity.schemas import (
     MFAVerifyRequest,
     ProfileUpdateRequest,
     RefreshRequest,
+    SamlHandoffRequest,
+    SamlProviderCreateRequest,
     SessionResponse,
     SsoCallbackRequest,
     SsoProviderCreateRequest,
@@ -59,6 +63,8 @@ from ieum.modules.identity.service import (
     IssuedTokens,
     MFAService,
     NewProvider,
+    NewSamlProvider,
+    SamlService,
     SsoService,
     UserService,
 )
@@ -66,6 +72,10 @@ from ieum.modules.identity.service import (
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
 audit_router = APIRouter(prefix="/audit", tags=["audit"])
+#: SAML 콜백이 도착할 화면 경로. **서버가 정한다** — ACS 가 브라우저를 여기로
+#: 되돌린다. 화면 쪽 라우트와 짝이다.
+SAML_CALLBACK_PATH = "/auth/saml/callback"
+
 sso_admin_router = APIRouter(prefix="/admin/sso", tags=["sso"])
 
 
@@ -526,7 +536,7 @@ async def list_sso_providers(session: DbSession) -> list[SsoProviderResponse]:
     흘리면 조직의 IdP 구성이 통째로 드러난다.
     """
     rows = await SsoService(session, get_settings()).providers()
-    return [SsoProviderResponse(id=p.id, name=p.name) for p in rows]
+    return [SsoProviderResponse(id=p.id, name=p.name, kind=p.kind) for p in rows]
 
 
 @auth_router.post("/sso/{provider_id}/start", response_model=SsoStartResponse)
@@ -558,6 +568,75 @@ async def complete_sso(
     return _tokens(issued)
 
 
+# ── SAML ───────────────────────────────────────────────────────
+
+
+@auth_router.post("/saml/{provider_id}/start", response_model=SsoStartResponse)
+async def start_saml(
+    provider_id: UUID, session: DbSession, settings: AppSettings
+) -> SsoStartResponse:
+    """AuthnRequest 를 보낼 주소. 요청 ID 를 기록해 두고 돌아올 때 맞춘다."""
+    url = await SamlService(session, settings).begin(provider_id)
+    await session.commit()
+    return SsoStartResponse(authorization_url=url)
+
+
+@auth_router.post("/saml/acs", include_in_schema=False)
+async def saml_acs(
+    request: Request,
+    session: DbSession,
+    settings: AppSettings,
+    ip: ClientIp,
+) -> RedirectResponse:
+    """IdP 가 브라우저를 통해 어설션을 POST 하는 자리.
+
+    **화면이 부르는 API 가 아니다.** IdP 가 `application/x-www-form-urlencoded`
+    로 보내므로 폼을 직접 읽고, 응답은 브라우저를 화면으로 되돌리는
+    리다이렉트다. 여기서 JSON 을 돌려주면 사용자는 날 JSON 을 보게 된다.
+
+    토큰은 주소에 싣지 않는다. 1회용 코드만 넘기고 화면이 바꿔 간다.
+    """
+    form = await request.form()
+    saml_response = str(form.get("SAMLResponse") or "")
+    relay_state = str(form.get("RelayState") or "") or None
+    if not saml_response:
+        raise ValidationError("SAMLResponse 가 없다.", code="auth.saml_missing_response")
+
+    code = await SamlService(session, settings).accept_response(
+        saml_response=saml_response, relay_state=relay_state, ip=ip
+    )
+    await session.commit()
+    landing = f"{settings.base_url.rstrip('/')}{SAML_CALLBACK_PATH}?code={quote(code, safe='')}"
+    # 303: POST 를 GET 으로 바꿔 되돌린다. 302 로 두면 브라우저가 POST 를
+    # 그대로 다시 보내는 경우가 있다.
+    return RedirectResponse(landing, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@auth_router.post("/saml/exchange", response_model=TokenResponse)
+async def exchange_saml(
+    body: SamlHandoffRequest,
+    session: DbSession,
+    settings: AppSettings,
+    ip: ClientIp,
+    user_agent: UserAgent = None,
+) -> TokenResponse:
+    """1회용 코드를 세션으로. 두 번째는 거절한다."""
+    issued = await SamlService(session, settings).exchange(body.code, ip=ip, user_agent=user_agent)
+    await session.commit()
+    return _tokens(issued)
+
+
+@auth_router.get("/saml/{provider_id}/metadata", include_in_schema=False)
+async def saml_metadata(provider_id: UUID, session: DbSession, settings: AppSettings) -> Response:
+    """IdP 에 등록할 SP 메타데이터.
+
+    익명으로 열어 둔다 — IdP 쪽 관리자가 우리 로그인 계정 없이 가져가야 하고,
+    안에 든 것은 우리 EntityID·ACS 주소·공개 인증서뿐이다.
+    """
+    xml = await SamlService(session, settings).metadata(provider_id)
+    return Response(content=xml, media_type="application/samlmetadata+xml")
+
+
 # ── IdP 관리 ───────────────────────────────────────────────────
 
 
@@ -566,7 +645,7 @@ async def list_providers(
     actor: CurrentActor, session: DbSession, settings: AppSettings, permissions: PermissionDep
 ) -> list[IdpResponse]:
     rows = await IdentityProviderService(session, settings, permissions).list_all(actor)
-    return [IdpResponse.model_validate(p) for p in rows]
+    return [IdpResponse.of(p) for p in rows]
 
 
 @sso_admin_router.post(
@@ -602,7 +681,60 @@ async def create_provider(
         ),
     )
     await session.commit()
-    return IdpResponse.model_validate(provider)
+    return IdpResponse.of(provider)
+
+
+@sso_admin_router.post(
+    "/saml/providers", response_model=IdpResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_saml_provider(
+    body: SamlProviderCreateRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> IdpResponse:
+    """SAML IdP 를 등록한다. step-up 이 필요하다 — OIDC 와 같은 이유다.
+
+    메타데이터 XML 을 붙이면 발급자·SSO 주소·인증서를 거기서 읽는다. 셋을
+    손으로 옮겨 적는 동안 한 글자가 틀리면, 로그인이 안 되는 이유가
+    "인증서가 틀렸다" 로만 보인다.
+    """
+    if body.metadata_xml:
+        read = saml.read_idp_metadata(body.metadata_xml)
+        entity_id, sso_url = read.entity_id, read.sso_url
+        certificates = read.certificates
+    else:
+        entity_id = (body.entity_id or "").strip()
+        sso_url = (body.sso_url or "").strip()
+        certificates = tuple(saml.normalize_certificate(c) for c in body.certificates)
+        if not (entity_id and sso_url):
+            raise ValidationError(
+                "메타데이터 XML 이 없으면 발급자와 SSO 주소를 직접 줘야 한다.",
+                code="identity.saml_metadata_required",
+            )
+
+    provider = await IdentityProviderService(session, settings, permissions).create_saml(
+        actor,
+        NewSamlProvider(
+            name=body.name,
+            entity_id=entity_id,
+            sso_url=sso_url,
+            certificates=certificates,
+            sp_private_key=body.sp_private_key,
+            sp_certificate=body.sp_certificate,
+            want_encrypted=body.want_encrypted,
+            allow_idp_initiated=body.allow_idp_initiated,
+            email_attribute=body.email_attribute,
+            name_attribute=body.name_attribute,
+            groups_attribute=body.groups_attribute,
+            jit_provisioning=body.jit_provisioning,
+            link_verified_email=body.link_verified_email,
+            email_domains=tuple(body.email_domains),
+        ),
+    )
+    await session.commit()
+    return IdpResponse.of(provider)
 
 
 @sso_admin_router.post("/providers/{provider_id}/disable", status_code=status.HTTP_204_NO_CONTENT)

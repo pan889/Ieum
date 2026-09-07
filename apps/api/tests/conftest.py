@@ -27,6 +27,15 @@ from ieum.db.models import Base
 
 TEST_SECRET = "test-secret-key-at-least-32-characters-long-xxxx"
 
+#: 시드가 만드는 관리자. **테스트가 소유한다.**
+#:
+#: 예전에는 `os.environ.setdefault` 로 두었다. 그러면 주변 환경이 이기고,
+#: `SEED_ADMIN_PASSWORD` 를 정해 두는 곳(CI)에서는 시드가 그 비밀번호로
+#: 관리자를 만드는데 테스트는 이 상수로 로그인한다 — 모든 로그인이 401 이 된다.
+#: 실제로 CI 가 그 상태로 붉었다. 테스트 DB 는 테스트의 것이므로 덮어쓴다.
+SEED_ADMIN_EMAIL = "admin@example.com"
+SEED_ADMIN_PASSWORD = "seed-admin-password-1234"
+
 #: compose·CI 와 같은 이미지. PGroonga 가 들어 있다.
 POSTGRES_IMAGE = "groonga/pgroonga:4.0.1-alpine-16"
 #: 운영이 쓰는 확장 목록. 한 곳에서만 관리한다.
@@ -153,9 +162,25 @@ async def _truncate_all(session: AsyncSession) -> None:
     await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _seed_env() -> Iterator[None]:
+    """시드가 무엇을 만들지 못 박는다. 주변 환경에 맡기지 않는다."""
+    os.environ["SEED_ADMIN_EMAIL"] = SEED_ADMIN_EMAIL
+    os.environ["SEED_ADMIN_PASSWORD"] = SEED_ADMIN_PASSWORD
+    # 2FA 를 갖춘 시드 관리자(개발 스택 전용)는 여기서 만들지 않는다. 사람이
+    # 하나 늘면 사용자 목록·검색을 단언하는 테스트가 환경에 따라 흔들린다.
+    for key in (
+        "SEED_MFA_ADMIN_EMAIL",
+        "SEED_MFA_ADMIN_PASSWORD",
+        "SEED_MFA_ADMIN_TOTP_SECRET",
+    ):
+        os.environ.pop(key, None)
+    yield
+
+
 @pytest.fixture
 def seed_admin() -> tuple[str, str]:
-    return "admin@example.com", "seed-admin-password-1234"
+    return SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD
 
 
 @pytest.fixture

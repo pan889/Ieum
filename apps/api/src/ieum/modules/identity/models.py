@@ -112,7 +112,9 @@ class UserSession(Entity):
     #: **실제로 MFA 챌린지를 통과했는가.** `mfa_satisfied_at` 과 다르다 —
     #: 그 값은 MFA 가 필요 없는 계정에도 로그인 시점에 채워진다. step-up 은
     #: "사람이 방금 다시 증명했다" 는 뜻이라 이쪽을 봐야 한다 (auth.md 3절).
-    mfa_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mfa_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     __table_args__ = (
         Index("ix_session_user_id", "user_id"),
@@ -203,8 +205,10 @@ class LoginAttempt(Entity):
     )
 
 
-#: 지금은 OIDC 만. SAML 이 같은 표로 들어온다 (auth.md 4절).
-IDP_KINDS = ("oidc",)
+#: OIDC 와 SAML 이 같은 표에 들어온다 (auth.md 4절). 쓰는 칼럼이 갈리므로
+#: 종류별로 무엇이 있어야 하는지를 CHECK 로 못 박는다 — 반쯤 채운 행이
+#: 들어오면 로그인하는 순간에야 드러난다.
+IDP_KINDS = ("oidc", "saml")
 
 
 class IdentityProvider(Entity):
@@ -220,17 +224,40 @@ class IdentityProvider(Entity):
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="oidc")
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    #: ID 토큰의 `iss` 와 **정확히** 일치해야 한다.
+    #: OIDC 면 ID 토큰의 `iss`, SAML 이면 IdP 의 EntityID. 양쪽 다 **정확히**
+    #: 일치해야 하는 발급자 식별자라 한 칼럼에 둔다.
     issuer: Mapped[str] = mapped_column(String(512), nullable=False)
-    client_id: Mapped[str] = mapped_column(String(512), nullable=False)
-    client_secret_enc: Mapped[str] = mapped_column(Text, nullable=False)
-
+    #: 브라우저가 가는 곳. OIDC 의 authorization endpoint, SAML 의 SSO URL.
     authorization_endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
-    token_endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
-    jwks_uri: Mapped[str] = mapped_column(String(512), nullable=False)
+
+    # ── OIDC 전용 ────────────────────────────────────────────────
+    client_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    client_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_endpoint: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    jwks_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
     scopes: Mapped[str] = mapped_column(String(512), nullable=False, default="openid email profile")
 
-    #: 클레임 이름. IdP 마다 다르다 — Entra 는 그룹을 `groups`, Okta 는 설정에 따라.
+    # ── SAML 전용 ────────────────────────────────────────────────
+    #: IdP 의 서명 인증서. **여럿 받는다** — 회전 중에는 두 개가 동시에
+    #: 유효하고, 하나만 두면 교체하는 날 로그인이 통째로 끊긴다.
+    saml_certificates: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    #: 암호화된 어설션을 열 우리(SP) 키. 애플리케이션 레벨로 봉해 둔다.
+    saml_sp_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    saml_sp_certificate: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 어설션이 암호화돼 오기를 **요구**한다. 켜면 평문 어설션을 거절한다.
+    saml_want_encrypted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    #: IdP 화면에서 시작하는 로그인(우리 요청 없이 오는 응답)을 받는다.
+    #: 기본은 거절이다 — `InResponseTo` 가 없으면 우리가 시작한 흐름과
+    #: 묶을 수 없어, 남이 시킨 로그인을 그대로 태우게 된다.
+    saml_allow_idp_initiated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    #: 클레임·속성 이름. IdP 마다 다르다 — Entra 는 그룹을 `groups`, Okta 는 설정에 따라.
     email_claim: Mapped[str] = mapped_column(String(64), nullable=False, default="email")
     name_claim: Mapped[str] = mapped_column(String(64), nullable=False, default="name")
     groups_claim: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -247,6 +274,27 @@ class IdentityProvider(Entity):
     __table_args__ = (
         CheckConstraint(kind.in_(IDP_KINDS), name="identity_provider_kind"),
         UniqueConstraint("issuer", "client_id", name="uq_identity_provider_issuer_client"),
+        # 종류별로 있어야 하는 것. OIDC 는 토큰을 교환하고 JWKS 로 검증하므로
+        # 그 넷이 없으면 로그인이 불가능하고, SAML 은 서명 인증서가 없으면
+        # **무엇도 검증할 수 없다**. 반쯤 채운 행을 DB 가 거절한다.
+        CheckConstraint(
+            "(kind <> 'oidc') OR ("
+            "client_id IS NOT NULL AND client_secret_enc IS NOT NULL"
+            " AND token_endpoint IS NOT NULL AND jwks_uri IS NOT NULL)",
+            name="identity_provider_oidc_fields",
+        ),
+        CheckConstraint(
+            "(kind <> 'saml') OR jsonb_array_length(saml_certificates) > 0",
+            name="identity_provider_saml_fields",
+        ),
+        # SAML 행은 `client_id` 가 비어 있어 위의 유일 제약이 걸리지 않는다
+        # (Postgres 는 NULL 을 서로 다르게 본다). 발급자 하나에 하나만 둔다.
+        Index(
+            "uq_identity_provider_saml_issuer",
+            "issuer",
+            unique=True,
+            postgresql_where=text("kind = 'saml'"),
+        ),
     )
 
 
@@ -270,3 +318,65 @@ class UserIdentity(Entity):
         UniqueConstraint("provider_id", "subject", name="uq_user_identity_provider_subject"),
         Index("ix_user_identity_user_id", "user_id"),
     )
+
+
+class SamlFlow(Entity):
+    """SAML 로그인 하나. 시작부터 화면이 토큰을 받아 가기까지.
+
+    두 가지를 한 행이 한다.
+
+    **하나. 우리가 시작한 흐름인지 확인한다.** SP-initiated 면 AuthnRequest 의
+    ID 를 여기 적어 두고, 돌아온 응답의 `InResponseTo` 와 맞춘다. 안 맞추면
+    남이 받은 어설션을 우리 ACS 에 밀어 넣을 수 있다.
+
+    **둘. ACS 와 화면 사이를 잇는다.** ACS 는 IdP 가 브라우저를 통해 POST 하는
+    자리라 응답 본문을 화면이 읽지 못한다. 그래서 검증을 통과하면 1회용
+    코드를 만들어 주소로 넘기고, 화면이 그것을 토큰으로 바꾼다 — OIDC 의
+    인가 코드와 같은 모양이다. 토큰을 주소에 실으면 브라우저 기록에 남는다.
+    """
+
+    __tablename__ = "saml_flow"
+
+    provider_id: Mapped[UUID] = mapped_column(
+        ForeignKey("identity_provider.id", ondelete="CASCADE"), nullable=False
+    )
+    #: 우리가 보낸 AuthnRequest 의 ID. IdP 화면에서 시작한 로그인은 없다.
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    #: 검증을 통과한 뒤에 채운다. 그전에는 "누구인지 모르는 흐름" 이다.
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
+    )
+    #: 1회용 핸드오프 코드의 해시. 원문은 저장하지 않는다.
+    handoff_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    #: IdP 가 2차 요소를 책임졌는가. 세션을 여는 쪽이 이 값을 본다.
+    idp_verified_mfa: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: 한 번 쓰면 닫는다. 두 번째 교환은 거절한다.
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_saml_flow_expires_at", "expires_at"),)
+
+
+class SamlSeenAssertion(Entity):
+    """이미 받아들인 어설션. **재생 방지는 우리가 한다.**
+
+    라이브러리는 요청 하나를 검증할 뿐 "이거 전에 본 것" 을 모른다. 어설션은
+    유효 시간(보통 몇 분) 안에서는 서명이 계속 맞으므로, 한 번 가로챈 응답을
+    그 창 안에 다시 밀어 넣으면 그대로 통과한다.
+
+    `expires_at` 은 어설션 자신의 `NotOnOrAfter` 다. 그 시각이 지나면 서명이
+    맞아도 검증에서 걸리므로 기록을 지워도 안전하다.
+    """
+
+    __tablename__ = "saml_seen_assertion"
+
+    provider_id: Mapped[UUID] = mapped_column(
+        ForeignKey("identity_provider.id", ondelete="CASCADE"), nullable=False
+    )
+    assertion_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_saml_seen_assertion_expires_at", "expires_at"),)

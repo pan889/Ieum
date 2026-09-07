@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -82,7 +83,9 @@ class Page(Entity, Archivable):
     #: 페이지가 사라질 때 말고는 지워지지 않으므로 매달릴 일이 없다.
     current_version_id: Mapped[UUID | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
-    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="page")
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="page", server_default=text("'page'")
+    )
     #: 블로그 글이 흐르는 기준 시각. 트리 문서에는 없다.
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None

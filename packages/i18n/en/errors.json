@@ -145,5 +145,21 @@
   "auth.sso_no_account": "You don't have an account here yet. Ask an administrator for an invite.",
   "auth.sso_email_required": "Your identity provider didn't share a verified email address.",
   "identity.invalid_email": "That isn't a valid email address.",
-  "identity.idp_already_registered": "This issuer and client ID are already registered."
+  "identity.idp_already_registered": "This issuer and client ID are already registered.",
+  "auth.saml_handoff_expired": "That sign-in took too long. Please try again.",
+  "auth.saml_idp_initiated_not_allowed": "This provider only allows sign-in started from here.",
+  "auth.saml_invalid_handoff": "We couldn't confirm that sign-in. Please try again.",
+  "auth.saml_invalid_response": "We couldn't verify the response from your identity provider.",
+  "auth.saml_name_id_required": "Your identity provider didn't send a name identifier.",
+  "auth.saml_replayed": "That sign-in response was already used. Please start again.",
+  "auth.saml_request_failed": "We couldn't start sign-in with that provider.",
+  "auth.saml_unknown_issuer": "That identity provider isn't registered.",
+  "auth.saml_unknown_request": "We couldn't match that sign-in request. Please try again.",
+  "auth.saml_missing_response": "The identity provider didn't send a response.",
+  "identity.saml_certificate_invalid": "That certificate couldn't be read. Paste the base64 or PEM text.",
+  "identity.saml_metadata_invalid": "That metadata XML couldn't be read.",
+  "identity.saml_metadata_incomplete": "The metadata must contain an issuer, an SSO URL, and a signing certificate.",
+  "identity.saml_metadata_required": "Provide the metadata XML, or the issuer and SSO URL directly.",
+  "identity.saml_certificate_required": "A signing certificate is required.",
+  "identity.saml_sp_key_required": "Requiring encrypted assertions needs an SP private key."
 }
