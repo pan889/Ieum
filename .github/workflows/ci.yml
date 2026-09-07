@@ -209,6 +209,7 @@ jobs:
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=ieum -e MINIO_ROOT_PASSWORD=ieum-secret \
+            -e MINIO_API_CORS_ALLOW_ORIGIN=http://127.0.0.1:5173,http://localhost:5173 \
             minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
           # **못 뜨면 여기서 실패해야 한다.** 그냥 빠져나오면 다음 단계가
           # 연결 오류로 터지고, 로그에는 버킷 만들기가 실패한 것만 남는다 —
@@ -219,8 +220,12 @@ jobs:
           done
           echo "MinIO 가 안 떴다"; docker logs minio; exit 1
 
-      - name: 버킷·CORS 준비
-        # 브라우저가 프리사인드 URL 로 직접 PUT 한다. CORS 가 없으면 막힌다.
+      - name: 버킷 준비
+        # 브라우저가 프리사인드 URL 로 직접 PUT 한다. CORS 가 없으면 막히는데,
+        # **MinIO 는 S3 의 CORS API(`PutBucketCors`)를 구현하지 않는다** —
+        # 여기서 부르면 `NotImplemented` 로 잡이 통째로 죽는다(실제로 죽었다).
+        # 오리진은 위 `MINIO_API_CORS_ALLOW_ORIGIN` 이 정한다. compose 도
+        # 같은 방식이다 — 두 스택이 다른 길로 CORS 를 맞추면 한쪽만 통한다.
         run: |
           uv run --project apps/api python - <<'PY'
           import boto3
@@ -236,22 +241,13 @@ jobs:
           )
           try:
               client.create_bucket(Bucket="ieum-attachments")
-          except client.exceptions.ClientError:
+          except (
+              # 이미 있는 것만 넘긴다. 자격증명 오류·연결 실패까지 삼키면
+              # 업로드 E2E 가 한참 뒤에 알 수 없는 이유로 실패한다.
+              client.exceptions.BucketAlreadyOwnedByYou,
+              client.exceptions.BucketAlreadyExists,
+          ):
               pass
-          client.put_bucket_cors(
-              Bucket="ieum-attachments",
-              CORSConfiguration={
-                  "CORSRules": [
-                      {
-                          "AllowedHeaders": ["*"],
-                          "AllowedMethods": ["PUT", "GET", "HEAD"],
-                          "AllowedOrigins": ["*"],
-                          "ExposeHeaders": ["ETag"],
-                          "MaxAgeSeconds": 3000,
-                      }
-                  ]
-              },
-          )
           PY
 
       - name: api 기동

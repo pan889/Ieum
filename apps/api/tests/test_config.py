@@ -162,3 +162,35 @@ class TestComposeFeedsTheSameOrigins:
         value = compose["services"]["api"]["environment"]["IEUM_CORS_ORIGINS"]
         # `:?` 는 값이 없으면 compose 가 기동을 거부하게 한다.
         assert value.startswith("${IEUM_WEB_ORIGINS:?")
+
+
+class TestCiUsesTheSameCorsMechanism:
+    """CI 의 스토리지도 **환경변수로** CORS 를 맞춰야 한다.
+
+    MinIO 는 S3 의 `PutBucketCors` 를 구현하지 않는다 — 부르면 응답이
+    `NotImplemented` 다. CI 가 그걸 불러서 E2E 잡이 버킷 준비 단계에서
+    통째로 죽었고, 브라우저 테스트는 **한 번도 돌지 못했다.** 컴포즈는
+    처음부터 환경변수를 썼는데 CI 만 다른 길로 갔다.
+
+    잡을 돌려야만 보이는 종류라 워크플로우 파일을 정적으로 읽어 고정한다.
+    """
+
+    def _e2e_job(self) -> Any:
+        workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text("utf-8"))
+        return workflow["jobs"]["e2e"]
+
+    def _steps(self) -> str:
+        return "\n".join(step.get("run", "") for step in self._e2e_job()["steps"])
+
+    def test_ci_does_not_call_the_unimplemented_cors_api(self) -> None:
+        body = self._steps()
+        assert "put_bucket_cors" not in body
+        assert "PutBucketCors" not in body
+
+    def test_ci_storage_allows_the_browser_origin(self) -> None:
+        """허용 목록이 없으면 프리사인드 PUT 이 프리플라이트에서 막힌다."""
+        body = self._steps()
+        assert "MINIO_API_CORS_ALLOW_ORIGIN" in body
+        # 브라우저가 실제로 여는 주소(playwright 의 baseURL 기본값).
+        origins = next(line for line in body.splitlines() if "MINIO_API_CORS_ALLOW_ORIGIN" in line)
+        assert "http://127.0.0.1:5173" in origins
