@@ -16,6 +16,7 @@ import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
 import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
+import { BlogList } from './Blog'
 import { PageDetail } from './PageDetail'
 import { WatchButton } from '@/features/notifications/WatchButton'
 
@@ -37,7 +38,10 @@ export function SpaceScreen() {
 
   const space = useSpaceByKey(spaceKey || null)
   const tree = useSpaceTree(space.data?.id ?? null)
-  const page = usePageByPath(spaceKey || null, path || null)
+  // `blog` 는 글 목록이다. 그 아래(`blog/<slug>`)는 보통 문서와 똑같이 열린다
+  // — 블로그 글도 문서라서 주소 규칙을 따로 두지 않았다.
+  const showingBlog = path === 'blog'
+  const page = usePageByPath(spaceKey || null, showingBlog ? null : path || null)
 
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [creatingUnder, setCreatingUnder] = useState<string | null | undefined>(undefined)
@@ -49,6 +53,9 @@ export function SpaceScreen() {
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['wiki', 'tree', space.data?.id] })
     void queryClient.invalidateQueries({ queryKey: ['wiki', 'page', spaceKey] })
+    // 블로그 목록은 글의 앞부분을 싣는다. 글을 고치고 목록으로 돌아가면
+    // 옛 앞부분이 남아 있다.
+    void queryClient.invalidateQueries({ queryKey: ['wiki', 'blog', space.data?.id] })
     // 코멘트는 여기서 건드리지 않는다. 판 번호가 키에 들어 있어 본문이
     // 바뀌면 저절로 다시 받는다. 여기서 무효화하면 휴지통으로 보낸 직후
     // 사라진 문서의 코멘트를 부르러 가서 404 가 난다.
@@ -78,6 +85,17 @@ export function SpaceScreen() {
         >
           {t('wiki:page.newTop')}
         </Button>
+
+        <Link
+          to="/wiki/$spaceKey/$"
+          params={{ spaceKey, _splat: 'blog' }}
+          className={clsx(
+            'rounded-md px-2 py-1.5 text-xs',
+            showingBlog ? 'bg-surface-raised font-medium text-fg' : 'text-muted hover:text-fg',
+          )}
+        >
+          {t('wiki:blog.nav')}
+        </Link>
 
         <WatchButton target="space" id={space.data.id} />
 
@@ -138,7 +156,15 @@ export function SpaceScreen() {
 
       <div className="min-w-0 flex-1">
         {showTemplates ? <Templates spaceId={space.data.id} /> : null}
-        {!path ? (
+        {showingBlog ? (
+          <BlogList
+            spaceId={space.data.id}
+            spaceKey={spaceKey}
+            onCreated={(created) => {
+              void navigate({ to: '/wiki/$spaceKey/$', params: { spaceKey, _splat: created } })
+            }}
+          />
+        ) : !path ? (
           <Card className="text-center">
             <p className="font-medium">{t('wiki:page.pickOne')}</p>
             <p className="mt-1 text-sm text-muted">{t('wiki:page.pickOneHint')}</p>

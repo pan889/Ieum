@@ -25,6 +25,10 @@ export interface WikiPage {
   slug: string
   title: string
   status: string
+  /** `page`(트리) 또는 `blog`(날짜순). */
+  kind: string
+  /** 블로그 글이 흐르는 기준 시각. 트리 문서에는 없다. */
+  published_at: string | null
   position: number
   version: number
   labels: string[]
@@ -77,6 +81,13 @@ export interface NewWikiPage {
   front_matter?: Record<string, unknown>
   labels?: string[]
   publish?: boolean
+  /** `blog` 면 트리가 아니라 날짜순 목록에 들어간다. */
+  kind?: 'page' | 'blog'
+}
+
+export interface BlogPage {
+  items: WikiPage[]
+  total: number
 }
 
 export interface WikiPagePatch {
@@ -233,6 +244,15 @@ export function createWikiApi(client: ApiClient) {
         return client.postFile<WikiPage[]>(`${SPACES}/${id}/import${suffix}`, file)
       },
       exportZip: (id: string) => client.getBlob(`${SPACES}/${id}/export`),
+
+      /** 블로그 글, 최신순. 트리와 달리 시간이 자리를 정한다. */
+      blog: (id: string, params: { limit?: number; offset?: number } = {}) => {
+        const query = new URLSearchParams()
+        if (params.limit) query.set('limit', String(params.limit))
+        if (params.offset) query.set('offset', String(params.offset))
+        const suffix = query.size > 0 ? `?${query.toString()}` : ''
+        return client.get<BlogPage>(`${SPACES}/${id}/blog${suffix}`)
+      },
 
       templates: {
         /** 그 스페이스 것 + 전역. */

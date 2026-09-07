@@ -15,7 +15,7 @@ from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown.anchors import MAX_CONTEXT, MAX_QUOTE, Anchor
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
-from ieum.modules.wiki.models import SPACE_KINDS
+from ieum.modules.wiki.models import PAGE_KINDS, SPACE_KINDS
 from ieum.modules.wiki.portable import MAX_ARCHIVE_BYTES, content_disposition
 from ieum.modules.wiki.service import (
     CommentView,
@@ -89,6 +89,8 @@ class PageCreateRequest(BaseModel):
     front_matter: dict[str, Any] = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list, max_length=30)
     publish: bool = False
+    #: `page`(트리) 또는 `blog`(날짜순). 블로그 글은 부모를 갖지 않는다.
+    kind: str = Field(default="page", pattern=f"^({'|'.join(PAGE_KINDS)})$")
 
 
 class PageUpdateRequest(BaseModel):
@@ -137,6 +139,8 @@ class PageResponse(BaseModel):
     slug: str
     title: str
     status: str
+    kind: str
+    published_at: datetime | None
     position: int
     version: int
     labels: list[str]
@@ -188,6 +192,8 @@ def _page(view: PageView) -> PageResponse:
         slug=page.slug,
         title=page.title,
         status=page.status,
+        kind=page.kind,
+        published_at=page.published_at,
         position=page.position,
         version=page.version,
         labels=view.labels,
@@ -328,10 +334,33 @@ async def create_page(
             front_matter=body.front_matter,
             labels=body.labels,
             publish=body.publish,
+            kind=body.kind,
         ),
     )
     await session.commit()
     return _page(view)
+
+
+class BlogPageResponse(BaseModel):
+    """블로그 목록 한 쪽. 본문까지 실린다 — 목록에서 앞부분을 보여 준다."""
+
+    items: list[PageResponse]
+    total: int
+
+
+@spaces_router.get("/{space_id}/blog", response_model=BlogPageResponse)
+async def list_posts(
+    space_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> BlogPageResponse:
+    views, total = await PageService(session, permissions).posts(
+        actor, space_id, limit=limit, offset=offset
+    )
+    return BlogPageResponse(items=[_page(view) for view in views], total=total)
 
 
 @pages_router.get("/by-path", response_model=PageResponse)

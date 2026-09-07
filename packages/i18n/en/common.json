@@ -57,6 +57,8 @@
   "theme.dark": "Dark",
   "theme.system": "System",
   "pagination.loadMore": "Load more",
+  "pagination.previous": "Previous",
+  "pagination.next": "Next",
   "pagination.itemCount": "{count, plural, one {# item} other {# items}}",
   "action.loadMore": "Load more",
   "action.create": "Create",

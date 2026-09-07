@@ -84,11 +84,21 @@ class PageRepository:
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
     async def sibling_slug_taken(
-        self, *, space_id: UUID, parent_id: UUID | None, slug: str, exclude: UUID | None = None
+        self,
+        *,
+        space_id: UUID,
+        parent_id: UUID | None,
+        slug: str,
+        exclude: UUID | None = None,
+        kind: str = "page",
     ) -> bool:
         stmt = select(func.count()).select_from(Page).where(Page.slug == slug)
         if parent_id is None:
-            stmt = stmt.where(Page.space_id == space_id).where(Page.parent_id.is_(None))
+            stmt = (
+                stmt.where(Page.space_id == space_id)
+                .where(Page.parent_id.is_(None))
+                .where(Page.kind == kind)
+            )
         else:
             stmt = stmt.where(Page.parent_id == parent_id)
         if exclude is not None:
@@ -100,7 +110,8 @@ class PageRepository:
         return page
 
     async def children_of(self, page_id: UUID | None, space_id: UUID) -> list[Page]:
-        stmt = select(Page).where(Page.archived_at.is_(None))
+        # 블로그 글은 트리에 없다. 날짜순으로 흐르는 글이라 위치가 없다.
+        stmt = select(Page).where(Page.archived_at.is_(None)).where(Page.kind == "page")
         if page_id is None:
             stmt = stmt.where(Page.space_id == space_id).where(Page.parent_id.is_(None))
         else:
@@ -109,13 +120,17 @@ class PageRepository:
             (await self._s.execute(stmt.order_by(Page.position, Page.title))).scalars().all()
         )
 
-    async def tree_of(self, space_id: UUID, *, include_archived: bool = False) -> list[Page]:
+    async def tree_of(
+        self, space_id: UUID, *, include_archived: bool = False, kind: str | None = "page"
+    ) -> list[Page]:
         """스페이스의 문서 전부. 화면이 부모-자식으로 조립한다.
 
         깊이마다 질의를 내면(재귀 로딩) 트리 깊이만큼 왕복한다. 한 스페이스의
         문서 수는 사람이 관리하는 규모라 한 번에 받아 조립하는 편이 낫다.
         """
         stmt = select(Page).where(Page.space_id == space_id)
+        if kind is not None:
+            stmt = stmt.where(Page.kind == kind)
         if not include_archived:
             stmt = stmt.where(Page.archived_at.is_(None))
         return list(
@@ -123,6 +138,36 @@ class PageRepository:
             .scalars()
             .all()
         )
+
+    async def blog_slugs(self, space_id: UUID) -> list[Page]:
+        """이 스페이스의 블로그 글 전부. 새 글의 slug 를 겹치지 않게 고를 때 쓴다."""
+        stmt = select(Page).where(Page.space_id == space_id).where(Page.kind == "blog")
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def blog_of(self, space_id: UUID, *, limit: int, offset: int = 0) -> list[Page]:
+        """블로그 글, 최신순. 초안은 쓴 사람 말고는 볼 것이 없으므로 뺀다."""
+        stmt = (
+            select(Page)
+            .where(Page.space_id == space_id)
+            .where(Page.kind == "blog")
+            .where(Page.archived_at.is_(None))
+            .where(Page.status == "published")
+            .order_by(Page.published_at.desc(), Page.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def blog_count(self, space_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Page)
+            .where(Page.space_id == space_id)
+            .where(Page.kind == "blog")
+            .where(Page.archived_at.is_(None))
+            .where(Page.status == "published")
+        )
+        return int((await self._s.execute(stmt)).scalar_one())
 
     async def by_ids(self, page_ids: Sequence[UUID]) -> list[Page]:
         if not page_ids:

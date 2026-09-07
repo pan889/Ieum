@@ -27,6 +27,9 @@ from ieum.db.base import Archivable, Entity
 
 SPACE_KINDS = ("team", "personal", "kb")
 PAGE_STATUSES = ("draft", "published")
+#: 문서의 성격. 블로그 글은 **트리에 안 들어간다** — 날짜순으로 흐르는 글이라
+#: 위치가 아니라 시간이 자리를 정한다. 나머지(버전·코멘트·검색·권한)는 같다.
+PAGE_KINDS = ("page", "blog")
 RESTRICTION_MODES = ("view", "edit")
 ANCHOR_STATUSES = ("ok", "orphaned")
 
@@ -79,12 +82,18 @@ class Page(Entity, Archivable):
     #: 페이지가 사라질 때 말고는 지워지지 않으므로 매달릴 일이 없다.
     current_version_id: Mapped[UUID | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="page")
+    #: 블로그 글이 흐르는 기준 시각. 트리 문서에는 없다.
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: 낙관적 잠금. 이슈와 같은 규약(If-Match)을 쓴다.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (
         CheckConstraint(status.in_(PAGE_STATUSES), name="page_status"),
+        CheckConstraint(kind.in_(PAGE_KINDS), name="page_kind"),
         # 같은 부모 아래에서 slug 는 유일하다. 부모가 NULL 인 최상위도 마찬가지라
         # 부분 인덱스를 따로 둔다 — NULL 은 UNIQUE 에서 서로 다르게 취급된다.
         Index(
@@ -94,13 +103,18 @@ class Page(Entity, Archivable):
             unique=True,
             postgresql_where=parent_id.isnot(None),
         ),
+        # 최상위 slug 는 성격별로 유일하다. `kind` 를 빼면 블로그 글 하나가
+        # 같은 이름의 최상위 문서를 막는다 — 둘은 주소부터 다른데도.
         Index(
             "uq_page_space_root_slug",
             "space_id",
+            "kind",
             "slug",
             unique=True,
             postgresql_where=parent_id.is_(None),
         ),
+        # 블로그 목록은 최신순이다.
+        Index("ix_page_space_blog", "space_id", "published_at"),
         Index("ix_page_space_id", "space_id"),
         Index("ix_page_parent_id", "parent_id"),
         # 하위 트리 조회는 `path LIKE 'a/b/%'` 다. 접두사 검색이라 인덱스를 탄다.

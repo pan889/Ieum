@@ -78,5 +78,11 @@
   "draft.saving": "저장 중…",
   "draft.savedAt": "초안 저장 {when}",
   "page.copy": "복사",
-  "page.copySuffix": "{title} (복사본)"
+  "page.copySuffix": "{title} (복사본)",
+  "blog.title": "블로그",
+  "blog.new": "글쓰기",
+  "blog.postTitle": "글 제목",
+  "blog.create": "게시",
+  "blog.empty": "아직 글이 없습니다. 소식과 공지가 여기에 쌓입니다.",
+  "blog.nav": "블로그"
 }

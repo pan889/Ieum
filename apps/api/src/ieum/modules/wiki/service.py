@@ -43,6 +43,7 @@ from ieum.modules.wiki import events as wiki_events
 from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import (
     MAX_DEPTH,
+    PAGE_KINDS,
     SPACE_KINDS,
     Page,
     PageComment,
@@ -73,6 +74,9 @@ from ieum.modules.wiki.slug import join_path, slugify, unique_slug
 
 log = get_logger(__name__)
 
+#: 블로그 글의 주소 앞머리. 트리 문서와 섞이지 않게 한 칸 띄워 둔다.
+BLOG_PREFIX = "blog"
+
 _SPACE_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,15}$")
 MAX_LABELS = 30
 
@@ -87,6 +91,8 @@ class NewPage:
     labels: list[str] = field(default_factory=list)
     #: True 면 바로 게시한다. 기본은 초안 — 쓰다 만 문서가 트리에 뜨면 곤란하다.
     publish: bool = False
+    #: `page`(트리) 또는 `blog`(날짜순). 블로그 글은 부모를 갖지 않는다.
+    kind: str = "page"
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +270,21 @@ class SpaceService:
         return space
 
 
+def _kind_of(front_matter: dict[str, Any]) -> str:
+    """front matter 의 `kind`. 모르는 값이면 보통 문서로 본다.
+
+    내보낸 `.md` 를 다시 올렸을 때 블로그 글이 트리 문서가 되어 버리면
+    라운드트립이 깨진다 (wiki-markdown.md 8절).
+    """
+    value = front_matter.get("kind")
+    return value if isinstance(value, str) and value in PAGE_KINDS else "page"
+
+
+def _with_kind(front_matter: dict[str, Any], kind: str) -> dict[str, Any]:
+    """보통 문서에는 안 적는다. 기본값을 적으면 모든 파일이 지저분해진다."""
+    return front_matter if kind == "page" else {**front_matter, "kind": kind}
+
+
 async def resolve_page_mentions(
     session: AsyncSession,
     permissions: PermissionService,
@@ -380,6 +401,9 @@ class PageService:
 
         title = self._validate_title(payload.title)
         body = self._validate_body(payload.body)
+        kind = self._validate_kind(payload.kind)
+        if kind == "blog":
+            return await self._create_post(actor, space, title=title, payload=payload)
         parent = await self._resolve_parent(space.id, payload.parent_id)
         if parent is not None:
             # 상위 문서를 편집할 수 있어야 그 아래에 만들 수 있다. 아니면
@@ -436,6 +460,81 @@ class PageService:
             )
         log.info("wiki.page_created", actor=str(actor.user_id), page=str(page.id))
         return await self.to_view(page, space=space)
+
+    @staticmethod
+    def _validate_kind(kind: str) -> str:
+        if kind not in PAGE_KINDS:
+            raise ValidationError(
+                "문서 성격이 올바르지 않다.",
+                code="wiki.page_kind_invalid",
+                details={"allowed": list(PAGE_KINDS)},
+            )
+        return kind
+
+    async def _create_post(
+        self, actor: Actor, space: Space, *, title: str, payload: NewPage
+    ) -> PageView:
+        """블로그 글 하나.
+
+        트리에 안 들어간다 — 날짜순으로 흐르는 글이라 위치가 아니라 시간이
+        자리를 정한다. 주소는 `blog/<slug>` 라 트리 문서와 섞이지 않는다.
+        나머지(버전·코멘트·검색·권한)는 문서와 완전히 같다.
+        """
+        body = self._validate_body(payload.body)
+        taken = {page.slug for page in await self._pages.blog_slugs(space.id)}
+        slug = unique_slug(slugify(title), taken)
+        page = self._pages.add(
+            Page(
+                space_id=space.id,
+                parent_id=None,
+                kind="blog",
+                path=join_path(BLOG_PREFIX, slug),
+                slug=slug,
+                title=title,
+                status="published" if payload.publish else "draft",
+                published_at=utcnow() if payload.publish else None,
+            )
+        )
+        await self._s.flush()
+
+        version = await self._write_version(page, actor, title=title, body=body, message=None)
+        if payload.publish:
+            page.current_version_id = version.id
+        if payload.labels:
+            await self._labels.replace(page.id, self._validate_labels(payload.labels))
+        if payload.front_matter:
+            version.front_matter = payload.front_matter
+
+        await self._s.flush()
+        await self._reindex(page, space=space)
+        await self._relink(page)
+        if page.status == "published" and body.strip():
+            publish(
+                self._s,
+                wiki_events.PagePublished(
+                    aggregate_id=page.id,
+                    space_id=space.id,
+                    space_key=space.key,
+                    path=page.path,
+                    title=page.title,
+                    actor_id=actor.user_id,
+                    mentioned_ids=await resolve_page_mentions(self._s, self._perms, page, body),
+                ),
+            )
+        log.info("wiki.post_created", actor=str(actor.user_id), page=str(page.id))
+        return await self.to_view(page, space=space)
+
+    async def posts(
+        self, actor: Actor, space_id: UUID, *, limit: int, offset: int
+    ) -> tuple[list[PageView], int]:
+        """블로그 글 목록, 최신순."""
+        space = await self._require_space(space_id)
+        await self._perms.require(self._s, actor, perms.PAGE_VIEW, scope=Scope.space(space.id))
+        rows = await self._visible(
+            actor, await self._pages.blog_of(space.id, limit=limit, offset=offset)
+        )
+        views = [await self.to_view(row, space=space) for row in rows]
+        return views, await self._pages.blog_count(space.id)
 
     async def update(
         self,
@@ -765,6 +864,7 @@ class PageService:
                 # 올린 문서는 바로 읽히는 게 기대다. 초안으로 두면 올려 놓고
                 # "왜 안 보이지" 가 된다.
                 publish=True,
+                kind=_kind_of(parsed.front_matter),
             ),
         )
 
@@ -820,6 +920,7 @@ class PageService:
                 front_matter=entry.document.front_matter,
                 labels=entry.document.labels,
                 publish=True,
+                kind=_kind_of(entry.document.front_matter),
             ),
         )
         stem = entry.path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
@@ -857,7 +958,8 @@ class PageService:
         """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다."""
         space = await self._require_space(space_id)
         await self._perms.require(self._s, actor, perms.PAGE_VIEW, scope=Scope.space(space.id))
-        rows = await self._visible(actor, await self._pages.tree_of(space.id))
+        # 블로그 글도 담는다. 안 담으면 내보내기가 문서의 일부를 조용히 잃는다.
+        rows = await self._visible(actor, await self._pages.tree_of(space.id, kind=None))
 
         files: list[tuple[str, str]] = []
         for page in rows:
@@ -869,7 +971,9 @@ class PageService:
                         title=page.title,
                         body=view.body,
                         labels=view.labels,
-                        front_matter=view.current.front_matter if view.current else {},
+                        front_matter=_with_kind(
+                            view.current.front_matter if view.current else {}, page.kind
+                        ),
                     ),
                 )
             )

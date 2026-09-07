@@ -138,10 +138,13 @@ export async function signIn(
   who: { email: string; password: string } = { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
 ): Promise<void> {
   await page.goto('/')
+  // 화면 언어는 서버가 기억한다. 앞선 테스트가 한국어로 바꿔 두었으면 로그인
+  // 직후 UI 가 한국어다 — 영어 글자만 찾으면 거기서 멈춘다.
+  const email = page.getByLabel(/email|이메일/i)
+  const out = page.getByRole('button', { name: /sign out|로그아웃/i })
+
   // 한 브라우저에서 사람을 바꿔 가며 보는 테스트가 있다. 이미 들어와 있으면
   // 로그인 폼이 아예 없으므로 먼저 나간다.
-  const email = page.getByLabel(/email/i)
-  const out = page.getByRole('button', { name: /sign out/i })
   await expect(email.or(out).first()).toBeVisible()
   if (await out.isVisible()) {
     await out.click()
@@ -149,12 +152,12 @@ export async function signIn(
   }
 
   await email.fill(who.email)
-  await page.getByLabel(/password/i).fill(who.password)
-  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.getByLabel(/password|비밀번호/i).fill(who.password)
+  await page.getByRole('button', { name: /^(sign in|로그인)$/i }).click()
   // 주소가 아니라 **앱 셸**이 뜰 때까지 기다린다. 나갔다 들어오는 경우 주소는
   // 이미 `/projects` 라서, 주소만 보면 로그인 요청이 아직 날아가는 중인데도
   // 다음 줄로 넘어간다.
-  await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible()
+  await expect(out).toBeVisible()
   await page.waitForURL(/\/projects/)
 }
 

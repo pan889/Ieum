@@ -1041,3 +1041,167 @@ class TestChangeEvents:
             select(OutboxEvent).where(OutboxEvent.aggregate_type == "page")
         )
         assert rows.scalars().one().payload["mentioned_ids"] == []
+
+
+class TestBlog:
+    """스페이스 블로그 (B13).
+
+    날짜순으로 흐르는 글이라 트리에 안 들어간다. 나머지(버전·코멘트·검색·
+    권한)는 문서와 완전히 같아야 한다 — 그래서 별도 표를 만들지 않았다.
+    """
+
+    async def test_post_is_not_in_the_tree(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        await pages.create(actor, NewPage(space_id=space.id, title="Runbook", publish=True))
+        await pages.create(
+            actor, NewPage(space_id=space.id, title="릴리스 노트", kind="blog", publish=True)
+        )
+
+        tree = await pages.tree(actor, space.id)
+        assert [node.title for node in tree] == ["Runbook"]
+
+    async def test_posts_are_newest_first(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        for title in ("첫 글", "둘째 글", "셋째 글"):
+            await pages.create(
+                actor, NewPage(space_id=space.id, title=title, kind="blog", publish=True)
+            )
+
+        posts, total = await pages.posts(actor, space.id, limit=10, offset=0)
+        assert total == 3
+        assert [view.page.title for view in posts] == ["셋째 글", "둘째 글", "첫 글"]
+
+    async def test_draft_post_is_not_listed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """쓰다 만 글이 블로그에 뜨면 곤란하다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        await pages.create(actor, NewPage(space_id=space.id, title="초안", kind="blog"))
+        posts, total = await pages.posts(actor, space.id, limit=10, offset=0)
+        assert posts == [] and total == 0
+
+    async def test_address_does_not_collide_with_a_page(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """같은 이름의 문서와 글이 함께 있을 수 있어야 한다. 주소가 다르다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        page = await pages.create(actor, NewPage(space_id=space.id, title="Runbook", publish=True))
+        post = await pages.create(
+            actor, NewPage(space_id=space.id, title="Runbook", kind="blog", publish=True)
+        )
+        assert page.page.path == "runbook"
+        assert post.page.path == "blog/runbook"
+
+    async def test_two_posts_with_the_same_title(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        first = await pages.create(
+            actor, NewPage(space_id=space.id, title="주간 소식", kind="blog", publish=True)
+        )
+        second = await pages.create(
+            actor, NewPage(space_id=space.id, title="주간 소식", kind="blog", publish=True)
+        )
+        assert first.page.path != second.page.path
+
+    async def test_unknown_kind_is_rejected(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        with pytest.raises(ValidationError) as exc:
+            await PageService(session, permissions).create(
+                actor, NewPage(space_id=space.id, title="X", kind="tweet")
+            )
+        assert exc.value.code == "wiki.page_kind_invalid"
+
+    async def test_post_survives_export_and_import(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """내보낸 묶음을 다시 올리면 글은 글로 돌아와야 한다.
+
+        안 그러면 내보내기 한 번에 블로그가 통째로 트리 문서가 된다
+        (wiki-markdown.md 8절 라운드트립 계약).
+        """
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        await pages.create(
+            actor,
+            NewPage(
+                space_id=space.id,
+                title="릴리스 노트",
+                body="새 판이 나왔다",
+                kind="blog",
+                publish=True,
+            ),
+        )
+        archive = await pages.export_space(actor, space.id)
+
+        other = Space(key=f"T{new_id().hex[:6].upper()}", name="Copy")
+        session.add(other)
+        await session.flush()
+        target = await full_access(session, user, other)
+        restored = await pages.import_archive(target, space_id=other.id, data=archive)
+
+        assert [view.page.kind for view in restored] == ["blog"]
+        assert restored[0].page.path == "blog/릴리스-노트"
+
+    async def test_a_post_can_be_commented_like_any_page(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """별도 표를 만들지 않은 이유가 이것이다."""
+        actor = await full_access(session, user, space)
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.COMMENT_ADD,),
+            scope=Scope.space(space.id),
+        )
+        post = await PageService(session, permissions).create(
+            actor,
+            NewPage(space_id=space.id, title="공지", body="읽어 주세요", kind="blog", publish=True),
+        )
+        comment = await PageCommentService(session, permissions).add(
+            actor, post.page.id, body="확인했습니다"
+        )
+        assert comment.comment.page_id == post.page.id
