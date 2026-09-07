@@ -42,6 +42,11 @@ USER_ACTIVATED = "identity.user.activated"
 USER_LOCALE_CHANGED = "identity.user.locale_changed"
 USER_PASSWORD_CHANGED = "identity.user.password_changed"  # noqa: S105 - 행동 이름이다
 
+# ── SSO ─────────────────────────────────────────────────────────
+SSO_LOGIN_SUCCEEDED = "auth.sso.login_succeeded"
+SSO_USER_PROVISIONED = "auth.sso.user_provisioned"
+SSO_ACCOUNT_LINKED = "auth.sso.account_linked"
+
 # ── 보안 정책 ───────────────────────────────────────────────────
 SECURITY_MFA_POLICY_CHANGED = "org.security.mfa_policy_changed"
 
@@ -67,6 +72,9 @@ ACTIONS = (
     USER_ACTIVATED,
     USER_LOCALE_CHANGED,
     USER_PASSWORD_CHANGED,
+    SSO_LOGIN_SUCCEEDED,
+    SSO_USER_PROVISIONED,
+    SSO_ACCOUNT_LINKED,
     SECURITY_MFA_POLICY_CHANGED,
     TOKEN_ISSUED,
     TOKEN_REVOKED,
@@ -173,6 +181,9 @@ __all__ = [
     "SECURITY_MFA_POLICY_CHANGED",
     "SESSION_REVOKED",
     "SESSION_REVOKED_ALL",
+    "SSO_ACCOUNT_LINKED",
+    "SSO_LOGIN_SUCCEEDED",
+    "SSO_USER_PROVISIONED",
     "TOKEN_ISSUED",
     "TOKEN_REVOKED",
     "USER_ACTIVATED",

@@ -11,11 +11,13 @@ import secrets
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from uuid import UUID
 
 import pyotp
 import qrcode
 import qrcode.image.svg
+from jwt import PyJWKClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,13 +52,23 @@ from ieum.core.permissions import (
     registry,
 )
 from ieum.core.time import in_seconds, utcnow
-from ieum.modules.identity import audit
+from ieum.modules.identity import audit, oidc
 from ieum.modules.identity import events as identity_events
 from ieum.modules.identity import permissions as perms
-from ieum.modules.identity.models import ApiToken, AuditLog, MFACredential, User, UserSession
+from ieum.modules.identity.models import (
+    ApiToken,
+    AuditLog,
+    IdentityProvider,
+    MFACredential,
+    User,
+    UserGroup,
+    UserSession,
+)
 from ieum.modules.identity.repository import (
     AuditFilter,
     AuditRepository,
+    GroupRepository,
+    IdentityProviderRepository,
     LoginAttemptRepository,
     MFARepository,
     SessionRepository,
@@ -66,6 +78,17 @@ from ieum.modules.identity.repository import (
 from ieum.modules.org import contracts as org
 
 log = get_logger(__name__)
+
+
+@lru_cache(maxsize=16)
+def _jwks_client(jwks_uri: str) -> PyJWKClient:
+    """JWKS 를 캐시한다. 로그인마다 IdP 를 치면 느리고, IdP 가 막는다.
+
+    `PyJWKClient` 가 캐시와 **키 회전**을 함께 맡는다 — 모르는 `kid` 가 오면
+    한 번 다시 받는다. 회전 직후 로그인이 실패하지 않게 하는 자리다.
+    """
+    return PyJWKClient(jwks_uri, cache_keys=True, lifespan=600)
+
 
 BACKUP_CODE_COUNT = 10
 #: 사람이 옮겨 적을 코드라 혼동되는 글자(0/O, 1/I/L)를 뺀다.
@@ -257,6 +280,35 @@ class AuthService:
         row.revoked_at = utcnow()
         self._audit.record(
             action=audit.LOGOUT, actor_id=row.user_id, target_type="session", target_id=row.id
+        )
+
+    async def issue_for_sso(
+        self,
+        user: User,
+        *,
+        ip: str | None,
+        user_agent: str | None,
+        idp_verified_mfa: bool,
+    ) -> IssuedTokens:
+        """SSO 로 들어온 사람의 세션.
+
+        우리 쪽 2FA 는 별도다. IdP 에 위임하는 정책이면 그쪽이 실제로 2차
+        요소를 요구했는지(`amr`/`acr`)까지 확인한 결과를 받는다 — 위임을
+        켰다는 사실만으로 통과시키면 비밀번호 하나로 민감 작업이 열린다.
+        """
+        enrolled = await self._mfa.has_any_confirmed(user.id)
+        enforced = user.require_mfa or await org.mfa_required_for(
+            self._s, user_id=user.id, group_ids=await self._users.group_ids_for(user.id)
+        )
+        satisfied = idp_verified_mfa or not (enrolled or enforced)
+        return await self._issue_session(
+            user,
+            ip=ip,
+            user_agent=user_agent,
+            mfa_satisfied=satisfied,
+            enrollment_required=enforced and not enrolled and not idp_verified_mfa,
+            # IdP 가 2차 요소를 실제로 요구했으면 그게 증명이다.
+            mfa_verified=idp_verified_mfa,
         )
 
     async def revoke_session(self, *, session_id: UUID, user_id: UUID, actor_id: UUID) -> bool:
@@ -1000,3 +1052,203 @@ def _validate_scopes(scopes: Sequence[str]) -> set[str]:
             details={"scopes": sorted(unknown)},
         )
     return set(scopes)
+
+
+class SsoService:
+    """OIDC 로그인 (auth.md 4절).
+
+    검증은 `oidc` 모듈이 한다. 여기서는 **검증을 통과한 뒤** 무엇을 하느냐를
+    정한다: 누구인지 찾고, 없으면 만들고, 그룹을 맞추고, 세션을 연다.
+    """
+
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        self._s = session
+        self._settings = settings
+        self._providers = IdentityProviderRepository(session)
+        self._users = UserRepository(session)
+        self._groups = GroupRepository(session)
+        self._audit = AuditRepository(session)
+        self._auth = AuthService(session, settings)
+
+    async def providers(self) -> list[IdentityProvider]:
+        return await self._providers.enabled()
+
+    async def provider_for_email(self, email: str) -> IdentityProvider | None:
+        """이메일 도메인으로 IdP 를 고른다. 없으면 로컬 로그인이다."""
+        domain = oidc.domain_of(email)
+        for provider in await self._providers.enabled():
+            if domain in {str(d).lower() for d in provider.email_domains}:
+                return provider
+        return None
+
+    #: 콜백이 돌아올 자리. 화면 경로는 서버가 정한다.
+    CALLBACK_PATH = "/auth/callback"
+
+    def redirect_uri(self) -> str:
+        """**서버가 만든다.** 클라이언트가 준 값을 그대로 쓰면, 공격자가 자기
+        주소를 넣고 흐름을 시작해 인가 코드를 가져갈 수 있다. IdP 도 등록된
+        주소만 받지만, 느슨하게 맞추는 IdP 가 있어 여기서도 막는다.
+        """
+        return f"{self._settings.base_url.rstrip('/')}{self.CALLBACK_PATH}"
+
+    async def begin(self, provider_id: UUID) -> str:
+        """인가 URL. 전이 상태는 `state` 에 봉해 보낸다 — 서버는 기억하지 않는다."""
+        provider = await self._require_provider(provider_id)
+        redirect_uri = self.redirect_uri()
+        verifier = oidc.new_verifier()
+        flow = oidc.Flow(
+            provider_id=provider.id,
+            nonce=secrets.token_urlsafe(24),
+            code_verifier=verifier,
+            redirect_uri=redirect_uri,
+        )
+        return oidc.authorization_url(
+            endpoint=provider.authorization_endpoint,
+            client_id=provider.client_id,
+            scopes=provider.scopes,
+            redirect_uri=redirect_uri,
+            state=oidc.seal_state(flow, self._settings),
+            nonce=flow.nonce,
+            code_challenge=oidc.challenge_for(verifier),
+        )
+
+    async def complete(
+        self, *, code: str, state: str, ip: str | None = None, user_agent: str | None = None
+    ) -> IssuedTokens:
+        """콜백. 여기를 통과하면 우리 세션이 열린다."""
+        flow = oidc.open_state(state, self._settings)
+        provider = await self._require_provider(flow.provider_id)
+
+        tokens = await oidc.exchange_code(
+            token_endpoint=provider.token_endpoint,
+            client_id=provider.client_id,
+            client_secret=self._secret_box().decrypt(provider.client_secret_enc),
+            code=code,
+            redirect_uri=flow.redirect_uri,
+            code_verifier=flow.code_verifier,
+        )
+        raw = oidc.verify_id_token(
+            tokens["id_token"],
+            jwks_client=_jwks_client(provider.jwks_uri),
+            issuer=provider.issuer,
+            client_id=provider.client_id,
+            nonce=flow.nonce,
+        )
+        claims = oidc.read_claims(
+            raw,
+            email_claim=provider.email_claim,
+            name_claim=provider.name_claim,
+            groups_claim=provider.groups_claim,
+            trust_idp_mfa=provider.trust_idp_mfa,
+        )
+
+        user = await self._resolve_user(provider, claims)
+        await self._sync_groups(user, claims.groups)
+        user.last_login_at = utcnow()
+
+        issued = await self._auth.issue_for_sso(
+            user, ip=ip, user_agent=user_agent, idp_verified_mfa=claims.mfa_satisfied
+        )
+        self._audit.record(
+            action=audit.SSO_LOGIN_SUCCEEDED,
+            actor_id=user.id,
+            target_type="user",
+            target_id=user.id,
+            ip=ip,
+            metadata={"provider": provider.name, "idp_mfa": claims.mfa_satisfied},
+        )
+        return issued
+
+    async def _resolve_user(self, provider: IdentityProvider, claims: oidc.Claims) -> User:
+        """`sub` 로 찾는다. 이메일은 **처음 잇는 순간**에만 쓴다.
+
+        `sub` 는 IdP 안에서 바뀌지 않는 값이다. 이메일로 매번 찾으면, 주소를
+        바꾼 사람이 자기 계정을 잃거나 남의 계정에 들어간다.
+        """
+        linked = await self._providers.identity(provider.id, claims.subject)
+        if linked is not None:
+            linked.last_login_at = utcnow()
+            user = await self._users.get(linked.user_id)
+            if user is None or not user.is_active:
+                raise AuthenticationError("계정을 사용할 수 없다.")
+            return user
+
+        if claims.email and provider.link_verified_email:
+            # **검증된 이메일만** 이어 준다(claims 단계에서 이미 걸러진다).
+            existing = await self._users.get_by_email(claims.email)
+            if existing is not None:
+                self._providers.link(provider.id, existing.id, claims.subject)
+                self._audit.record(
+                    action=audit.SSO_ACCOUNT_LINKED,
+                    actor_id=existing.id,
+                    target_type="user",
+                    target_id=existing.id,
+                    metadata={"provider": provider.name},
+                )
+                return existing
+
+        if not provider.jit_provisioning:
+            raise AuthenticationError(
+                "이 조직에 계정이 없다. 관리자에게 초대를 요청해 달라.",
+                code="auth.sso_no_account",
+            )
+        if not claims.email:
+            # 이메일 없이 계정을 만들면 메일도 멘션도 안 되는 유령이 남는다.
+            raise AuthenticationError(
+                "IdP 가 검증된 이메일을 주지 않았다.", code="auth.sso_email_required"
+            )
+        return await self._provision(provider, claims)
+
+    async def _provision(self, provider: IdentityProvider, claims: oidc.Claims) -> User:
+        assert claims.email is not None
+        user = User(
+            email=normalize_email(claims.email),
+            display_name=claims.name or claims.email.split("@")[0],
+            # 비밀번호가 없다. 로컬 로그인 경로는 `password_hash is None` 에서 막힌다.
+            password_hash=None,
+            status="active",
+        )
+        self._users.add(user)
+        await self._s.flush()
+        self._providers.link(provider.id, user.id, claims.subject)
+        self._audit.record(
+            action=audit.SSO_USER_PROVISIONED,
+            actor_id=user.id,
+            target_type="user",
+            target_id=user.id,
+            metadata={"provider": provider.name},
+        )
+        log.info("auth.sso_provisioned", user=str(user.id), provider=provider.name)
+        return user
+
+    async def _sync_groups(self, user: User, names: list[str]) -> None:
+        """IdP 가 준 그룹에 맞춘다. **뺀 것도 뺀다.**
+
+        더하기만 하면 권한 회수가 안 된다 — 팀을 옮긴 사람이 옛 팀 자료를
+        계속 본다. 손으로 만든 그룹(`source='local'`)은 건드리지 않는다.
+        """
+        wanted: set[UUID] = set()
+        for name in names:
+            group = await self._groups.get_by_name(name)
+            if group is None:
+                group = self._groups.add(UserGroup(name=name, source="idp"))
+                await self._s.flush()
+            elif group.source != "idp":
+                # 같은 이름의 로컬 그룹이 있으면 IdP 가 가져가지 않는다.
+                continue
+            wanted.add(group.id)
+            await self._groups.add_member(group.id, user.id)
+
+        current = await self._providers.idp_group_ids_for(user.id)
+        await self._providers.drop_members(user.id, sorted(current - wanted))
+
+    async def _require_provider(self, provider_id: UUID) -> IdentityProvider:
+        provider = await self._providers.get(provider_id)
+        if provider is None or not provider.is_enabled:
+            raise NotFoundError("그 IdP 를 찾을 수 없다.")
+        return provider
+
+    def _secret_box(self) -> SecretBox:
+        return SecretBox(
+            self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret"
+        )

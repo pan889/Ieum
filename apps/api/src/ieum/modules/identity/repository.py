@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CursorResult, Select, func, select, update
+from sqlalchemy import CursorResult, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page, PageRequest
@@ -17,10 +17,12 @@ from ieum.modules.identity.models import (
     ApiToken,
     AuditLog,
     GroupMember,
+    IdentityProvider,
     LoginAttempt,
     MFACredential,
     User,
     UserGroup,
+    UserIdentity,
     UserSession,
 )
 
@@ -119,6 +121,56 @@ class GroupRepository:
         member = GroupMember(group_id=group_id, user_id=user_id)
         self._s.add(member)
         return member
+
+
+class IdentityProviderRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get(self, provider_id: UUID) -> IdentityProvider | None:
+        return await self._s.get(IdentityProvider, provider_id)
+
+    async def enabled(self) -> list[IdentityProvider]:
+        stmt = (
+            select(IdentityProvider)
+            .where(IdentityProvider.is_enabled.is_(True))
+            .order_by(IdentityProvider.name)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    def add(self, provider: IdentityProvider) -> IdentityProvider:
+        self._s.add(provider)
+        return provider
+
+    async def identity(self, provider_id: UUID, subject: str) -> UserIdentity | None:
+        stmt = select(UserIdentity).where(
+            UserIdentity.provider_id == provider_id, UserIdentity.subject == subject
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
+    def link(self, provider_id: UUID, user_id: UUID, subject: str) -> UserIdentity:
+        row = UserIdentity(provider_id=provider_id, user_id=user_id, subject=subject)
+        self._s.add(row)
+        return row
+
+    async def idp_group_ids_for(self, user_id: UUID) -> set[UUID]:
+        """IdP 가 준 그룹만. 손으로 넣은 그룹은 동기화가 건드리면 안 된다."""
+        stmt = (
+            select(GroupMember.group_id)
+            .join(UserGroup, UserGroup.id == GroupMember.group_id)
+            .where(GroupMember.user_id == user_id)
+            .where(UserGroup.source == "idp")
+        )
+        return set((await self._s.execute(stmt)).scalars().all())
+
+    async def drop_members(self, user_id: UUID, group_ids: Sequence[UUID]) -> None:
+        if not group_ids:
+            return
+        await self._s.execute(
+            delete(GroupMember)
+            .where(GroupMember.user_id == user_id)
+            .where(GroupMember.group_id.in_(list(group_ids)))
+        )
 
 
 class SessionRepository:

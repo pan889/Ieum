@@ -171,3 +171,38 @@ class AuditLogResponse(BaseModel):
 class AuditPageResponse(BaseModel):
     items: list[AuditLogResponse]
     next_cursor: str | None = None
+
+
+class SsoProviderResponse(BaseModel):
+    """로그인 화면이 버튼을 그릴 만큼만. 시크릿도 엔드포인트도 안 나간다."""
+
+    id: UUID
+    name: str
+
+
+class SsoStartResponse(BaseModel):
+    #: 브라우저를 여기로 보낸다.
+    authorization_url: str
+
+
+class SsoCallbackRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+    state: str = Field(min_length=1, max_length=8192)
+
+
+class SsoProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    issuer: str = Field(min_length=1, max_length=512)
+    client_id: str = Field(min_length=1, max_length=512)
+    client_secret: str = Field(min_length=1, max_length=1024)
+    authorization_endpoint: str = Field(min_length=1, max_length=512)
+    token_endpoint: str = Field(min_length=1, max_length=512)
+    jwks_uri: str = Field(min_length=1, max_length=512)
+    scopes: str = Field(default="openid email profile", max_length=512)
+    email_claim: str = Field(default="email", max_length=64)
+    name_claim: str = Field(default="name", max_length=64)
+    groups_claim: str | None = Field(default=None, max_length=64)
+    jit_provisioning: bool = True
+    link_verified_email: bool = True
+    email_domains: list[str] = Field(default_factory=list)
+    trust_idp_mfa: bool = False

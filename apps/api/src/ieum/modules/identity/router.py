@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query, status
 from fastapi.responses import StreamingResponse
 
+from ieum.config import get_settings
 from ieum.core.deps import (
     AppSettings,
     ClientIp,
@@ -40,6 +41,9 @@ from ieum.modules.identity.schemas import (
     ProfileUpdateRequest,
     RefreshRequest,
     SessionResponse,
+    SsoCallbackRequest,
+    SsoProviderResponse,
+    SsoStartResponse,
     TokenResponse,
     TOTPEnrollResponse,
     UserPageResponse,
@@ -51,6 +55,7 @@ from ieum.modules.identity.service import (
     AuthService,
     IssuedTokens,
     MFAService,
+    SsoService,
     UserService,
 )
 
@@ -503,3 +508,46 @@ async def revoke_user_sessions(
         user_id=user_id, actor_id=actor.user_id
     )
     await session.commit()
+
+
+# ── SSO (OIDC) ─────────────────────────────────────────────────
+
+
+@auth_router.get("/sso/providers", response_model=list[SsoProviderResponse])
+async def list_sso_providers(session: DbSession) -> list[SsoProviderResponse]:
+    """로그인 **전에** 부른다. 인증을 걸면 SSO 버튼을 못 그린다.
+
+    이름과 id 만 준다. 익명에게 열린 목록이라 엔드포인트·클레임 설정까지
+    흘리면 조직의 IdP 구성이 통째로 드러난다.
+    """
+    rows = await SsoService(session, get_settings()).providers()
+    return [SsoProviderResponse(id=p.id, name=p.name) for p in rows]
+
+
+@auth_router.post("/sso/{provider_id}/start", response_model=SsoStartResponse)
+async def start_sso(
+    provider_id: UUID, session: DbSession, settings: AppSettings
+) -> SsoStartResponse:
+    """인가 URL 을 만든다. 전이 상태는 `state` 에 봉해 나간다.
+
+    콜백 주소는 **서버가 정한다.** 클라이언트가 고르게 하면 그 값을 자기
+    주소로 바꿔 인가 코드를 가져갈 수 있다.
+    """
+    url = await SsoService(session, settings).begin(provider_id)
+    return SsoStartResponse(authorization_url=url)
+
+
+@auth_router.post("/sso/callback", response_model=TokenResponse)
+async def complete_sso(
+    body: SsoCallbackRequest,
+    session: DbSession,
+    settings: AppSettings,
+    ip: ClientIp,
+    user_agent: UserAgent = None,
+) -> TokenResponse:
+    """IdP 가 돌려준 코드로 우리 세션을 연다."""
+    issued = await SsoService(session, settings).complete(
+        code=body.code, state=body.state, ip=ip, user_agent=user_agent
+    )
+    await session.commit()
+    return _tokens(issued)
