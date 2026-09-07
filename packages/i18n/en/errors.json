@@ -135,5 +135,14 @@
   "wiki.template_name_required": "Give the template a name.",
   "wiki.copy_into_descendant": "A page can't be copied into its own child.",
   "auth.mfa_enrollment_required": "Your organization requires two-factor authentication. Set it up to continue.",
-  "auth.step_up_requires_mfa": "This action needs two-factor authentication. Set it up first."
+  "auth.step_up_requires_mfa": "This action needs two-factor authentication. Set it up first.",
+  "auth.oidc_invalid_state": "That sign-in request couldn't be verified. Start again from the sign-in page.",
+  "auth.oidc_state_expired": "That sign-in request took too long. Start again.",
+  "auth.oidc_exchange_failed": "We couldn't finish signing you in with your identity provider.",
+  "auth.oidc_no_id_token": "Your identity provider didn't return an ID token.",
+  "auth.oidc_invalid_id_token": "We couldn't verify the response from your identity provider.",
+  "auth.oidc_nonce_mismatch": "That sign-in response doesn't match the request. Start again.",
+  "auth.sso_no_account": "You don't have an account here yet. Ask an administrator for an invite.",
+  "auth.sso_email_required": "Your identity provider didn't share a verified email address.",
+  "identity.invalid_email": "That isn't a valid email address."
 }

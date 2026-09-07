@@ -135,5 +135,14 @@
   "wiki.template_name_required": "템플릿 이름이 필요하다.",
   "wiki.copy_into_descendant": "자기 하위 문서 아래로 복사할 수 없다.",
   "auth.mfa_enrollment_required": "조직 정책에 따라 2단계 인증이 필요합니다. 먼저 등록해 주세요.",
-  "auth.step_up_requires_mfa": "이 작업에는 2단계 인증이 필요합니다. 먼저 등록해 주세요."
+  "auth.step_up_requires_mfa": "이 작업에는 2단계 인증이 필요합니다. 먼저 등록해 주세요.",
+  "auth.oidc_invalid_state": "로그인 요청을 확인할 수 없습니다. 로그인 화면에서 다시 시작해 주세요.",
+  "auth.oidc_state_expired": "로그인 요청이 만료됐습니다. 다시 시작해 주세요.",
+  "auth.oidc_exchange_failed": "IdP 와 로그인을 마치지 못했습니다.",
+  "auth.oidc_no_id_token": "IdP 가 ID 토큰을 주지 않았습니다.",
+  "auth.oidc_invalid_id_token": "IdP 의 응답을 확인할 수 없습니다.",
+  "auth.oidc_nonce_mismatch": "로그인 요청과 응답이 맞지 않습니다. 다시 시작해 주세요.",
+  "auth.sso_no_account": "아직 이 조직에 계정이 없습니다. 관리자에게 초대를 요청해 주세요.",
+  "auth.sso_email_required": "IdP 가 검증된 이메일 주소를 주지 않았습니다.",
+  "identity.invalid_email": "올바른 이메일 주소가 아닙니다."
 }

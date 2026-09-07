@@ -7,6 +7,7 @@ import { AcceptInviteScreen } from '@/features/auth/AcceptInviteScreen'
 import { LoginScreen } from '@/features/auth/LoginScreen'
 import { MfaEnrollScreen } from '@/features/auth/MfaEnrollScreen'
 import { MfaScreen } from '@/features/auth/MfaScreen'
+import { SsoCallbackScreen } from '@/features/auth/SsoCallbackScreen'
 import { stageFor } from '@/features/auth/stage'
 import { useAuthStore } from '@/features/auth/store'
 import { authApi } from '@/shared/api'
@@ -30,12 +31,15 @@ export function App() {
   // 초대 수락은 로그인 **전에** 여는 화면이다. 인증 단계와 무관하게 먼저
   // 가른다 — 라우터에 넣으면 로그인한 사람만 초대를 받을 수 있게 된다.
   const invited = window.location.pathname === '/invite'
+  // IdP 가 돌려보내는 자리도 로그인 **전에** 열려야 한다. 라우터에 넣으면
+  // 로그인하려는 사람이 도착할 곳이 없다.
+  const returning = window.location.pathname === '/auth/callback'
 
   const me = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: () => authApi.me(),
     retry: false,
-    enabled: !invited && (stage === 'unknown' || stage === 'authenticated'),
+    enabled: !invited && !returning && (stage === 'unknown' || stage === 'authenticated'),
   })
 
   useEffect(() => {
@@ -69,6 +73,8 @@ export function App() {
   }, [userLocale])
 
   if (invited) return <AcceptInviteScreen />
+  // 세션이 열리면 stage 가 바뀌므로 이 화면은 스스로 물러난다.
+  if (returning && stage !== 'authenticated') return <SsoCallbackScreen />
 
   switch (stage) {
     case 'unknown':

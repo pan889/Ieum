@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -14,6 +14,23 @@ export function LoginScreen() {
   const setStage = useAuthStore((s) => s.setStage)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+
+  // IdP 가 없는 설치가 대부분이다. 실패해도 화면은 로컬 로그인으로 서야 한다 —
+  // SSO 목록 하나 때문에 아무도 못 들어오면 안 된다.
+  const providers = useQuery({
+    queryKey: ['auth', 'sso-providers'],
+    queryFn: () => authApi.ssoProviders(),
+    retry: false,
+    staleTime: 300_000,
+  })
+
+  const startSso = useMutation({
+    mutationFn: (providerId: string) => authApi.startSso(providerId),
+    onSuccess: ({ authorization_url }) => {
+      // 브라우저를 IdP 로 보낸다. 돌아올 자리는 서버가 정해 뒀다.
+      window.location.assign(authorization_url)
+    },
+  })
 
   const login = useMutation({
     mutationFn: () => authApi.login(email, password),
@@ -62,6 +79,23 @@ export function LoginScreen() {
           {login.isPending ? t('auth:login.submitting') : t('auth:login.submit')}
         </Button>
       </form>
+
+      {(providers.data ?? []).length > 0 ? (
+        <div className="mt-6 flex flex-col gap-2">
+          <p className="text-center text-xs text-muted">{t('auth:sso.divider')}</p>
+          {startSso.isError ? <Alert>{describeError(startSso.error)}</Alert> : null}
+          {(providers.data ?? []).map((provider) => (
+            <Button
+              key={provider.id}
+              variant="secondary"
+              loading={startSso.isPending}
+              onClick={() => { startSso.mutate(provider.id) }}
+            >
+              {t('auth:sso.continueWith', { name: provider.name })}
+            </Button>
+          ))}
+        </div>
+      ) : null}
     </AuthLayout>
   )
 }

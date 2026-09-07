@@ -110,6 +110,14 @@ export function createAuthApi(client: ApiClient) {
     /** 기기 하나만 끊는다. 전부 끊으면 지금 쓰는 자리에서도 튕겨 나간다. */
     revokeSession: (id: string) => client.delete<void>(`${BASE}/sessions/${id}`),
 
+    /** 로그인 **전에** 부른다. 실패해도 화면은 로컬 로그인으로 서야 한다. */
+    ssoProviders: () => client.get<SsoProvider[]>(`${BASE}/sso/providers`),
+    /** 콜백 주소는 서버가 정한다 — 여기서 고르게 하면 코드가 새 나간다. */
+    startSso: (providerId: string) =>
+      client.post<{ authorization_url: string }>(`${BASE}/sso/${providerId}/start`),
+    completeSso: (code: string, state: string) =>
+      client.post<TokenResponse>(`${BASE}/sso/callback`, { code, state }),
+
     enrollTotp: () => client.post<TotpEnrollment>(`${BASE}/mfa/totp/enroll`),
     confirmTotp: (credentialId: string, code: string) =>
       client.post<void>(`${BASE}/mfa/totp/${credentialId}/confirm`, { code }),
@@ -120,3 +128,10 @@ export function createAuthApi(client: ApiClient) {
 }
 
 export type AuthApi = ReturnType<typeof createAuthApi>
+
+
+/** 로그인 화면이 버튼을 그릴 만큼만. 익명에게 열린 목록이다. */
+export interface SsoProvider {
+  id: string
+  name: string
+}

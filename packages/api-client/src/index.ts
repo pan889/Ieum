@@ -13,6 +13,7 @@ export {
   type AuthApi,
   type CurrentUser,
   type SessionInfo,
+  type SsoProvider,
   type TokenResponse,
   type TotpEnrollment,
   createUsersApi,
