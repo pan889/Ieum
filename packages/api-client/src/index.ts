@@ -15,6 +15,7 @@ export {
   type SessionInfo,
   type SsoProvider,
   type TokenResponse,
+  type MfaCredential,
   type TotpEnrollment,
   createUsersApi,
   type UserPage,

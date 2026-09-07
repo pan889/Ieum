@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 
 from ieum.config import get_settings
+from ieum.core.context import Actor
 from ieum.core.deps import (
     AppSettings,
     ClientIp,
@@ -20,7 +21,7 @@ from ieum.core.deps import (
     PermissionDep,
     UserAgent,
 )
-from ieum.core.exceptions import ValidationError
+from ieum.core.exceptions import AuthenticationError, ValidationError
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
 from ieum.core.permissions import Scope, get_permission_service
 from ieum.core.time import utcnow
@@ -40,6 +41,7 @@ from ieum.modules.identity.schemas import (
     IdpResponse,
     InviteRequest,
     LoginRequest,
+    MFACredentialResponse,
     MFAVerifyRequest,
     ProfileUpdateRequest,
     RefreshRequest,
@@ -55,6 +57,8 @@ from ieum.modules.identity.schemas import (
     TOTPEnrollResponse,
     UserPageResponse,
     UserResponse,
+    WebAuthnOptionsResponse,
+    WebAuthnResponseRequest,
 )
 from ieum.modules.identity.service import (
     ApiTokenService,
@@ -225,6 +229,106 @@ async def confirm_totp(
         # 강제 등록 흐름에서 이 세션을 바로 열어 준다. 방금 맞힌 코드가
         # 소지 증명인데 또 물으면 사람은 "안 되는구나" 로 읽는다.
         session_id=actor.session_id,
+    )
+    await session.commit()
+
+
+def _session_of(actor: Actor) -> UUID:
+    """인증기를 다루려면 **세션이 있어야 한다.**
+
+    챌린지는 세션에 적힌다 — 그것이 "이 브라우저가 지금 키를 만졌다" 를
+    보장하는 방식이다. API 토큰에는 세션이 없고, 있어도 인증기를 꽂을 브라우저가
+    없다. step-up 이 토큰을 거절하는 것과 같은 이유다.
+    """
+    if actor.session_id is None:
+        raise AuthenticationError(
+            "이 작업은 API 토큰으로 할 수 없다.", code="auth.step_up_not_available_for_token"
+        )
+    return actor.session_id
+
+
+@auth_router.post("/mfa/webauthn/register/start", response_model=WebAuthnOptionsResponse)
+async def start_webauthn_registration(
+    actor: PendingMfaActor, session: DbSession, settings: AppSettings
+) -> WebAuthnOptionsResponse:
+    """등록 옵션. 챌린지는 **이 세션에** 적힌다."""
+    options = await MFAService(session, settings).start_webauthn_registration(
+        user_id=actor.user_id,
+        session_id=_session_of(actor),
+        mfa_satisfied=actor.mfa_satisfied_at is not None,
+    )
+    await session.commit()
+    return WebAuthnOptionsResponse(options=options)
+
+
+@auth_router.post(
+    "/mfa/webauthn/register/finish",
+    response_model=MFACredentialResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def finish_webauthn_registration(
+    body: WebAuthnResponseRequest,
+    actor: PendingMfaActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> MFACredentialResponse:
+    """등록을 마친다. 방금 인증기를 만진 것이 소지 증명이므로 이 세션도 열린다."""
+    credential = await MFAService(session, settings).confirm_webauthn_registration(
+        user_id=actor.user_id,
+        session_id=_session_of(actor),
+        response_json=body.response,
+        mfa_satisfied=actor.mfa_satisfied_at is not None,
+        label=body.label,
+    )
+    await session.commit()
+    return MFACredentialResponse.model_validate(credential)
+
+
+@auth_router.post("/mfa/webauthn/verify/start", response_model=WebAuthnOptionsResponse)
+async def start_webauthn_authentication(
+    actor: PendingMfaActor, session: DbSession, settings: AppSettings
+) -> WebAuthnOptionsResponse:
+    options = await MFAService(session, settings).start_webauthn_authentication(
+        user_id=actor.user_id, session_id=_session_of(actor)
+    )
+    await session.commit()
+    return WebAuthnOptionsResponse(options=options)
+
+
+@auth_router.post("/mfa/webauthn/verify/finish", status_code=status.HTTP_204_NO_CONTENT)
+async def finish_webauthn_authentication(
+    body: WebAuthnResponseRequest,
+    actor: PendingMfaActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> None:
+    await MFAService(session, settings).verify_webauthn(
+        user_id=actor.user_id, session_id=_session_of(actor), response_json=body.response
+    )
+    await session.commit()
+
+
+@auth_router.get("/mfa/credentials", response_model=list[MFACredentialResponse])
+async def list_mfa_credentials(
+    actor: PendingMfaActor, session: DbSession, settings: AppSettings
+) -> list[MFACredentialResponse]:
+    """내가 등록한 2차 요소. 미완료 세션도 볼 수 있어야 한다 — 무엇으로
+    인증할 수 있는지 모르면 확인 화면이 무엇을 보여줄지 정할 수 없다."""
+    rows = await MFAService(session, settings).list_credentials(user_id=actor.user_id)
+    return [MFACredentialResponse.model_validate(c) for c in rows]
+
+
+@auth_router.delete("/mfa/credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_mfa_credential(
+    credential_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+) -> None:
+    """인증기를 뗀다. **MFA 를 통과한 세션만** — 비밀번호만 아는 공격자가
+    남의 인증기를 떼면 그것이 곧 2차 요소 해제다."""
+    await MFAService(session, settings).remove_credential(
+        user_id=actor.user_id, credential_id=credential_id
     )
     await session.commit()
 

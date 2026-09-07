@@ -52,7 +52,7 @@ from ieum.core.permissions import (
     registry,
 )
 from ieum.core.time import in_seconds, utcnow
-from ieum.modules.identity import audit, oidc, saml
+from ieum.modules.identity import audit, oidc, saml, webauthn
 from ieum.modules.identity import events as identity_events
 from ieum.modules.identity import permissions as perms
 from ieum.modules.identity.models import (
@@ -528,7 +528,7 @@ class MFAService:
         if not mfa_satisfied and await self._mfa.has_any_confirmed(user_id):
             raise MFARequiredError("이미 등록된 2FA 가 있다. 먼저 인증해야 한다.")
 
-        totp = pyotp.TOTP(self._box.decrypt(credential.secret_enc))
+        totp = pyotp.TOTP(self._secret_of(credential))
         matched = self._matching_timestep(totp, code)
         if matched is None:
             raise ValidationError("확인 코드가 올바르지 않다.", code="auth.mfa_invalid_code")
@@ -582,6 +582,218 @@ class MFAService:
         )
         raise ValidationError("인증 코드가 올바르지 않다.", code="auth.mfa_invalid_code")
 
+    # ── WebAuthn / 패스키 ───────────────────────────────────────
+
+    def _rp(self) -> webauthn.RelyingParty:
+        return webauthn.relying_party(self._settings.base_url, tuple(self._settings.cors_origins))
+
+    async def start_webauthn_registration(
+        self, *, user_id: UUID, session_id: UUID, mfa_satisfied: bool
+    ) -> str:
+        """등록 옵션(JSON). 챌린지는 **이 세션에** 적어 둔다.
+
+        TOTP 와 같은 이유로 미완료 세션에도 열어 둔다: 아직 2FA 가 없는
+        사용자의 강제 등록 흐름이 그 길로 지나간다. 이미 있는 사용자에게까지
+        열면 비밀번호만 아는 공격자가 자기 인증기를 새로 등록해 2차 요소를
+        그대로 우회한다.
+        """
+        user = await self._users.get(user_id)
+        if user is None:
+            raise NotFoundError("사용자를 찾을 수 없다.")
+        if not mfa_satisfied and await self._mfa.has_any_confirmed(user_id):
+            raise MFARequiredError(
+                "이미 등록된 2FA 가 있다. 먼저 인증해야 새 인증기를 등록할 수 있다."
+            )
+
+        existing = await self._mfa.confirmed_webauthn_for(user_id)
+        challenge = webauthn.registration_challenge(
+            rp=self._rp(),
+            user_id=user.id.bytes,
+            user_name=user.email,
+            display_name=user.display_name,
+            already_registered=tuple(
+                c.webauthn_credential_id for c in existing if c.webauthn_credential_id
+            ),
+        )
+        await self._remember_challenge(session_id, challenge.challenge)
+        return challenge.options_json
+
+    async def confirm_webauthn_registration(
+        self,
+        *,
+        user_id: UUID,
+        session_id: UUID,
+        response_json: str,
+        mfa_satisfied: bool,
+        label: str | None = None,
+    ) -> MFACredential:
+        """등록을 마친다. 통과하면 이 세션도 함께 열린다.
+
+        방금 인증기를 만진 것이 곧 소지 증명이다. 세션을 열어 주지 않으면
+        등록을 마치자마자 같은 인증기를 또 만지라고 하고, 등록 직후의 백업
+        코드 발급(MFA 통과 세션 전용)이 403 으로 죽는다 — 폰을 잃었을 때의
+        유일한 복구 수단이 사라진다. TOTP 확인과 같은 판단이다.
+        """
+        if not mfa_satisfied and await self._mfa.has_any_confirmed(user_id):
+            raise MFARequiredError("이미 등록된 2FA 가 있다. 먼저 인증해야 한다.")
+
+        challenge = await self._take_challenge(session_id)
+        registered = webauthn.verify_registration(
+            response_json=response_json, rp=self._rp(), challenge=challenge
+        )
+
+        # 같은 자격증명이 두 계정에 붙으면, 하나로 다른 계정에 들어갈 수 있다.
+        taken = await self._mfa.by_webauthn_credential_id(registered.credential_id)
+        if taken is not None:
+            raise ConflictError("이미 등록된 인증기다.", code="auth.webauthn_already_registered")
+
+        now = utcnow()
+        credential = MFACredential(
+            user_id=user_id,
+            kind="webauthn",
+            secret_enc=None,
+            # **서버가 이름을 지어내지 않는다.** 사람이 준 이름이 없으면 비워
+            # 둔다 — 여기서 한국어를 넣으면 영어 화면에 한국어가 섞이고, 서버가
+            # 화면의 언어를 알 방법은 없다(i18n.md: 서버는 코드를 낸다).
+            # 이름 없는 자격증명은 화면이 종류로 부른다.
+            label=label,
+            webauthn_credential_id=registered.credential_id,
+            webauthn_public_key=registered.public_key,
+            webauthn_sign_count=registered.sign_count,
+            webauthn_transports=registered.transports,
+            webauthn_backed_up=registered.backed_up,
+            confirmed_at=now,
+            last_used_at=now,
+        )
+        self._mfa.add(credential)
+        await self._s.flush()
+
+        await self._satisfy(session_id, now)
+        self._audit.record(
+            action=audit.MFA_ENROLLED,
+            actor_id=user_id,
+            target_type="mfa_credential",
+            target_id=credential.id,
+            metadata={"kind": "webauthn", "backed_up": registered.backed_up},
+        )
+        return credential
+
+    async def start_webauthn_authentication(self, *, user_id: UUID, session_id: UUID) -> str:
+        """인증 옵션(JSON). 이 사람이 가진 자격증명만 후보로 준다."""
+        credentials = await self._mfa.confirmed_webauthn_for(user_id)
+        if not credentials:
+            raise NotFoundError("등록된 인증기가 없다.")
+        challenge = webauthn.authentication_challenge(
+            rp=self._rp(),
+            credential_ids=tuple(
+                c.webauthn_credential_id for c in credentials if c.webauthn_credential_id
+            ),
+        )
+        await self._remember_challenge(session_id, challenge.challenge)
+        return challenge.options_json
+
+    async def verify_webauthn(self, *, user_id: UUID, session_id: UUID, response_json: str) -> None:
+        """인증기 응답으로 2차 요소를 통과시킨다."""
+        challenge = await self._take_challenge(session_id)
+        credential_id = webauthn.credential_id_of(response_json)
+        credential = await self._mfa.by_webauthn_credential_id(credential_id)
+        # **남의 자격증명으로는 안 된다.** 서명이 맞아도 이 세션의 사람이
+        # 아니면 거절한다 — 안 보면 등록된 아무 키로 남의 세션을 열 수 있다.
+        if (
+            credential is None
+            or credential.user_id != user_id
+            or credential.confirmed_at is None
+            or credential.webauthn_public_key is None
+        ):
+            raise AuthenticationError(
+                "그 인증기를 쓸 수 없다.", code="auth.webauthn_unknown_credential"
+            )
+
+        result = webauthn.verify_authentication(
+            response_json=response_json,
+            rp=self._rp(),
+            challenge=challenge,
+            public_key=credential.webauthn_public_key,
+            current_sign_count=credential.webauthn_sign_count,
+        )
+
+        now = utcnow()
+        credential.webauthn_sign_count = result.new_sign_count
+        credential.last_used_at = now
+        await self._satisfy(session_id, now)
+        self._audit.record(
+            action=audit.MFA_VERIFIED,
+            actor_id=user_id,
+            target_type="mfa_credential",
+            target_id=credential.id,
+            metadata={"kind": "webauthn"},
+        )
+
+    async def list_credentials(self, *, user_id: UUID) -> list[MFACredential]:
+        """등록된 2차 요소. 백업 코드는 빼고 준다 — 그건 개수만 의미가 있고,
+        열 개를 목록에 늘어놓으면 인증기가 무엇인지 안 보인다."""
+        return await self._mfa.list_for(user_id)
+
+    async def remove_credential(self, *, user_id: UUID, credential_id: UUID) -> None:
+        """인증기를 뗀다.
+
+        **마지막 하나는 조건이 붙는다.** 조직이나 역할이 2FA 를 강제하는데
+        전부 떼어 버리면 그 사람은 다음 로그인에서 강제 등록 화면으로 떨어진다 —
+        막지는 않는다(등록할 길이 있으므로 잠기지 않는다). 대신 감사에 남긴다.
+        """
+        credential = await self._mfa.get(credential_id)
+        if credential is None or credential.user_id != user_id:
+            # 남의 것인지 없는 것인지 구분해 주지 않는다.
+            raise NotFoundError("그 자격증명을 찾을 수 없다.")
+        if credential.kind == "backup_code":
+            raise ValidationError(
+                "백업 코드는 개별로 뗄 수 없다. 재발급하면 전량 교체된다.",
+                code="auth.mfa_backup_code_not_removable",
+            )
+
+        await self._s.delete(credential)
+        self._audit.record(
+            action=audit.MFA_REMOVED,
+            actor_id=user_id,
+            target_type="mfa_credential",
+            target_id=credential_id,
+            metadata={"kind": credential.kind, "label": credential.label},
+        )
+
+    async def _remember_challenge(self, session_id: UUID, challenge: str) -> None:
+        row = await self._sessions.get(session_id)
+        if row is None or row.revoked_at is not None:
+            raise AuthenticationError("세션이 유효하지 않다.")
+        row.webauthn_challenge = challenge
+        row.webauthn_challenge_expires_at = in_seconds(webauthn.CHALLENGE_TTL_SECONDS)
+
+    async def _take_challenge(self, session_id: UUID) -> str:
+        """챌린지를 꺼내고 **지운다.** 1회용이다 — 남겨 두면 같은 서명을 두
+        번 쓸 수 있고, 그게 곧 재생 공격이다."""
+        row = await self._sessions.get(session_id)
+        if row is None or row.revoked_at is not None:
+            raise AuthenticationError("세션이 유효하지 않다.")
+        challenge = row.webauthn_challenge
+        expires_at = row.webauthn_challenge_expires_at
+        row.webauthn_challenge = None
+        row.webauthn_challenge_expires_at = None
+        if challenge is None or expires_at is None:
+            raise AuthenticationError(
+                "먼저 인증을 시작해야 한다.", code="auth.webauthn_no_challenge"
+            )
+        if expires_at <= utcnow():
+            raise AuthenticationError(
+                "시간이 지났다. 다시 시도해 달라.", code="auth.webauthn_challenge_expired"
+            )
+        return challenge
+
+    async def _satisfy(self, session_id: UUID, when: datetime) -> None:
+        """이 세션이 2차 요소를 통과했다고 적는다. TOTP 와 같은 자리다."""
+        row = await self._sessions.get(session_id)
+        if row is not None and row.revoked_at is None:
+            row.mfa_satisfied_at = when
+            row.mfa_verified = True
+
     async def issue_backup_codes(self, *, user_id: UUID, mfa_satisfied: bool) -> list[str]:
         """10개를 발급한다. 재발급하면 기존 코드는 전량 무효화된다.
 
@@ -615,9 +827,7 @@ class MFAService:
         if credential is None:
             return False
 
-        matched = self._matching_timestep(
-            pyotp.TOTP(self._box.decrypt(credential.secret_enc)), code
-        )
+        matched = self._matching_timestep(pyotp.TOTP(self._secret_of(credential)), code)
         if matched is None:
             return False
 
@@ -630,6 +840,16 @@ class MFAService:
         credential.last_timestep = matched
         credential.last_used_at = utcnow()
         return True
+
+    def _secret_of(self, credential: MFACredential) -> str:
+        """비밀을 꺼낸다. **WebAuthn 자격증명에는 없다.**
+
+        DB 의 CHECK 가 종류별로 요구하지만 여기서도 본다 — 없는 것을 있다고
+        가정하고 지나가면 그 뒤에 무슨 일이 벌어지는지가 읽히지 않는다.
+        """
+        if credential.secret_enc is None:
+            raise NotFoundError("이 자격증명에는 비밀이 없다.")
+        return self._box.decrypt(credential.secret_enc)
 
     @staticmethod
     def _matching_timestep(totp: pyotp.TOTP, code: str) -> int | None:
@@ -644,6 +864,8 @@ class MFAService:
     async def _consume_backup_code(self, user_id: UUID, code: str) -> bool:
         candidate = hash_token(code.strip().upper())
         for stored in await self._mfa.unused_backup_codes_for(user_id):
+            if stored.secret_enc is None:
+                continue
             if constant_time_equals(stored.secret_enc, candidate):
                 stored.used_at = utcnow()
                 stored.last_used_at = stored.used_at

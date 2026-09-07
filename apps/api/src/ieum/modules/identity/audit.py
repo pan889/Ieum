@@ -33,6 +33,7 @@ SESSION_REVOKED_ALL = "auth.session.revoked_all"
 # ── 2FA ─────────────────────────────────────────────────────────
 MFA_ENROLLED = "auth.mfa.enrolled"
 MFA_VERIFIED = "auth.mfa.verified"
+MFA_REMOVED = "auth.mfa.removed"
 MFA_FAILED = "auth.mfa.failed"
 MFA_BACKUP_CODES_ISSUED = "auth.mfa.backup_codes_issued"
 
@@ -69,6 +70,7 @@ ACTIONS = (
     SESSION_REVOKED,
     SESSION_REVOKED_ALL,
     MFA_ENROLLED,
+    MFA_REMOVED,
     MFA_VERIFIED,
     MFA_FAILED,
     MFA_BACKUP_CODES_ISSUED,
@@ -184,6 +186,7 @@ __all__ = [
     "MFA_BACKUP_CODES_ISSUED",
     "MFA_ENROLLED",
     "MFA_FAILED",
+    "MFA_REMOVED",
     "MFA_VERIFIED",
     "REFRESH_REUSE_DETECTED",
     "SECURITY_MFA_POLICY_CHANGED",

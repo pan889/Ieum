@@ -23,6 +23,18 @@ export interface CurrentUser {
   last_login_at: string | null
 }
 
+/** 등록된 2차 요소 하나. **비밀은 여기에 없다.** */
+export interface MfaCredential {
+  id: string
+  kind: string
+  label: string | null
+  confirmed_at: string | null
+  last_used_at: string | null
+  /** 다른 기기로 동기화되는가(=패스키). 잃었을 때 결과가 다르다. */
+  webauthn_backed_up: boolean
+  webauthn_transports: string[]
+}
+
 export interface TotpEnrollment {
   credential_id: string
   secret: string
@@ -166,6 +178,24 @@ export function createAuthApi(client: ApiClient) {
       })
       return tokens
     },
+
+    /** 등록된 2차 요소. 백업 코드는 나오지 않는다(개수만 의미가 있다). */
+    mfaCredentials: () => client.get<MfaCredential[]>(`${BASE}/mfa/credentials`),
+    removeMfaCredential: (id: string) => client.delete<void>(`${BASE}/mfa/credentials/${id}`),
+
+    /** 인증기 등록: 옵션을 받아 브라우저에 넘기고, 응답을 되돌려 준다. */
+    startPasskeyRegistration: () =>
+      client.post<{ options: string }>(`${BASE}/mfa/webauthn/register/start`),
+    finishPasskeyRegistration: (response: string, label?: string) =>
+      client.post<MfaCredential>(`${BASE}/mfa/webauthn/register/finish`, {
+        response,
+        ...(label ? { label } : {}),
+      }),
+
+    startPasskeyVerification: () =>
+      client.post<{ options: string }>(`${BASE}/mfa/webauthn/verify/start`),
+    finishPasskeyVerification: (response: string) =>
+      client.post<void>(`${BASE}/mfa/webauthn/verify/finish`, { response }),
 
     enrollTotp: () => client.post<TotpEnrollment>(`${BASE}/mfa/totp/enroll`),
     confirmTotp: (credentialId: string, code: string) =>

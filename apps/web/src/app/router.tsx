@@ -18,6 +18,7 @@ import { NotificationsScreen } from '@/features/notifications/NotificationsScree
 import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
 import { AuditLogScreen } from '@/features/settings/AuditLogScreen'
 import { SecurityScreen } from '@/features/settings/SecurityScreen'
+import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
 import { SsoScreen } from '@/features/settings/SsoScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
@@ -104,6 +105,12 @@ const securityRoute = createRoute({
   component: SecurityScreen,
 })
 
+const passkeysRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/passkeys',
+  component: PasskeysScreen,
+})
+
 const ssoRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/sso',
@@ -172,6 +179,7 @@ const routeTree = rootRoute.addChildren([
   sessionsRoute,
   auditRoute,
   securityRoute,
+  passkeysRoute,
   ssoRoute,
   searchRoute,
   wikiRoute,

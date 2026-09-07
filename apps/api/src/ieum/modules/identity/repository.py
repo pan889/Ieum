@@ -334,6 +334,34 @@ class MFARepository:
         )
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
+    async def list_for(self, user_id: UUID) -> list[MFACredential]:
+        """화면에 보여 줄 자격증명. 백업 코드는 빼고 준다."""
+        stmt = (
+            select(MFACredential)
+            .where(MFACredential.user_id == user_id)
+            .where(MFACredential.kind != "backup_code")
+            .order_by(MFACredential.created_at)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def confirmed_webauthn_for(self, user_id: UUID) -> list[MFACredential]:
+        """확인된 인증기 전부. **여러 개를 쓰는 것이 정상이다** — 노트북과
+        폰과 보안 키. 하나만 다루면 기기를 잃은 사람이 잠긴다."""
+        stmt = (
+            select(MFACredential)
+            .where(MFACredential.user_id == user_id)
+            .where(MFACredential.kind == "webauthn")
+            .where(MFACredential.confirmed_at.is_not(None))
+            .order_by(MFACredential.created_at)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def by_webauthn_credential_id(self, credential_id: str) -> MFACredential | None:
+        """자격증명 ID 로 찾는다. **사용자를 묶지 않는다** — 그 ID 는 전역
+        유일이고, 어느 계정에 붙어 있는지가 곧 답이다."""
+        stmt = select(MFACredential).where(MFACredential.webauthn_credential_id == credential_id)
+        return (await self._s.execute(stmt)).scalar_one_or_none()
+
     async def unused_backup_codes_for(self, user_id: UUID) -> list[MFACredential]:
         stmt = (
             select(MFACredential)

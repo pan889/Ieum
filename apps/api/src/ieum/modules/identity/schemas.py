@@ -173,6 +173,39 @@ class AuditPageResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class WebAuthnOptionsResponse(BaseModel):
+    """브라우저의 `navigator.credentials` 에 그대로 넘길 옵션.
+
+    JSON 문자열로 낸다. 라이브러리가 만든 것을 우리가 다시 모델로 옮기면
+    규격이 바뀔 때마다 두 곳을 고쳐야 하고, 한쪽만 고치면 조용히 어긋난다.
+    """
+
+    options: str
+
+
+class WebAuthnResponseRequest(BaseModel):
+    """인증기가 만든 응답. 브라우저가 직렬화한 것을 그대로 받는다."""
+
+    response: str = Field(min_length=1, max_length=100_000)
+    #: 사람이 기기를 알아볼 이름. 없으면 서버가 짓는다.
+    label: str | None = Field(default=None, max_length=200)
+
+
+class MFACredentialResponse(BaseModel):
+    """등록된 2차 요소 하나. **비밀은 나가지 않는다.**"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    kind: str
+    label: str | None
+    confirmed_at: datetime | None
+    last_used_at: datetime | None
+    #: 다른 기기로 동기화되는가(=패스키). 잃었을 때 결과가 다르다.
+    webauthn_backed_up: bool
+    webauthn_transports: list[str]
+
+
 class SsoProviderResponse(BaseModel):
     """로그인 화면이 버튼을 그릴 만큼만. 시크릿도 엔드포인트도 안 나간다."""
 

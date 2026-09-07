@@ -179,6 +179,16 @@ async function freshCode(page: Page): Promise<string> {
   }
 }
 
+/**
+ * 앱의 정본 주소.
+ *
+ * WebAuthn 자격증명은 **호스트에 묶인다**(rp_id). 서버는 `IEUM_BASE_URL` 의
+ * 호스트를 rp_id 로 쓰므로, 패스키를 다루는 스펙은 그 주소로 열어야 한다 —
+ * `127.0.0.1` 로 열면 `localhost` 에 등록한 키가 아예 보이지 않는다. 나머지
+ * 스펙은 어느 쪽이든 상관없어서 기본 baseURL 을 건드리지 않는다.
+ */
+export const APP_URL = process.env['E2E_APP_URL'] ?? 'http://localhost:5173'
+
 /** 서버의 step-up 창은 5분이다. 그 안쪽으로 넉넉히 잡아 다시 쓴다. */
 const STEP_UP_REUSE_MS = 4 * 60_000
 let cached: { token: string; at: number } | null = null

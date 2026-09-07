@@ -115,6 +115,15 @@ class UserSession(Entity):
     mfa_verified: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    #: WebAuthn 챌린지. **이 세션에 발급한 것만 이 세션이 쓴다.**
+    #:
+    #: 챌린지를 어디 두느냐가 곧 그 챌린지가 누구 것이냐를 정한다. 세션 밖에
+    #: 두면(예: 사용자별) 한 창에서 받은 챌린지를 다른 창이 소진할 수 있고,
+    #: 그러면 "이 브라우저가 지금 키를 만졌다" 는 보장이 사라진다.
+    webauthn_challenge: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    webauthn_challenge_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_session_user_id", "user_id"),
@@ -129,12 +138,19 @@ class UserSession(Entity):
 
 
 class MFACredential(Entity):
+    """2차 요소 하나. 종류마다 쓰는 칼럼이 갈린다 (auth.md 3절).
+
+    TOTP·백업 코드는 **비밀**을 들고 있고(암호화·해시), WebAuthn 은 **공개키**를
+    들고 있다 — 공개키는 비밀이 아니므로 `secret_enc` 에 밀어 넣지 않는다.
+    이름이 거짓이 되면, 다음 사람이 그 칼럼을 비밀처럼 다루거나 그 반대가 된다.
+    """
+
     __tablename__ = "mfa_credential"
 
     user_id: Mapped[UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    #: TOTP 시크릿은 AES-GCM 으로, 백업 코드는 해시로 들어간다.
-    secret_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    #: TOTP 시크릿은 AES-GCM 으로, 백업 코드는 해시로 들어간다. WebAuthn 은 비운다.
+    secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     #: 확인 코드 입력에 성공하기 전까지 활성화하지 않는다 (auth.md 3절)
@@ -145,9 +161,44 @@ class MFACredential(Entity):
     #: 백업 코드는 1회용이다.
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # ── WebAuthn 전용 ────────────────────────────────────────────
+    #: 인증기가 준 자격증명 ID(base64url). 인증할 때 이것으로 찾는다.
+    #: **전역 유일**이다 — 같은 자격증명이 두 계정에 붙으면, 하나로 다른
+    #: 계정에 들어갈 수 있다.
+    webauthn_credential_id: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, unique=True
+    )
+    #: COSE 공개키(base64url). 서명 검증에 쓴다.
+    webauthn_public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 인증기의 서명 카운터. **되돌아가면 복제를 의심한다** — 0 을 계속 주는
+    #: 인증기도 있어서(패스키), 0 은 검사에서 빼고 늘어난 값만 본다.
+    webauthn_sign_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    #: 인증기가 알려 준 전송 방식(usb/nfc/ble/internal/hybrid). 화면 표시용.
+    webauthn_transports: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    #: 다른 기기로 동기화되는 자격증명인가(=패스키). 사람에게 보여 준다 —
+    #: "이 기기에만 있는 키" 와 "계정에 딸린 키" 는 잃었을 때 결과가 다르다.
+    webauthn_backed_up: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
     __table_args__ = (
         CheckConstraint(kind.in_(MFA_KINDS), name="mfa_credential_kind"),
         Index("ix_mfa_credential_user_id_kind", "user_id", "kind"),
+        # 종류별로 있어야 하는 것. 반쯤 채운 행은 **누가 인증하려는 순간**
+        # 드러난다 — 그때는 로그인이 안 되는 이유를 알 수 없다.
+        CheckConstraint(
+            "(kind = 'webauthn') OR (secret_enc IS NOT NULL)",
+            name="mfa_credential_secret_required",
+        ),
+        CheckConstraint(
+            "(kind <> 'webauthn') OR ("
+            "webauthn_credential_id IS NOT NULL AND webauthn_public_key IS NOT NULL)",
+            name="mfa_credential_webauthn_required",
+        ),
     )
 
 

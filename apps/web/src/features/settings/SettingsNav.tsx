@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 const TABS = [
   { to: '/settings/tokens', labelKey: 'auth:tokens.title' },
   { to: '/settings/sessions', labelKey: 'auth:sessions.title' },
+  { to: '/settings/passkeys', labelKey: 'auth:passkeys.title' },
   { to: '/settings/audit', labelKey: 'admin:audit.title' },
   { to: '/settings/security', labelKey: 'admin:security.title' },
   { to: '/settings/sso', labelKey: 'admin:sso.title' },

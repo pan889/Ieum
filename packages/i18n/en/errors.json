@@ -163,5 +163,12 @@
   "identity.saml_certificate_required": "A signing certificate is required.",
   "identity.saml_sp_key_required": "Requiring encrypted assertions needs an SP private key.",
   "identity.saml_issuer_mismatch": "That metadata is for a different issuer. Register it as a separate provider.",
-  "identity.saml_nothing_to_update": "Nothing to change."
+  "identity.saml_nothing_to_update": "Nothing to change.",
+  "auth.mfa_backup_code_not_removable": "Backup codes can't be removed one at a time. Reissuing replaces them all.",
+  "auth.webauthn_already_registered": "That authenticator is already registered.",
+  "auth.webauthn_challenge_expired": "That took too long. Please try again.",
+  "auth.webauthn_invalid_assertion": "We couldn't verify your authenticator.",
+  "auth.webauthn_invalid_registration": "We couldn't register that authenticator.",
+  "auth.webauthn_no_challenge": "Start again — that request has no challenge.",
+  "auth.webauthn_unknown_credential": "That authenticator isn't registered on this account."
 }

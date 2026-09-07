@@ -163,5 +163,12 @@
   "identity.saml_certificate_required": "서명 인증서가 필요합니다.",
   "identity.saml_sp_key_required": "어설션 암호화를 요구하려면 SP 비밀키가 필요합니다.",
   "identity.saml_issuer_mismatch": "다른 발급자의 메타데이터입니다. 별도 IdP 로 등록해 주세요.",
-  "identity.saml_nothing_to_update": "바꿀 것이 없습니다."
+  "identity.saml_nothing_to_update": "바꿀 것이 없습니다.",
+  "auth.mfa_backup_code_not_removable": "백업 코드는 하나씩 제거할 수 없습니다. 재발급하면 전량 교체됩니다.",
+  "auth.webauthn_already_registered": "이미 등록된 인증기입니다.",
+  "auth.webauthn_challenge_expired": "시간이 지났습니다. 다시 시도해 주세요.",
+  "auth.webauthn_invalid_assertion": "인증기 응답을 확인할 수 없습니다.",
+  "auth.webauthn_invalid_registration": "인증기를 등록할 수 없습니다.",
+  "auth.webauthn_no_challenge": "처음부터 다시 시도해 주세요.",
+  "auth.webauthn_unknown_credential": "이 계정에 등록된 인증기가 아닙니다."
 }
