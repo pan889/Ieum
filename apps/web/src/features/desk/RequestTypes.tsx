@@ -36,6 +36,8 @@ interface Draft {
   name: string
   issue_type_id: string
   description: string
+  /** 고객이 제목을 적는 동안 추천할 지식베이스 스페이스 (C8). 빈 문자열이면 안 건다. */
+  kb_space_id: string
   fields: (FormFieldSpec & { mapsTo: string })[]
 }
 
@@ -44,6 +46,7 @@ function emptyDraft(): Draft {
     name: '',
     issue_type_id: '',
     description: '',
+    kb_space_id: '',
     // 요약은 서버가 요구한다. 없으면 저장이 거절되므로 처음부터 넣어 둔다 —
     // "왜 저장이 안 되나" 를 겪게 할 이유가 없다.
     fields: [
@@ -67,6 +70,10 @@ export function RequestTypes({
   const types = useQuery({
     queryKey: ['portals', portal.id, 'request-types'],
     queryFn: () => deskApi.listRequestTypes(portal.id),
+  })
+  const kbSpaces = useQuery({
+    queryKey: ['desk', 'kb-spaces'],
+    queryFn: () => deskApi.listKbSpaces(),
   })
   const issueTypes = useQuery({
     queryKey: ['issues', 'types', portal.project_id],
@@ -93,6 +100,18 @@ export function RequestTypes({
     return true
   })
 
+  const linkKb = useMutation({
+    mutationFn: ({ id, spaceId }: { id: string; spaceId: string }) =>
+      // **빈 값은 "끊는다" 로 보낸다.** 서버에서 `null` 은 "안 건드린다" 다.
+      deskApi.updateRequestType(
+        id,
+        spaceId ? { kb_space_id: spaceId } : { clear_kb_space: true },
+      ),
+    onSuccess: async () => {
+      await types.refetch()
+    },
+  })
+
   const create = useMutation({
     mutationFn: () =>
       deskApi.createRequestType(portal.id, {
@@ -111,6 +130,8 @@ export function RequestTypes({
             .filter((field) => !RESERVED.includes(field.key) && field.mapsTo)
             .map((field) => [field.key, field.mapsTo]),
         ),
+        // 빈 값을 보내지 않는다. 서버는 `null` 을 "안 건드린다" 로 읽는다.
+        ...(draft.kb_space_id ? { kb_space_id: draft.kb_space_id } : {}),
       }),
     onSuccess: async () => {
       setAdding(false)
@@ -151,6 +172,7 @@ export function RequestTypes({
       {types.isError ? <Alert>{describeError(types.error)}</Alert> : null}
       {create.isError ? <Alert>{describeError(create.error)}</Alert> : null}
       {toggle.isError ? <Alert>{describeError(toggle.error)}</Alert> : null}
+      {linkKb.isError ? <Alert>{describeError(linkKb.error)}</Alert> : null}
 
       {adding ? (
         <Card>
@@ -179,6 +201,21 @@ export function RequestTypes({
                 {(issueTypes.data ?? []).map((type) => (
                   <option key={type.id} value={type.id}>
                     {type.name}
+                  </option>
+                ))}
+              </Select>
+              {/* 지식베이스 (C8). **`kb` 스페이스만 목록에 온다** — 서버가
+                  나머지를 거절하므로 화면에 고를 수 있는 것만 보여야 한다. */}
+              <Select
+                label={t('desk:requestTypes.kbSpace')}
+                hint={t('desk:requestTypes.kbSpaceHint')}
+                value={draft.kb_space_id}
+                onChange={(event) => { setDraft({ ...draft, kb_space_id: event.target.value }) }}
+              >
+                <option value="">{t('desk:requestTypes.noKbSpace')}</option>
+                {(kbSpaces.data ?? []).map((space) => (
+                  <option key={space.id} value={space.id}>
+                    {space.key} · {space.name}
                   </option>
                 ))}
               </Select>
@@ -314,6 +351,28 @@ export function RequestTypes({
             <span className="text-xs text-muted">
               {t('desk:requestTypes.ticketCount', { count: row.ticket_count })}
             </span>
+            {/* **줄에서 바로 고친다.** 만들 때만 걸 수 있게 두면, 폼을 먼저
+                만들고 나중에 문서를 쓴 관리자는(그게 보통 순서다) 이 기능에
+                영영 닿지 못한다. 요청 유형에 편집 폼이 없어서 이 한 칸만
+                따로 낸다 — 폼 전체를 고치는 것은 다른 이야기다(유형을 갈아
+                끼우면 매핑이 무의미해진다). */}
+            <label className="flex items-center gap-1 text-xs text-muted">
+              {t('desk:requestTypes.kbSpace')}
+              <select
+                className="rounded border border-border bg-surface px-1 py-0.5 text-xs"
+                value={row.kb_space_id ?? ''}
+                onChange={(event) => {
+                  linkKb.mutate({ id: row.id, spaceId: event.target.value })
+                }}
+              >
+                <option value="">{t('desk:requestTypes.noKbSpace')}</option>
+                {(kbSpaces.data ?? []).map((space) => (
+                  <option key={space.id} value={space.id}>
+                    {space.key} · {space.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Button
               className="ml-auto text-xs"
               variant="ghost"

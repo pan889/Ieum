@@ -81,6 +81,8 @@
   "desk.invalid_form_key": "Field keys start with a lowercase letter and use only lowercase letters, numbers and underscores.",
   "desk.invalid_slug": "Use lowercase letters, numbers and hyphens. It cannot start or end with a hyphen.",
   "desk.issue_type_not_available": "That issue type is not available in this project.",
+  "desk.kb_space_missing": "That space does not exist.",
+  "desk.kb_space_not_public": "Only a knowledge base space can be linked — a team space would put internal pages on the customer screen.",
   "desk.mapping_without_field": "A mapping is left over for a field that is no longer on the form.",
   "desk.not_a_customer": "Internal accounts cannot join a customer organization.",
   "desk.not_a_member": "This person does not belong to that organization.",

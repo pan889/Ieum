@@ -63,6 +63,8 @@ export interface RequestType {
   form_schema: FormSchema
   field_mapping: Record<string, string>
   is_enabled: boolean
+  /** 요청 중 문서를 추천할 스페이스 (C8). 안 걸었으면 `null`. */
+  kb_space_id: string | null
   is_archived: boolean
   ticket_count: number
 }
@@ -76,6 +78,8 @@ export interface NewRequestType {
   form_schema?: FormSchema
   field_mapping?: Record<string, string>
   is_enabled?: boolean
+  /** 요청 중 문서를 추천할 지식베이스 스페이스 (C8). `kind = "kb"` 만. */
+  kb_space_id?: string
 }
 
 /** `issue_type_id` 가 없다 — 유형을 갈아 끼우면 폼 매핑이 통째로 무의미해진다. */
@@ -87,6 +91,12 @@ export interface RequestTypePatch {
   form_schema?: FormSchema
   field_mapping?: Record<string, string>
   is_enabled?: boolean
+  kb_space_id?: string
+  /**
+   * 연결을 **끊는다.** `kb_space_id: undefined` 는 "안 건드린다" 와 구별되지
+   * 않는다 — 부분 수정에서 값이 없다는 것은 언제나 후자다.
+   */
+  clear_kb_space?: boolean
 }
 
 // ── 고객 조직 ───────────────────────────────────────────────────
@@ -485,6 +495,22 @@ export interface EmailChannelPatch {
   is_enabled?: boolean
 }
 
+/** 요청 유형에 걸 수 있는 스페이스 (C8). `kind = "kb"` 만 온다. */
+export interface KbSpace {
+  id: string
+  key: string
+  name: string
+}
+
+/** 고객에게 추천하는 문서 한 편 (C8). 본문이 아니라 발췌만 온다. */
+export interface Article {
+  page_id: string
+  /** `SPACE/slug`. 화면이 링크를 만든다. */
+  ref: string
+  title: string
+  excerpt: string
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
 const QUEUES = '/api/v1/queues'
@@ -511,6 +537,8 @@ export function createDeskApi(client: ApiClient) {
       client.delete<Portal>(`${PORTALS}/${portalId}/archive`),
 
     // 요청 유형
+    listKbSpaces: () => client.get<KbSpace[]>(`${PORTALS}/kb-spaces`),
+
     listRequestTypes: (portalId: string) =>
       client.get<RequestType[]>(`${PORTALS}/${portalId}/request-types`),
     createRequestType: (portalId: string, body: NewRequestType) =>
@@ -575,6 +603,18 @@ export function createDeskApi(client: ApiClient) {
       client.get<PortalInfo>(`${PORTAL}/${slug}`, { anonymous: true }),
     portalRequestTypes: (slug: string) =>
       client.get<PortalRequestType[]>(`${PORTAL}/${slug}/request-types`, { anonymous: true }),
+    /**
+     * 요청 중 문서 추천 (C8). **게스트도 부른다** — 익명 요청이다.
+     *
+     * 서버가 내주는 것은 제한 없는 공개 문서뿐이다. 빈 질의에는 빈 목록이
+     * 온다: 아무 것도 안 적었는데 목록이 뜨면 추천이 아니라 스페이스 공개다.
+     */
+    portalArticles: (slug: string, requestTypeId: string, q: string) =>
+      client.get<Article[]>(
+        `${PORTAL}/${slug}/request-types/${requestTypeId}/articles?q=${encodeURIComponent(q)}`,
+        { anonymous: true },
+      ),
+
     portalForm: (slug: string, requestTypeId: string) =>
       client.get<PortalForm>(`${PORTAL}/${slug}/request-types/${requestTypeId}`, {
         anonymous: true,

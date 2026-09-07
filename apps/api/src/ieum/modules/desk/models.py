@@ -143,6 +143,17 @@ class RequestType(Entity, Archivable):
     field_mapping: Mapped[dict[str, str]] = mapped_column(
         JSONB, nullable=False, server_default="{}"
     )
+    #: 고객이 제목을 적는 동안 문서를 추천할 지식베이스 스페이스 (C8).
+    #:
+    #: **`kind = "kb"` 인 스페이스만 걸 수 있다.** 팀 스페이스를 걸면 내부
+    #: 문서가 고객 화면에 뜬다 — 스페이스의 종류가 "이건 고객에게 보여도
+    #: 된다" 는 관리자의 선언이고, 그 선언 없이 노출하지 않는다.
+    #:
+    #: SET NULL 이다: 스페이스를 지우는 것이 폼을 못 쓰게 만들면 안 된다.
+    #: 추천이 사라질 뿐이고, 요청은 그대로 들어온다.
+    kb_space_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("space.id", ondelete="SET NULL"), nullable=True
+    )
     #: 끄면 폼 목록에서 사라진다. 지우는 것과 다르다 — 이미 만들어진 티켓의
     #: `ticket_ext.request_type_id` 가 살아 있어야 "어떤 폼으로 들어왔나" 를
     #: 나중에도 말할 수 있다.
@@ -152,6 +163,7 @@ class RequestType(Entity, Archivable):
         UniqueConstraint("portal_id", "name", name="uq_request_type_portal_id_name"),
         Index("ix_request_type_portal_id", "portal_id"),
         Index("ix_request_type_issue_type_id", "issue_type_id"),
+        Index("ix_request_type_kb_space_id", "kb_space_id"),
     )
 
 

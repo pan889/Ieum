@@ -24,6 +24,62 @@ import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 import { PortalField, type AnswerValue } from './PortalField'
 import type { PortalRoute } from './routes'
 
+/**
+ * 요청 중 문서 추천 (feature-map C8).
+ *
+ * 고객이 제목을 적는 동안 지식베이스에서 찾아 보여 준다. **답이 이미 있는
+ * 요청이 티켓으로 들어오지 않게** 하는 것이 요점이다 — 상담원이 같은 답을
+ * 백 번 쓰는 일이 데스크에서 가장 흔하다.
+ *
+ * 뜨는 것은 **제한 없는 공개 문서**뿐이고, 그 좁힘은 서버가 SQL 단계에서
+ * 한다. 화면은 거르지 않는다: 가져와서 거르면 한 군데만 빠뜨려도 유출이다.
+ *
+ * 폼을 막지 않는다. 문서를 보여 주고도 요청을 낼 수 있어야 한다 — 추천이
+ * 틀렸을 때 사람을 가둬 두는 화면이 된다.
+ */
+function Articles({
+  slug,
+  requestTypeId,
+  query,
+}: {
+  slug: string
+  requestTypeId: string
+  query: string
+}) {
+  const { t } = useTranslation(['desk'])
+  const text = query.trim()
+
+  const articles = useQuery({
+    queryKey: ['portal', slug, 'articles', requestTypeId, text],
+    // **두 글자부터 찾는다.** 한 글자로 찾으면 거의 모든 문서가 걸리고,
+    // 고객이 첫 글자를 치자마자 목록이 튀어나온다.
+    enabled: text.length >= 2,
+    queryFn: () => deskApi.portalArticles(slug, requestTypeId, text),
+  })
+
+  const rows = articles.data ?? []
+  if (rows.length === 0) return null
+
+  return (
+    <Card className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium">{t('desk:form.articles')}</h2>
+      <p className="text-xs text-muted">{t('desk:form.articlesHint')}</p>
+      <ul className="flex flex-col gap-2">
+        {rows.map((article) => (
+          <li key={article.page_id} className="flex flex-col gap-0.5">
+            {/* 위키는 앱 셸 안이라 고객이 열 수 있는 주소가 아니다. 지금은
+                제목과 발췌만 보여 준다 — 공개 문서 주소(B13 의 블로그와 같은
+                표면)가 생기면 그때 링크를 건다. 없는 링크를 그려 두고 404 로
+                보내는 것보다 낫다. */}
+            <span className="text-sm font-medium">{article.title}</span>
+            <span className="text-xs text-muted">{article.excerpt}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
 export function PortalForm({
   portal,
   requestTypeId,
@@ -136,6 +192,15 @@ export function PortalForm({
           }}
         />
       ))}
+
+      {/* 제목 아래에 둔다. 폼 맨 위에 두면 아직 아무 것도 안 적었을 때 빈
+          자리가 되고, 맨 아래면 다 적고 나서야 보인다 — 다 적은 사람은
+          문서를 읽지 않고 보낸다. */}
+      <Articles
+        slug={portal.slug}
+        requestTypeId={requestTypeId}
+        query={typeof answers['summary'] === 'string' ? answers['summary'] : ''}
+      />
 
       {user ? null : (
         <Card className="flex flex-col gap-3">

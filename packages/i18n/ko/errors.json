@@ -81,6 +81,8 @@
   "desk.invalid_form_key": "필드 키는 소문자로 시작하고 소문자·숫자·밑줄만 씁니다.",
   "desk.invalid_slug": "소문자·숫자·하이픈만 쓸 수 있고, 하이픈으로 시작하거나 끝낼 수 없습니다.",
   "desk.issue_type_not_available": "이 프로젝트에서 쓸 수 없는 이슈 유형입니다.",
+  "desk.kb_space_missing": "그 스페이스가 없습니다.",
+  "desk.kb_space_not_public": "지식베이스 스페이스만 걸 수 있습니다 — 팀 스페이스를 걸면 내부 문서가 고객 화면에 뜹니다.",
   "desk.mapping_without_field": "폼에서 사라진 필드의 매핑이 남아 있습니다.",
   "desk.not_a_customer": "내부 계정은 고객 조직에 넣을 수 없습니다.",
   "desk.not_a_member": "이 사람은 그 조직에 속해 있지 않습니다.",

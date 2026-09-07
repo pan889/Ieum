@@ -26,6 +26,7 @@ from ieum.modules.desk.schemas import (
     AgentTicketEnvelope,
     AgentTicketResponse,
     AnswerResponse,
+    ArticleResponse,
     CalendarCreateRequest,
     CalendarResponse,
     CalendarUpdateRequest,
@@ -42,6 +43,7 @@ from ieum.modules.desk.schemas import (
     EmailChannelUpdateRequest,
     EmailInboundConfig,
     GuestSubmitRequest,
+    KbSpaceResponse,
     MembershipRequest,
     PortalCreateRequest,
     PortalFormFieldResponse,
@@ -89,6 +91,7 @@ from ieum.modules.desk.service import (
     SlaPolicyView,
     TicketView,
 )
+from ieum.modules.wiki import contracts as wiki_contracts
 
 #: 내부 관리 표면. 상담원·관리자가 쓴다.
 portals_router = APIRouter(prefix="/portals", tags=["desk"])
@@ -138,6 +141,7 @@ def _request_type(view: RequestTypeView) -> RequestTypeResponse:
         form_schema=row.form_schema,
         field_mapping=row.field_mapping,
         is_enabled=row.is_enabled,
+        kb_space_id=row.kb_space_id,
         is_archived=row.is_archived,
         ticket_count=view.ticket_count,
     )
@@ -242,6 +246,26 @@ async def create_portal(
     return _portal(view)
 
 
+@portals_router.get("/kb-spaces", response_model=list[KbSpaceResponse])
+async def list_kb_spaces(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor
+) -> list[KbSpaceResponse]:
+    """요청 유형에 걸 수 있는 스페이스.
+
+    **`/{portal_id}` 로 시작하는 **모든** 경로보다 위에 둔다.** FastAPI 는
+    먼저 선언된 것을 쓰므로, 하나라도 위에 있으면 `kb-spaces` 가 포털 id 로
+    잡혀 UUID 파싱 오류가 난다. `/{portal_id}/request-types` 위에만 두었다가
+    실제로 그렇게 됐다 — 형제가 여럿이면 "위" 는 첫째 위다.
+
+    `kind = "kb"` 만 내준다. 서버가 나머지를 거절하도록 만들었으니 화면에는
+    고를 수 있는 것만 보여야 한다 (ux-principles).
+    """
+    del actor  # 목록 자체는 비밀이 아니다. 거는 것은 포털 권한이 막는다.
+    rows = await wiki_contracts.kb_spaces(session)
+    del permissions
+    return [KbSpaceResponse(id=row.id, key=row.key, name=row.name) for row in rows]
+
+
 @portals_router.get("/{portal_id}", response_model=PortalResponse)
 async def get_portal(
     session: DbSession, permissions: PermissionDep, actor: CurrentActor, portal_id: UUID
@@ -321,6 +345,7 @@ async def create_request_type(
         form_fields=[f.model_dump() for f in payload.form_schema.fields],
         field_mapping=payload.field_mapping,
         is_enabled=payload.is_enabled,
+        kb_space_id=payload.kb_space_id,
     )
     await session.commit()
     return _request_type(view)
@@ -348,6 +373,8 @@ async def update_request_type(
         ),
         field_mapping=payload.field_mapping,
         is_enabled=payload.is_enabled,
+        kb_space_id=payload.kb_space_id,
+        clear_kb_space=payload.clear_kb_space,
     )
     await session.commit()
     return _request_type(view)
@@ -566,6 +593,30 @@ async def portal_form(
     session: DbSession, permissions: PermissionDep, slug: str, request_type_id: UUID
 ) -> PortalFormResponse:
     return _form(await CustomerPortalService(session, permissions).get_form(slug, request_type_id))
+
+
+@portal_router.get(
+    "/{slug}/request-types/{request_type_id}/articles", response_model=list[ArticleResponse]
+)
+async def suggest_articles(
+    session: DbSession,
+    permissions: PermissionDep,
+    slug: str,
+    request_type_id: UUID,
+    q: str = "",
+) -> list[ArticleResponse]:
+    """제목을 적는 동안 뜨는 문서 추천.
+
+    **고객 표면이다** — 게스트도 온다. 액터를 받지 않고, 내주는 것은 제한
+    없는 공개 문서뿐이다(`search.suggest_articles`).
+    """
+    found = await CustomerPortalService(session, permissions).suggest_articles(
+        slug, request_type_id, q
+    )
+    return [
+        ArticleResponse(page_id=row.page_id, ref=row.ref, title=row.title, excerpt=row.excerpt)
+        for row in found
+    ]
 
 
 @portal_router.post(

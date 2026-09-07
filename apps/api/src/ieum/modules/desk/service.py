@@ -65,6 +65,8 @@ from ieum.modules.desk.sla import utc as sla_utc
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
 from ieum.modules.org import contracts as org
+from ieum.modules.search import contracts as search
+from ieum.modules.wiki import contracts as wiki
 
 log = get_logger(__name__)
 
@@ -363,6 +365,7 @@ class PortalService:
         form_fields: list[dict[str, Any]],
         field_mapping: dict[str, str],
         is_enabled: bool,
+        kb_space_id: UUID | None = None,
     ) -> RequestTypeView:
         portal = await self._require_portal(portal_id)
         await self._perms.require(
@@ -403,6 +406,7 @@ class PortalService:
                 form_schema={"fields": fields},
                 field_mapping=mapping,
                 is_enabled=is_enabled,
+                kb_space_id=await self._validated_kb_space(kb_space_id),
             )
         )
         await self._s.flush()
@@ -421,7 +425,15 @@ class PortalService:
         form_fields: list[dict[str, Any]] | None = None,
         field_mapping: dict[str, str] | None = None,
         is_enabled: bool | None = None,
+        kb_space_id: UUID | None = None,
+        clear_kb_space: bool = False,
     ) -> RequestTypeView:
+        """고친다.
+
+        `clear_kb_space` 를 따로 두는 이유는 정형 응답의 단축키와 같다:
+        `None` 은 "안 건드린다" 이고, 연결을 **끊는 것**은 다른 뜻이다. 한
+        필드로 둘을 표현하면 폼이 값을 안 보내는 것만으로 연결이 끊긴다.
+        """
         row, portal = await self._require_request_type(request_type_id)
         await self._perms.require(
             self._s, actor, perms.PORTAL_MANAGE, scope=Scope.project(portal.project_id)
@@ -441,6 +453,10 @@ class PortalService:
             row.position = position
         if is_enabled is not None:
             row.is_enabled = is_enabled
+        if clear_kb_space:
+            row.kb_space_id = None
+        elif kb_space_id is not None:
+            row.kb_space_id = await self._validated_kb_space(kb_space_id)
 
         # 폼과 매핑은 **함께** 갈아 끼운다. 한쪽만 받으면 남은 쪽과 어긋난
         # 상태를 저장하게 된다 — 매핑 없는 필드나 필드 없는 매핑이 생긴다.
@@ -499,6 +515,24 @@ class PortalService:
                 code="desk.invalid_slug",
             )
         return slug
+
+    async def _validated_kb_space(self, space_id: UUID | None) -> UUID | None:
+        """**`kind = "kb"` 인 스페이스만** 건다 (C8).
+
+        팀 스페이스를 걸면 내부 문서가 고객 화면에 뜬다. 스페이스의 종류가
+        "이건 고객에게 보여도 된다" 는 관리자의 선언이고, 그 선언 없이
+        노출하지 않는다 — 여기서 안 막으면 실수 하나가 곧 유출이다.
+        """
+        if space_id is None:
+            return None
+        kind = await wiki.space_kind(self._s, space_id)
+        if kind is None:
+            raise ValidationError("그 스페이스가 없다.", code="desk.kb_space_missing")
+        if kind != "kb":
+            raise ValidationError(
+                "지식베이스 스페이스만 걸 수 있다.", code="desk.kb_space_not_public"
+            )
+        return space_id
 
     async def _validate_form(
         self,
@@ -1034,6 +1068,28 @@ class CustomerPortalService:
     async def list_forms(self, slug: str) -> tuple[Portal, list[RequestType]]:
         portal = await self.info(slug)
         return portal, await self._types.list_for_portal(portal.id, enabled_only=True)
+
+    async def suggest_articles(
+        self, slug: str, request_type_id: UUID, query: str, *, limit: int = 5
+    ) -> list[search.Article]:
+        """고객이 제목을 적는 동안 문서를 추천한다 (feature-map C8).
+
+        **연결이 없으면 빈 목록이다 — 오류가 아니다.** 대부분의 요청 유형은
+        지식베이스를 안 걸고, 그때 화면이 오류를 그리면 아무 문제도 없는데
+        무언가 잘못된 것처럼 보인다.
+
+        권한을 보지 않는 이유: 이 경로는 고객 표면이고(게스트도 온다),
+        내주는 것은 **제한 없는 공개 문서**뿐이다. 그 좁힘은
+        `search.suggest_articles` 가 SQL 단계에서 한다 — 가져와서 거르면
+        한 군데만 빠뜨려도 그게 유출이다.
+        """
+        portal = await self.info(slug)
+        row = await self._require_enabled_type(portal, request_type_id)
+        if row.kb_space_id is None:
+            return []
+        return await search.suggest_articles(
+            self._s, space_id=row.kb_space_id, query=query, limit=limit
+        )
 
     async def get_form(self, slug: str, request_type_id: UUID) -> PortalForm:
         portal = await self.info(slug)

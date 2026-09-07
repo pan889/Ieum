@@ -11,6 +11,7 @@ issues·wiki 가 자기 것을 저장할 때 여기로 색인을 넘긴다. **�
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -65,3 +66,51 @@ async def remove_documents(session: AsyncSession, *, kind: str, entity_ids: Sequ
 
 
 __all__ = ["ISSUE", "PAGE", "index_document", "remove_document", "remove_documents"]
+
+
+@dataclass(frozen=True, slots=True)
+class Article:
+    """고객에게 추천할 문서 한 편 (desk C8).
+
+    본문 전체를 주지 않는다. 고객 화면은 제목과 한 줄 발췌만 보여 주고,
+    누르면 문서로 간다 — 발췌를 길게 주면 그것만으로 읽히고, 제한이 없는
+    문서라도 통째로 퍼 나르기 좋게 만들 이유가 없다.
+    """
+
+    page_id: UUID
+    #: `SPACE/slug` 모양. 링크를 만드는 데 쓴다.
+    ref: str
+    title: str
+    excerpt: str
+
+
+#: 발췌 길이. 한 줄이면 충분하고, 길면 그것만 읽고 만다.
+EXCERPT = 160
+
+
+async def suggest_articles(
+    session: AsyncSession, *, space_id: UUID, query: str, limit: int = 5
+) -> list[Article]:
+    """스페이스 하나에서 **제한 없는 공개 문서**만 추천한다.
+
+    `desk` 의 포털이 부른다. 스페이스가 고객에게 보여도 되는 것인지는 부르는
+    쪽이 판단한다(`kind = "kb"` 만 걸 수 있게 한다) — 여기서 그것까지 보면
+    search 가 wiki 를 알게 되고, 그 방향의 의존은 이 모듈의 규약에 어긋난다.
+    """
+    text = query.strip()
+    if not text:
+        # 빈 질의에 전부 내주지 않는다. 고객이 아직 아무 것도 안 적었는데
+        # 문서 목록이 뜨면, 그건 추천이 아니라 스페이스 공개다.
+        return []
+    rows = await SearchRepository(session).public_pages_in_space(
+        space_id=space_id, query=text, limit=limit
+    )
+    return [
+        Article(
+            page_id=row.entity_id,
+            ref=row.ref,
+            title=row.title,
+            excerpt=row.body[:EXCERPT].strip(),
+        )
+        for row in rows
+    ]

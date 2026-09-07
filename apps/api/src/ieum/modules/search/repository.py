@@ -110,6 +110,43 @@ class SearchRepository:
         ).scalars()
         return list(rows), int(total or 0)
 
+    async def public_pages_in_space(
+        self, *, space_id: UUID, query: str, limit: int
+    ) -> list[SearchDocument]:
+        """스페이스 하나에서 **아무 제한도 없는** 문서만 찾는다 (desk C8).
+
+        고객에게 보여 줄 것이라 권한(Acl)을 받지 않는다. 대신 조건을 좁게
+        고정한다:
+
+        - `restricted_to IS NULL` — 제한이 걸린 문서는 **한 명이라도** 볼 수
+          있는 주체가 지정된 것이고, 고객은 그 목록에 없다. `overlap` 으로
+          거르지 않고 아예 뺀다: 고객에게는 "제한이 없는 것" 만 보여 준다.
+        - 초안은 애초에 색인에 없다(`wiki/service.py` 의 `_reindex`).
+
+        스페이스가 고객에게 보여도 되는 것인지는 **부르는 쪽이** 판단한다 —
+        `desk` 가 `kind = "kb"` 인 스페이스만 걸 수 있게 한다.
+        """
+        needle = cast(query, Text)
+        where = and_(
+            SearchDocument.kind == "page",
+            SearchDocument.scope_kind == "space",
+            SearchDocument.scope_id == space_id,
+            SearchDocument.restricted_to.is_(None),
+            or_(
+                SearchDocument.title.bool_op("&@~")(needle),
+                SearchDocument.body.bool_op("&@~")(needle),
+            ),
+        )
+        rows = (
+            await self._s.execute(
+                select(SearchDocument)
+                .where(where)
+                .order_by(_SCORE, SearchDocument.source_updated_at.desc())
+                .limit(limit)
+            )
+        ).scalars()
+        return list(rows)
+
 
 def _scope_filter(acls: dict[str, Acl], kinds: Sequence[str]) -> ColumnElement[bool] | None:
     """종류마다 다른 권한을 쓴다. 아무 데도 권한이 없으면 None."""

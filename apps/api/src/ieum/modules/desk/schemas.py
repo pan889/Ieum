@@ -85,6 +85,8 @@ class RequestTypeCreateRequest(BaseModel):
     form_schema: FormSchemaSpec = Field(default_factory=FormSchemaSpec)
     field_mapping: dict[str, str] = Field(default_factory=dict)
     is_enabled: bool = True
+    #: 고객이 제목을 적는 동안 문서를 추천할 스페이스 (C8). `kind = "kb"` 만.
+    kb_space_id: UUID | None = None
 
 
 class RequestTypeUpdateRequest(BaseModel):
@@ -104,6 +106,11 @@ class RequestTypeUpdateRequest(BaseModel):
     form_schema: FormSchemaSpec | None = None
     field_mapping: dict[str, str] | None = None
     is_enabled: bool | None = None
+    kb_space_id: UUID | None = None
+    #: **연결을 끊는다.** `kb_space_id: null` 은 "안 건드린다" 와 구별되지
+    #: 않는다 — 부분 수정에서 `None` 은 언제나 후자다. 정형 응답의 단축키
+    #: 지우기와 같은 판단이다.
+    clear_kb_space: bool = False
 
 
 class RequestTypeResponse(BaseModel):
@@ -120,6 +127,7 @@ class RequestTypeResponse(BaseModel):
     form_schema: dict[str, Any]
     field_mapping: dict[str, str]
     is_enabled: bool
+    kb_space_id: UUID | None
     is_archived: bool
     ticket_count: int
 
@@ -585,3 +593,25 @@ class EmailChannelUpdateRequest(BaseModel):
     password: str | None = Field(default=None, min_length=1, max_length=512)
     default_request_type_id: UUID | None = None
     is_enabled: bool | None = None
+
+
+class ArticleResponse(BaseModel):
+    """고객에게 추천하는 문서 한 편 (C8).
+
+    본문 전체를 주지 않는다 — 제목과 한 줄 발췌만. 길게 주면 그것만 읽고
+    말고, 통째로 퍼 나르기 좋게 만들 이유가 없다.
+    """
+
+    page_id: UUID
+    #: `SPACE/slug`. 화면이 링크를 만든다.
+    ref: str
+    title: str
+    excerpt: str
+
+
+class KbSpaceResponse(BaseModel):
+    """요청 유형에 걸 수 있는 스페이스 하나 (C8)."""
+
+    id: UUID
+    key: str
+    name: str
