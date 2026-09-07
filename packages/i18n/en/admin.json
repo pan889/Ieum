@@ -75,6 +75,7 @@
   "permission.desk.portal.manage": "Manage portals and request types",
   "permission.desk.queue.manage": "Manage queues and canned responses",
   "permission.desk.queue.work": "Work tickets in queues",
+  "permission.desk.sla.manage": "Manage SLA policies and business calendars",
   "permission.identity.audit.view": "View the audit log",
   "permission.identity.group.manage": "Create groups and change members",
   "permission.identity.idp.manage": "Change identity provider settings",

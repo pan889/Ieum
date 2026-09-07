@@ -287,6 +287,20 @@ class RequesterResponse(BaseModel):
     verified: bool
 
 
+class SlaStandingResponse(BaseModel):
+    """상담원 화면의 SLA 한 줄. **서버가 남은 시간을 계산해 준다** —
+    브라우저가 목표 시각만 받아 세면 업무 시간이 빠진다."""
+
+    policy_name: str
+    metric: str
+    target_at: datetime
+    #: 위반이면 음수다. 화면이 "3시간 초과" 를 말할 수 있어야 한다.
+    remaining_seconds: int
+    breached: bool
+    paused: bool
+    completed: bool
+
+
 class AgentTicketResponse(BaseModel):
     """상담원 화면이 쓰는 데스크 정보."""
 
@@ -297,6 +311,9 @@ class AgentTicketResponse(BaseModel):
     requester: RequesterResponse | None
     organization_name: str | None
     csat_score: int | None
+    #: 이 티켓에 걸린 SLA 들. 비어 있으면 정책이 없거나 아직 안 걸렸다 —
+    #: 화면은 그 경우 SLA 칸을 아예 그리지 않는다.
+    sla: list[SlaStandingResponse] = Field(default_factory=list)
 
 
 class AgentTicketEnvelope(BaseModel):
@@ -406,3 +423,74 @@ class CannedResponseResponse(BaseModel):
     name: str
     body: str
     shortcut: str | None
+
+
+# ── SLA (C4·C5) ────────────────────────────────────────────────
+
+
+class CalendarResponse(BaseModel):
+    id: UUID
+    name: str
+    timezone: str
+    working_hours: dict[str, Any]
+    holidays: list[str]
+
+
+class CalendarCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    timezone: str = Field(min_length=1, max_length=64)
+    #: `{"0": [["09:00","18:00"]], ...}` — 요일(월=0) → 구간. 서버가 저장
+    #: 전에 계산기에 넣어 본다.
+    working_hours: dict[str, Any]
+    holidays: list[str] = Field(default_factory=list)
+
+
+class CalendarUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    working_hours: dict[str, Any] | None = None
+    holidays: list[str] | None = None
+
+
+class SlaPolicyResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    name: str
+    metric: str
+    calendar_id: UUID
+    #: 목록에서 "무엇으로 재는지" 를 바로 보여 준다. id 만 주면 화면이 달력
+    #: 목록을 또 받아 짜맞춰야 한다.
+    calendar_name: str
+    goals: list[dict[str, Any]]
+    pause_state_ids: list[UUID]
+    is_enabled: bool
+
+
+class SlaPolicyCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+    metric: str
+    calendar_id: UUID
+    #: 위에서부터 처음 맞는 것이 이긴다. 조건 없는 기본 목표가 하나 있어야
+    #: 하고, 없으면 서버가 거절한다.
+    goals: list[dict[str, Any]]
+    pause_state_ids: list[UUID] = Field(default_factory=list)
+
+
+class SlaPolicyUpdateRequest(BaseModel):
+    """**`metric` 이 없다.** 응답 정책을 해결 정책으로 바꾸면 이미 걸린
+    클럭들이 갑자기 다른 것을 재는 시계가 된다 — 지난 지표가 뜻을 잃는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    calendar_id: UUID | None = None
+    goals: list[dict[str, Any]] | None = None
+    pause_state_ids: list[UUID] | None = None
+    is_enabled: bool | None = None

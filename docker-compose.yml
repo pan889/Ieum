@@ -27,6 +27,16 @@ x-api-env: &api-env
   IEUM_SMTP_HOST: mailpit
   IEUM_SMTP_PORT: "1025"
   IEUM_SMTP_TLS: "false"
+  # **2FA 를 갖춘 관리자.** CI 의 E2E 잡은 이 계정을 시드하는데 개발 스택은
+  # 안 했다 — 그래서 step-up 이 걸린 화면(역할·IdP·워크플로우, 그리고 M4 의
+  # SLA 정책)을 CI 는 몰 수 있고 손으로는 열 수 없었다. `conventions.md` 의
+  # "CI 의 E2E 는 개발 스택과 같은 대역을 세운다" 를 **거울로 뒤집은** 종류다:
+  # 개발 스택이 CI 보다 적게 세우면, CI 에서만 되는 화면이 생긴다.
+  #
+  # 개발·시험용 값이다. 운영 오버라이드(deploy/compose/prod.yml)에는 없다.
+  SEED_MFA_ADMIN_EMAIL: ${SEED_MFA_ADMIN_EMAIL:-mfa-admin@example.com}
+  SEED_MFA_ADMIN_PASSWORD: ${SEED_MFA_ADMIN_PASSWORD:-seed-mfa-admin-password-1234}
+  SEED_MFA_ADMIN_TOTP_SECRET: ${SEED_MFA_ADMIN_TOTP_SECRET:-IEUMDEVSEEDTOTPSECRET234}
 
 services:
   postgres:

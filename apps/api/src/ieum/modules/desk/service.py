@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.config import Settings
@@ -23,14 +25,19 @@ from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.desk import permissions as perms
+from ieum.modules.desk.calendar import CalendarError
 from ieum.modules.desk.events import TicketSubmitted
 from ieum.modules.desk.models import (
     RESERVED_FORM_KEYS,
+    SLA_METRICS,
+    BusinessCalendarRow,
     CannedResponse,
     CustomerOrganization,
     Portal,
     Queue,
     RequestType,
+    SlaClock,
+    SlaPolicy,
     TicketExt,
 )
 from ieum.modules.desk.repository import (
@@ -44,6 +51,9 @@ from ieum.modules.desk.repository import (
     normalize_domain,
     normalize_slug,
 )
+from ieum.modules.desk.sla import SlaError, parse_calendar, validate_goals
+from ieum.modules.desk.sla import remaining as sla_remaining
+from ieum.modules.desk.sla import utc as sla_utc
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
 from ieum.modules.org import contracts as org
@@ -137,6 +147,25 @@ class Requester:
 
 
 @dataclass(frozen=True, slots=True)
+class SlaStanding:
+    """이 티켓의 SLA 한 줄. 상담원 화면이 그린다 (C5).
+
+    **잔여 시간을 서버가 계산해 내려 준다.** 브라우저에 목표 시각만 주고
+    카운트다운하게 두면 업무 시간이 빠진다 — 금요일 저녁에 남은 4시간이
+    토요일 아침에 0 이 된다.
+    """
+
+    policy_name: str
+    metric: str
+    target_at: datetime
+    #: 남은 업무 초. 위반이면 음수다 — 화면이 "3시간 초과" 를 말해야 한다.
+    remaining_seconds: int
+    breached: bool
+    paused: bool
+    completed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTicketView:
     """상담원이 티켓 화면에서 필요한 데스크 정보.
 
@@ -149,6 +178,8 @@ class AgentTicketView:
     portal_slug: str | None
     requester: Requester | None
     organization_name: str | None
+    #: 이 티켓에 걸린 SLA 들. 비어 있으면 정책이 없거나 아직 안 걸렸다.
+    sla: list[SlaStanding] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -878,7 +909,52 @@ class AgentTicketService:
             portal_slug=portal.slug if portal else None,
             requester=await self._requester(ticket),
             organization_name=organization.name if organization else None,
+            sla=await self._sla_standings(issue_id),
         )
+
+    async def _sla_standings(self, issue_id: UUID) -> list[SlaStanding]:
+        """이 티켓의 SLA 잔여 시간.
+
+        달력이 망가진 정책은 **건너뛴다.** 티켓 화면 전체가 그것 때문에
+        실패하면, SLA 하나가 잘못 저장된 것이 티켓을 못 여는 일이 된다.
+        """
+        rows = await self._s.execute(
+            select(SlaClock, SlaPolicy, BusinessCalendarRow)
+            .join(SlaPolicy, SlaPolicy.id == SlaClock.policy_id)
+            .join(BusinessCalendarRow, BusinessCalendarRow.id == SlaPolicy.calendar_id)
+            .where(SlaClock.issue_id == issue_id)
+            .order_by(SlaPolicy.name)
+        )
+        out: list[SlaStanding] = []
+        for clock, policy, calendar_row in rows.all():
+            try:
+                calendar = parse_calendar(
+                    timezone=calendar_row.timezone,
+                    working_hours=calendar_row.working_hours,
+                    holidays=list(calendar_row.holidays),
+                )
+            except CalendarError:
+                log.error("sla.broken_calendar_on_ticket", calendar_id=str(calendar_row.id))
+                continue
+            left = sla_remaining(
+                calendar,
+                target_at=sla_utc(clock.target_at),
+                now=utcnow(),
+                paused_at=sla_utc(clock.paused_at) if clock.paused_at else None,
+                completed_at=sla_utc(clock.completed_at) if clock.completed_at else None,
+            )
+            out.append(
+                SlaStanding(
+                    policy_name=policy.name,
+                    metric=policy.metric,
+                    target_at=clock.target_at,
+                    remaining_seconds=left.seconds,
+                    breached=left.breached,
+                    paused=left.paused,
+                    completed=left.completed,
+                )
+            )
+        return out
 
     async def _requester(self, ticket: TicketExt) -> Requester | None:
         if ticket.reporter_customer_id is not None:
@@ -1568,3 +1644,269 @@ class CannedResponseService:
         if await self._responses.shortcut_taken(project_id, shortcut, exclude=exclude):
             raise ConflictError("같은 단축어가 있다.", code="desk.canned_shortcut_taken")
         return shortcut
+
+
+# ── SLA 정책과 업무 달력 (C4) ──────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarView:
+    calendar: BusinessCalendarRow
+
+
+@dataclass(frozen=True, slots=True)
+class SlaPolicyView:
+    policy: SlaPolicy
+    #: 달력 이름. 정책 목록에서 "무엇으로 재는지" 를 바로 보여 준다 —
+    #: id 만 주면 화면이 달력 목록을 또 받아 짜맞춰야 하고, 목록에 없는
+    #: 달력을 쓰는 정책은 영영 이름이 안 뜬다.
+    calendar_name: str
+
+
+class SlaAdminService:
+    """SLA 정책과 업무 달력 정의. **전역 + step-up 이다** (permissions.py).
+
+    저장할 때 다 본다. 요청 유형 폼·큐 조건과 같은 판단인데, SLA 는 그보다
+    늦게 드러난다: 망가진 정책은 저장되고, 클럭이 안 걸리고, 화면의 SLA 칸이
+    비어 있을 뿐이다 — 아무도 그것이 빠졌다는 것을 모른다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+
+    # ── 업무 달력 ───────────────────────────────────────────────
+
+    async def list_calendars(self, actor: Actor) -> list[BusinessCalendarRow]:
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        rows = await self._s.execute(
+            select(BusinessCalendarRow)
+            .where(BusinessCalendarRow.archived_at.is_(None))
+            .order_by(BusinessCalendarRow.name)
+        )
+        return list(rows.scalars().all())
+
+    async def create_calendar(
+        self,
+        actor: Actor,
+        *,
+        name: str,
+        timezone: str,
+        working_hours: dict[str, Any],
+        holidays: list[str],
+    ) -> CalendarView:
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("이름을 비울 수 없다.", code="desk.calendar_name_empty")
+        # **저장 전에 계산기에 넣어 본다.** 모양이 틀린 달력이 통과하면 SLA 가
+        # 조용히 이상한 숫자를 내고, 그건 며칠 뒤에 "SLA 가 안 맞는다" 로만
+        # 보인다. 업무 시간이 하루도 없는 달력도 여기서 걸린다.
+        self._validated_calendar(timezone=timezone, working_hours=working_hours, holidays=holidays)
+        if await self._calendar_name_taken(clean_name):
+            raise ConflictError("같은 이름의 달력이 있다.", code="desk.calendar_name_taken")
+        row = BusinessCalendarRow(
+            name=clean_name,
+            timezone=timezone,
+            working_hours=working_hours,
+            holidays=holidays,
+        )
+        self._s.add(row)
+        await self._s.flush()
+        return CalendarView(calendar=row)
+
+    async def update_calendar(
+        self,
+        actor: Actor,
+        calendar_id: UUID,
+        *,
+        name: str | None = None,
+        timezone: str | None = None,
+        working_hours: dict[str, Any] | None = None,
+        holidays: list[str] | None = None,
+    ) -> CalendarView:
+        """달력을 고친다.
+
+        **이미 걸린 클럭의 목표(`target_at`)는 움직이지 않는다.** 목표는
+        저장되어 있고, 설정 변경으로 지난 티켓의 판정이 바뀌면 어제 지킨
+        약속이 오늘 깨진 것이 된다. 새로 걸리는 클럭부터 새 달력을 쓴다.
+        """
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        row = await self._s.get(BusinessCalendarRow, calendar_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("달력을 찾을 수 없다.")
+        if name is not None:
+            clean = name.strip()
+            if not clean:
+                raise ValidationError("이름을 비울 수 없다.", code="desk.calendar_name_empty")
+            if await self._calendar_name_taken(clean, exclude=row.id):
+                raise ConflictError("같은 이름의 달력이 있다.", code="desk.calendar_name_taken")
+            row.name = clean
+        self._validated_calendar(
+            timezone=timezone if timezone is not None else row.timezone,
+            working_hours=working_hours if working_hours is not None else dict(row.working_hours),
+            holidays=holidays if holidays is not None else list(row.holidays),
+        )
+        if timezone is not None:
+            row.timezone = timezone
+        if working_hours is not None:
+            row.working_hours = working_hours
+        if holidays is not None:
+            row.holidays = holidays
+        await self._s.flush()
+        return CalendarView(calendar=row)
+
+    async def delete_calendar(self, actor: Actor, calendar_id: UUID) -> None:
+        """보관한다. **쓰는 정책이 있으면 거절한다.**
+
+        FK 가 `RESTRICT` 라 지우면 DB 오류로 500 이 되고, 관리자는 무엇이
+        막았는지 못 듣는다. 보관도 같이 막는다 — 보관된 달력을 쓰는 정책은
+        화면에서 달력 이름을 잃는다.
+        """
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        row = await self._s.get(BusinessCalendarRow, calendar_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("달력을 찾을 수 없다.")
+        using = (
+            await self._s.execute(
+                select(func.count()).where(
+                    SlaPolicy.calendar_id == calendar_id, SlaPolicy.archived_at.is_(None)
+                )
+            )
+        ).scalar_one()
+        if using:
+            raise ConflictError("이 달력을 쓰는 SLA 정책이 있다.", code="desk.calendar_in_use")
+        row.archived_at = utcnow()
+        await self._s.flush()
+
+    # ── SLA 정책 ────────────────────────────────────────────────
+
+    async def list_policies(self, actor: Actor, project_id: UUID) -> list[SlaPolicyView]:
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        rows = await self._s.execute(
+            select(SlaPolicy, BusinessCalendarRow.name)
+            .join(BusinessCalendarRow, BusinessCalendarRow.id == SlaPolicy.calendar_id)
+            .where(SlaPolicy.project_id == project_id, SlaPolicy.archived_at.is_(None))
+            .order_by(SlaPolicy.name)
+        )
+        return [SlaPolicyView(policy=policy, calendar_name=name) for policy, name in rows.all()]
+
+    async def create_policy(
+        self,
+        actor: Actor,
+        *,
+        project_id: UUID,
+        name: str,
+        metric: str,
+        calendar_id: UUID,
+        goals: list[dict[str, Any]],
+        pause_state_ids: list[UUID],
+    ) -> SlaPolicyView:
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("이름을 비울 수 없다.", code="desk.sla_name_empty")
+        if metric not in SLA_METRICS:
+            raise ValidationError("모르는 지표다.", code="desk.sla_unknown_metric")
+        calendar = await self._s.get(BusinessCalendarRow, calendar_id)
+        if calendar is None or calendar.archived_at is not None:
+            raise ValidationError("그 달력이 없다.", code="desk.sla_calendar_missing")
+        try:
+            checked = validate_goals(goals)
+        except SlaError as exc:
+            raise ValidationError(str(exc), code="desk.sla_goals_invalid") from exc
+        if await self._policy_name_taken(project_id, clean_name):
+            raise ConflictError("같은 이름의 정책이 있다.", code="desk.sla_name_taken")
+        row = SlaPolicy(
+            project_id=project_id,
+            name=clean_name,
+            metric=metric,
+            calendar_id=calendar_id,
+            goals=checked,
+            pause_state_ids=list(pause_state_ids),
+        )
+        self._s.add(row)
+        await self._s.flush()
+        return SlaPolicyView(policy=row, calendar_name=calendar.name)
+
+    async def update_policy(
+        self,
+        actor: Actor,
+        policy_id: UUID,
+        *,
+        name: str | None = None,
+        calendar_id: UUID | None = None,
+        goals: list[dict[str, Any]] | None = None,
+        pause_state_ids: list[UUID] | None = None,
+        is_enabled: bool | None = None,
+    ) -> SlaPolicyView:
+        """정책을 고친다.
+
+        **`metric` 은 바꿀 수 없다.** 응답 정책을 해결 정책으로 바꾸면 이미
+        걸린 클럭들이 갑자기 다른 것을 재는 시계가 된다 — 지난 지표가 통째로
+        뜻을 잃는다. 새 정책을 만들고 이것을 끄는 것이 옳은 길이다.
+        """
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        row = await self._s.get(SlaPolicy, policy_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("정책을 찾을 수 없다.")
+        if name is not None:
+            clean = name.strip()
+            if not clean:
+                raise ValidationError("이름을 비울 수 없다.", code="desk.sla_name_empty")
+            if await self._policy_name_taken(row.project_id, clean, exclude=row.id):
+                raise ConflictError("같은 이름의 정책이 있다.", code="desk.sla_name_taken")
+            row.name = clean
+        if calendar_id is not None:
+            calendar = await self._s.get(BusinessCalendarRow, calendar_id)
+            if calendar is None or calendar.archived_at is not None:
+                raise ValidationError("그 달력이 없다.", code="desk.sla_calendar_missing")
+            row.calendar_id = calendar_id
+        if goals is not None:
+            try:
+                row.goals = validate_goals(goals)
+            except SlaError as exc:
+                raise ValidationError(str(exc), code="desk.sla_goals_invalid") from exc
+        if pause_state_ids is not None:
+            row.pause_state_ids = list(pause_state_ids)
+        if is_enabled is not None:
+            row.is_enabled = is_enabled
+        await self._s.flush()
+        name_of = await self._s.get(BusinessCalendarRow, row.calendar_id)
+        return SlaPolicyView(policy=row, calendar_name=name_of.name if name_of else "")
+
+    async def delete_policy(self, actor: Actor, policy_id: UUID) -> None:
+        """보관한다. **이미 걸린 클럭은 그대로 둔다** — 지난 티켓의 판정이
+        정책을 지우는 것으로 바뀌면 안 된다."""
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        row = await self._s.get(SlaPolicy, policy_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("정책을 찾을 수 없다.")
+        row.archived_at = utcnow()
+        await self._s.flush()
+
+    # ── 내부 ────────────────────────────────────────────────────
+
+    def _validated_calendar(
+        self, *, timezone: str, working_hours: dict[str, Any], holidays: list[str]
+    ) -> None:
+        try:
+            parse_calendar(timezone=timezone, working_hours=working_hours, holidays=holidays)
+        except CalendarError as exc:
+            raise ValidationError(str(exc), code="desk.calendar_invalid") from exc
+
+    async def _calendar_name_taken(self, name: str, *, exclude: UUID | None = None) -> bool:
+        stmt = select(func.count()).where(BusinessCalendarRow.name == name)
+        if exclude is not None:
+            stmt = stmt.where(BusinessCalendarRow.id != exclude)
+        return bool((await self._s.execute(stmt)).scalar_one())
+
+    async def _policy_name_taken(
+        self, project_id: UUID, name: str, *, exclude: UUID | None = None
+    ) -> bool:
+        stmt = select(func.count()).where(
+            SlaPolicy.project_id == project_id, SlaPolicy.name == name
+        )
+        if exclude is not None:
+            stmt = stmt.where(SlaPolicy.id != exclude)
+        return bool((await self._s.execute(stmt)).scalar_one())

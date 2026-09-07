@@ -26,6 +26,9 @@ from ieum.modules.desk.schemas import (
     AgentTicketEnvelope,
     AgentTicketResponse,
     AnswerResponse,
+    CalendarCreateRequest,
+    CalendarResponse,
+    CalendarUpdateRequest,
     CannedResponseCreateRequest,
     CannedResponseResponse,
     CannedResponseUpdateRequest,
@@ -55,6 +58,10 @@ from ieum.modules.desk.schemas import (
     RequestTypeCreateRequest,
     RequestTypeResponse,
     RequestTypeUpdateRequest,
+    SlaPolicyCreateRequest,
+    SlaPolicyResponse,
+    SlaPolicyUpdateRequest,
+    SlaStandingResponse,
     TicketResponse,
     TicketSummaryResponse,
 )
@@ -71,6 +78,8 @@ from ieum.modules.desk.service import (
     QueueService,
     QueueView,
     RequestTypeView,
+    SlaAdminService,
+    SlaPolicyView,
     TicketView,
 )
 
@@ -82,6 +91,10 @@ tickets_router = APIRouter(prefix="/tickets", tags=["desk"])
 #: 큐와 정형 응답. 상담원의 작업 표면이다.
 queues_router = APIRouter(prefix="/queues", tags=["desk"])
 canned_router = APIRouter(prefix="/canned-responses", tags=["desk"])
+#: SLA. 달력은 설치 전체에서 공유하고, 정책은 프로젝트 단위다 — 둘 다
+#: `desk.sla.manage`(전역 + step-up)가 필요하다.
+calendars_router = APIRouter(prefix="/business-calendars", tags=["desk"])
+sla_router = APIRouter(prefix="/sla-policies", tags=["desk"])
 #: 고객이 쓰는 표면. 이 접두사만 고객 격리를 통과한다.
 portal_router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -709,6 +722,18 @@ async def agent_ticket(
             ),
             organization_name=view.organization_name,
             csat_score=view.ticket.csat_score,
+            sla=[
+                SlaStandingResponse(
+                    policy_name=row.policy_name,
+                    metric=row.metric,
+                    target_at=row.target_at,
+                    remaining_seconds=row.remaining_seconds,
+                    breached=row.breached,
+                    paused=row.paused,
+                    completed=row.completed,
+                )
+                for row in view.sla
+            ],
         )
     )
 
@@ -941,4 +966,145 @@ async def delete_canned_response(
     session: DbSession, permissions: PermissionDep, actor: CurrentActor, response_id: UUID
 ) -> None:
     await CannedResponseService(session, permissions).delete(actor, response_id)
+    await session.commit()
+
+
+# ── 업무 달력 (C4) ─────────────────────────────────────────────
+
+
+def _calendar(row: Any) -> CalendarResponse:
+    return CalendarResponse(
+        id=row.id,
+        name=row.name,
+        timezone=row.timezone,
+        working_hours=dict(row.working_hours),
+        holidays=list(row.holidays),
+    )
+
+
+@calendars_router.get("", response_model=list[CalendarResponse])
+async def list_calendars(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor
+) -> list[CalendarResponse]:
+    rows = await SlaAdminService(session, permissions).list_calendars(actor)
+    return [_calendar(row) for row in rows]
+
+
+@calendars_router.post("", response_model=CalendarResponse, status_code=status.HTTP_201_CREATED)
+async def create_calendar(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    payload: CalendarCreateRequest,
+) -> CalendarResponse:
+    view = await SlaAdminService(session, permissions).create_calendar(
+        actor,
+        name=payload.name,
+        timezone=payload.timezone,
+        working_hours=payload.working_hours,
+        holidays=payload.holidays,
+    )
+    await session.commit()
+    return _calendar(view.calendar)
+
+
+@calendars_router.patch("/{calendar_id}", response_model=CalendarResponse)
+async def update_calendar(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    calendar_id: UUID,
+    payload: CalendarUpdateRequest,
+) -> CalendarResponse:
+    view = await SlaAdminService(session, permissions).update_calendar(
+        actor,
+        calendar_id,
+        name=payload.name,
+        timezone=payload.timezone,
+        working_hours=payload.working_hours,
+        holidays=payload.holidays,
+    )
+    await session.commit()
+    return _calendar(view.calendar)
+
+
+@calendars_router.delete("/{calendar_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_calendar(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, calendar_id: UUID
+) -> None:
+    await SlaAdminService(session, permissions).delete_calendar(actor, calendar_id)
+    await session.commit()
+
+
+# ── SLA 정책 (C4) ──────────────────────────────────────────────
+
+
+def _policy(view: SlaPolicyView) -> SlaPolicyResponse:
+    return SlaPolicyResponse(
+        id=view.policy.id,
+        project_id=view.policy.project_id,
+        name=view.policy.name,
+        metric=view.policy.metric,
+        calendar_id=view.policy.calendar_id,
+        calendar_name=view.calendar_name,
+        goals=[dict(goal) for goal in view.policy.goals],
+        pause_state_ids=list(view.policy.pause_state_ids),
+        is_enabled=view.policy.is_enabled,
+    )
+
+
+@sla_router.get("", response_model=list[SlaPolicyResponse])
+async def list_sla_policies(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, project_id: UUID
+) -> list[SlaPolicyResponse]:
+    rows = await SlaAdminService(session, permissions).list_policies(actor, project_id)
+    return [_policy(row) for row in rows]
+
+
+@sla_router.post("", response_model=SlaPolicyResponse, status_code=status.HTTP_201_CREATED)
+async def create_sla_policy(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    payload: SlaPolicyCreateRequest,
+) -> SlaPolicyResponse:
+    view = await SlaAdminService(session, permissions).create_policy(
+        actor,
+        project_id=payload.project_id,
+        name=payload.name,
+        metric=payload.metric,
+        calendar_id=payload.calendar_id,
+        goals=payload.goals,
+        pause_state_ids=payload.pause_state_ids,
+    )
+    await session.commit()
+    return _policy(view)
+
+
+@sla_router.patch("/{policy_id}", response_model=SlaPolicyResponse)
+async def update_sla_policy(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    policy_id: UUID,
+    payload: SlaPolicyUpdateRequest,
+) -> SlaPolicyResponse:
+    view = await SlaAdminService(session, permissions).update_policy(
+        actor,
+        policy_id,
+        name=payload.name,
+        calendar_id=payload.calendar_id,
+        goals=payload.goals,
+        pause_state_ids=payload.pause_state_ids,
+        is_enabled=payload.is_enabled,
+    )
+    await session.commit()
+    return _policy(view)
+
+
+@sla_router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sla_policy(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, policy_id: UUID
+) -> None:
+    await SlaAdminService(session, permissions).delete_policy(actor, policy_id)
     await session.commit()

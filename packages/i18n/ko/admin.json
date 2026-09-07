@@ -75,6 +75,7 @@
   "permission.desk.portal.manage": "포털·요청 유형 관리",
   "permission.desk.queue.manage": "큐·정형 응답 관리",
   "permission.desk.queue.work": "큐에서 티켓 처리",
+  "permission.desk.sla.manage": "SLA 정책·업무 달력 관리",
   "permission.identity.audit.view": "감사 로그 조회",
   "permission.identity.group.manage": "그룹 생성·멤버 변경",
   "permission.identity.idp.manage": "IdP 설정 변경",

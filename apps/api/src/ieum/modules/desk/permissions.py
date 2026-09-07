@@ -17,6 +17,16 @@ QUEUE_WORK = "desk.queue.work"
 #: 보는지 정한다. 조건을 잘못 적으면 티켓이 아무 큐에도 안 걸려 조용히
 #: 방치되므로, 일하는 권한과 같은 손잡이에 두지 않는다.
 QUEUE_MANAGE = "desk.queue.manage"
+#: SLA 정책과 업무 달력. **전역 + step-up 이다.**
+#:
+#: 전역인 이유: 업무 달력은 설치 전체에서 공유한다(업무 시간은 회사의
+#: 성질이다). 정책은 프로젝트 단위지만 같은 손잡이에 둔다 — 목표는 정할 수
+#: 있는데 그것을 재는 달력은 볼 수 없는 상태가 되면, "4시간" 이 실제로 몇
+#: 시간인지 모르고 정하는 셈이다.
+#:
+#: step-up 인 이유: SLA 는 조직이 고객에게 한 약속이고, 목표를 늘리면 지표가
+#: 좋아진다. 자기가 평가받는 숫자를 자기가 고치는 자리다.
+SLA_MANAGE = "desk.sla.manage"
 #: 고객 조직 목록·소속 편집. 전역이다 — 조직은 프로젝트에 속하지 않는다.
 CUSTOMER_MANAGE = "desk.customer.manage"
 
@@ -25,13 +35,14 @@ registry.register_many(
         PermissionDef(PORTAL_MANAGE, PROJECT, "포털·요청 유형 정의 변경"),
         PermissionDef(QUEUE_WORK, PROJECT, "큐에서 티켓 처리"),
         PermissionDef(QUEUE_MANAGE, PROJECT, "큐·정형 응답 정의 변경"),
+        PermissionDef(SLA_MANAGE, GLOBAL, "SLA 정책·업무 달력 관리", requires_step_up=True),
         # 고객 조직은 설치 전체에서 하나의 목록이고, 소속을 바꾸면 그 고객이
         # 보는 티켓의 범위가 바뀐다. 그래서 전역 + step-up 이다.
         PermissionDef(CUSTOMER_MANAGE, GLOBAL, "고객 조직·소속 관리", requires_step_up=True),
     ]
 )
 
-ALL = (PORTAL_MANAGE, QUEUE_WORK, QUEUE_MANAGE, CUSTOMER_MANAGE)
+ALL = (PORTAL_MANAGE, QUEUE_WORK, QUEUE_MANAGE, SLA_MANAGE, CUSTOMER_MANAGE)
 
 #: 상담원에게 기본으로 주는 묶음. 시드가 사용한다.
 AGENT_DEFAULTS = (QUEUE_WORK,)
