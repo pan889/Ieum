@@ -7,6 +7,7 @@ import { AcceptInviteScreen } from '@/features/auth/AcceptInviteScreen'
 import { LoginScreen } from '@/features/auth/LoginScreen'
 import { MfaEnrollScreen } from '@/features/auth/MfaEnrollScreen'
 import { MfaScreen } from '@/features/auth/MfaScreen'
+import { stageFor } from '@/features/auth/stage'
 import { useAuthStore } from '@/features/auth/store'
 import { authApi } from '@/shared/api'
 import { hasCode } from '@/shared/api/errors'
@@ -43,8 +44,14 @@ export function App() {
       return
     }
     if (!me.isError) return
-    if (hasCode(me.error, 'auth.mfa_enrollment_required')) setStage('mfa-enroll')
-    else setStage(hasCode(me.error, 'auth.mfa_required') ? 'mfa-required' : 'anonymous')
+    const required = hasCode(me.error, 'auth.mfa_required')
+    const enrollmentRequired = hasCode(me.error, 'auth.mfa_enrollment_required')
+    // 둘 다 아니면 그냥 로그인이 안 된 것이다.
+    if (!required && !enrollmentRequired) {
+      setStage('anonymous')
+      return
+    }
+    setStage(stageFor({ required, enrollmentRequired }))
   }, [me.data, me.isError, me.error, setUser, setStage])
 
   // 사용자 설정 locale 이 브라우저 추정값을 이긴다 (i18n.md 3절).

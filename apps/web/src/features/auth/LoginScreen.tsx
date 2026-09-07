@@ -6,6 +6,7 @@ import { authApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 
+import { stageFor } from './stage'
 import { useAuthStore } from './store'
 
 export function LoginScreen() {
@@ -19,8 +20,12 @@ export function LoginScreen() {
     onSuccess: (tokens) => {
       // 등록과 확인을 갈라 보낸다. 뭉뚱그리면 아직 등록도 안 한 사람에게
       // 코드를 넣으라는 화면이 뜨고, 만들 수 없는 코드라 계정이 잠긴다.
-      if (tokens.mfa_enrollment_required) setStage('mfa-enroll')
-      else setStage(tokens.mfa_required ? 'mfa-required' : 'authenticated')
+      setStage(
+        stageFor({
+          required: tokens.mfa_required,
+          enrollmentRequired: tokens.mfa_enrollment_required,
+        }),
+      )
     },
   })
 
