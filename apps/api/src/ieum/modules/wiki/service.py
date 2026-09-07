@@ -1271,7 +1271,7 @@ class PageService:
         self, actor: Actor, node: Page, *, parent: Page | None, title: str | None
     ) -> PageView:
         version = await self._current_version(node)
-        return await self.create(
+        view = await self.create(
             actor,
             NewPage(
                 space_id=node.space_id,
@@ -1283,6 +1283,29 @@ class PageService:
                 publish=node.status == "published",
             ),
         )
+        await self._copy_restrictions(node, view.page)
+        return view
+
+    async def _copy_restrictions(self, source: Page, target: Page) -> None:
+        """제한도 함께 옮긴다.
+
+        안 옮기면 제한 걸린 문서를 복사하는 순간 **누구나 볼 수 있는 사본**이
+        조용히 생긴다. 복사한 사람은 원래 볼 수 있던 사람이니 권한 상승은
+        아니지만, 가린 의미가 사라지는 것은 마찬가지다.
+
+        상위에서 물려받은 제한은 옮기지 않는다 — 그건 새 자리의 상위가 정한다.
+        문서 **자신에게** 걸린 것만 따라간다.
+        """
+        for rule in await self._restrictions.for_page(source.id):
+            self._restrictions.add(
+                PageRestriction(
+                    page_id=target.id,
+                    mode=rule.mode,
+                    principal_kind=rule.principal_kind,
+                    principal_id=rule.principal_id,
+                )
+            )
+        await self._s.flush()
 
     # ── 이슈 링크 ───────────────────────────────────────────────
 

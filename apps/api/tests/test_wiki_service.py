@@ -1603,3 +1603,71 @@ class TestExportedAssets:
             await PageService(session, permissions).export_space(actor, space.id)
         )
         assert f"attachment:{row.id}/a.png" in members["안내.md"].decode()
+
+
+class TestCopyKeepsRestrictions:
+    """복사본이 제한을 잃으면 안 된다.
+
+    제한이 걸린 문서를 복사하면 새 문서에는 제한이 없다. 복사한 사람은 원래
+    볼 수 있던 사람이니 권한 상승은 아니지만, **누구나 볼 수 있는 사본이
+    조용히 생긴다** — 가린 의미가 사라진다.
+    """
+
+    async def test_a_restricted_page_stays_restricted_when_copied(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        other: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        secret = await service.create(actor, NewPage(space_id=space.id, title="Secret"))
+        await service.set_restrictions(
+            actor, secret.page.id, mode="view", principals=[("user", user.id)]
+        )
+
+        await grant(
+            session,
+            principal_id=other.id,
+            permissions_granted=(perms.PAGE_VIEW,),
+            scope=Scope.space(space.id),
+        )
+
+        # 최상위로 복사한다 — 물려받을 상위 제한이 없는 자리다.
+        copied = await service.copy(actor, secret.page.id, new_parent_id=None)
+        with pytest.raises(PermissionDeniedError):
+            await service.get(actor_for(other), copied.page.id)
+
+    async def test_children_keep_their_own_restrictions_too(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        other: User,
+        space: Space,
+    ) -> None:
+        """가지째 복사한다. 아래쪽 문서에 따로 걸린 제한도 따라가야 한다."""
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        top = await service.create(actor, NewPage(space_id=space.id, title="Handbook"))
+        inner = await service.create(
+            actor, NewPage(space_id=space.id, title="Salaries", parent_id=top.page.id)
+        )
+        await service.set_restrictions(
+            actor, inner.page.id, mode="view", principals=[("user", user.id)]
+        )
+
+        await grant(
+            session,
+            principal_id=other.id,
+            permissions_granted=(perms.PAGE_VIEW,),
+            scope=Scope.space(space.id),
+        )
+
+        copied = await service.copy(actor, top.page.id, new_parent_id=None)
+        tree = await service.tree(actor, space.id)
+        child = next(n for n in tree if n.path == f"{copied.page.path}/salaries")
+        with pytest.raises(PermissionDeniedError):
+            await service.get(actor_for(other), child.id)
