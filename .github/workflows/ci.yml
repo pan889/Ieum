@@ -210,10 +210,14 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=ieum -e MINIO_ROOT_PASSWORD=ieum-secret \
             minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
-          for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:9000/minio/health/live && break
+          # **못 뜨면 여기서 실패해야 한다.** 그냥 빠져나오면 다음 단계가
+          # 연결 오류로 터지고, 로그에는 버킷 만들기가 실패한 것만 남는다 —
+          # 원인이 "스토리지가 안 떴다" 라는 것을 알 방법이 없다.
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && exit 0
             sleep 1
           done
+          echo "MinIO 가 안 떴다"; docker logs minio; exit 1
 
       - name: 버킷·CORS 준비
         # 브라우저가 프리사인드 URL 로 직접 PUT 한다. CORS 가 없으면 막힌다.
@@ -252,6 +256,12 @@ jobs:
 
       - name: api 기동
         env:
+          # 브라우저가 실제로 여는 주소로 맞춘다. `localhost` 로 두면 러너에서
+          # ::1 로 풀릴 수 있고, uvicorn·vite 는 127.0.0.1 에만 묶여 있다.
+          IEUM_BASE_URL: http://127.0.0.1:5173
+          # SAML 은 IdP 가 우리 ACS 로 **직접 POST** 한다. 화면 주소로 두면
+          # 어설션이 vite 로 날아가 404 가 된다.
+          IEUM_API_URL: http://127.0.0.1:8000
           IEUM_S3_ENDPOINT_URL: http://127.0.0.1:9000
           IEUM_S3_ACCESS_KEY: ieum
           IEUM_S3_SECRET_KEY: ieum-secret
