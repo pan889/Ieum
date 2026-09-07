@@ -11,7 +11,8 @@
 from __future__ import annotations
 
 import ieum.modules.identity.events
-import ieum.modules.issues.events  # noqa: F401
+import ieum.modules.issues.events
+import ieum.modules.wiki.events  # noqa: F401
 from ieum.core.events import events
 
 

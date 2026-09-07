@@ -14,6 +14,7 @@ import { SpacesScreen } from '@/features/wiki/SpacesScreen'
 import { parseSearch } from '@/features/issues/urlState'
 import type { IssuesSearch } from '@/features/issues/urlState'
 import { NewIssueScreen } from '@/features/issues/NewIssueScreen'
+import { NotificationsScreen } from '@/features/notifications/NotificationsScreen'
 import { ApiTokensScreen } from '@/features/settings/ApiTokensScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
@@ -125,6 +126,12 @@ const wikiPageRoute = createRoute({
   component: SpaceScreen,
 })
 
+const notificationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/notifications',
+  component: NotificationsScreen,
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   projectsRoute,
@@ -138,6 +145,7 @@ const routeTree = rootRoute.addChildren([
   wikiRoute,
   spaceRoute,
   wikiPageRoute,
+  notificationsRoute,
 ])
 
 export const router = createRouter({ routeTree })

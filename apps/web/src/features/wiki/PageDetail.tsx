@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { PageDraft, PageNode, WikiPage } from '@ieum/api-client'
 import { formatDateTime } from '@/features/issues/format'
+import { WatchButton } from '@/features/notifications/WatchButton'
 import { useUserNames } from '@/features/issues/hooks'
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
@@ -87,6 +88,9 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
           {page.status === 'draft' ? <Badge>{t('wiki:page.draft')}</Badge> : null}
           {page.archived_at ? <Badge tone="done">{t('wiki:page.archived')}</Badge> : null}
           <span className="ml-auto flex shrink-0 gap-2">
+            {/* 문서를 구독하면 이 문서가 바뀔 때 알림이 온다. 스페이스를
+                구독하면 그 안의 문서 전부가 온다 (notify 6절). */}
+            <WatchButton target="page" id={page.id} />
             <Button
               variant="ghost"
               className="text-xs"

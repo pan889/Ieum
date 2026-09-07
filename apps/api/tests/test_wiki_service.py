@@ -11,6 +11,7 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
@@ -22,6 +23,7 @@ from ieum.core.exceptions import (
     ValidationError,
 )
 from ieum.core.ids import new_id
+from ieum.core.outbox import OutboxEvent
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
@@ -32,6 +34,7 @@ from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import Space
 from ieum.modules.wiki.service import (
     NewPage,
+    PageCommentService,
     PageRestrictionGuard,
     PageService,
     SpaceService,
@@ -859,3 +862,182 @@ class TestSpaceHome:
         assert updated.home_page_id == page.page.id
         cleared = await spaces.update(actor, space.id, clear_home_page=True)
         assert cleared.home_page_id is None
+
+
+class TestChangeEvents:
+    """문서가 바뀌면 아웃박스에 사건이 남는다.
+
+    남지 않으면 아무에게도 알려지지 않는다 — 그게 M2 까지 이 모듈의 상태였다.
+    """
+
+    async def _types(self, session: AsyncSession) -> list[str]:
+        await session.flush()
+        rows = await session.execute(
+            select(OutboxEvent).where(OutboxEvent.aggregate_type == "page")
+        )
+        return [row.event_type for row in rows.scalars().all()]
+
+    async def test_published_page_announces_itself(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        await PageService(session, permissions).create(
+            actor, NewPage(space_id=space.id, title="Runbook", body="본문", publish=True)
+        )
+        assert await self._types(session) == ["wiki.page.published"]
+
+    async def test_empty_page_is_not_news_yet(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """만들기는 제목만 받는다. 거기서 알리면 문서 하나에 알림이 둘 간다.
+
+        사람이 한 일은 "문서를 썼다" 하나인데, 화면의 두 단계가 그대로 알림
+        두 개가 되면 워처는 곧 알림을 끈다.
+        """
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        view = await pages.create(actor, NewPage(space_id=space.id, title="Runbook", publish=True))
+        assert await self._types(session) == []
+
+        await pages.update(actor, view.page.id, body="이제 본문이 있다")
+        assert await self._types(session) == ["wiki.page.published"]
+
+        await pages.update(actor, view.page.id, body="고쳤다")
+        assert await self._types(session) == ["wiki.page.published", "wiki.page.updated"]
+
+    async def test_draft_stays_quiet(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """아직 아무에게도 보이지 않는 글이다. 알리면 초안이 아니다."""
+        actor = await full_access(session, user, space)
+        await PageService(session, permissions).create(
+            actor, NewPage(space_id=space.id, title="Draft", body="본문")
+        )
+        assert await self._types(session) == []
+
+    async def test_publishing_a_draft_is_the_first_news(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """초안이 게시되는 순간이 "새 문서" 다. 수정이라고 하면 거짓말이다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        view = await pages.create(actor, NewPage(space_id=space.id, title="Draft", body="본문"))
+        await pages.update(actor, view.page.id, body="고친 본문", publish=True)
+        assert await self._types(session) == ["wiki.page.published"]
+
+    async def test_editing_a_published_page_says_updated(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        view = await pages.create(
+            actor, NewPage(space_id=space.id, title="Runbook", body="본문", publish=True)
+        )
+        await pages.update(actor, view.page.id, body="고친 본문", message="오타")
+        assert await self._types(session) == ["wiki.page.published", "wiki.page.updated"]
+
+    async def test_payload_carries_the_address(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """notify 는 문서를 되짚어 읽지 않는다. 링크에 필요한 것을 실어 보낸다."""
+        actor = await full_access(session, user, space)
+        await PageService(session, permissions).create(
+            actor, NewPage(space_id=space.id, title="Runbook", body="본문", publish=True)
+        )
+        await session.flush()
+        rows = await session.execute(
+            select(OutboxEvent).where(OutboxEvent.aggregate_type == "page")
+        )
+        payload = rows.scalars().one().payload
+        assert payload["space_key"] == space.key
+        assert payload["path"] == "runbook"
+        assert payload["title"] == "Runbook"
+        assert payload["actor_id"] == str(user.id)
+
+    async def test_restore_counts_as_an_edit(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        view = await pages.create(
+            actor, NewPage(space_id=space.id, title="Runbook", body="처음", publish=True)
+        )
+        await pages.update(actor, view.page.id, body="두 번째")
+        await pages.restore(actor, view.page.id, 1)
+        assert await self._types(session) == [
+            "wiki.page.published",
+            "wiki.page.updated",
+            "wiki.page.updated",
+        ]
+
+    async def test_comment_announces_itself(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.COMMENT_ADD,),
+            scope=Scope.space(space.id),
+        )
+        view = await PageService(session, permissions).create(
+            actor, NewPage(space_id=space.id, title="Runbook", body="본문", publish=True)
+        )
+        await PageCommentService(session, permissions).add(actor, view.page.id, body="확인 부탁")
+        assert await self._types(session) == ["wiki.page.published", "wiki.page.commented"]
+
+    async def test_mention_must_be_allowed_to_see_the_page(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        other: User,
+        space: Space,
+    ) -> None:
+        """볼 수 없는 사람을 멘션해도 알림 대상이 되면 안 된다.
+
+        notify 는 문서 제한을 못 본다. 거르지 않으면 아무나 멘션해서 제한된
+        문서의 제목을 알림으로 흘릴 수 있다.
+        """
+        actor = await full_access(session, user, space)
+        body = f"[@남](user:{other.id}) 확인 부탁"
+        await PageService(session, permissions).create(
+            actor, NewPage(space_id=space.id, title="Runbook", body=body, publish=True)
+        )
+        await session.flush()
+        rows = await session.execute(
+            select(OutboxEvent).where(OutboxEvent.aggregate_type == "page")
+        )
+        assert rows.scalars().one().payload["mentioned_ids"] == []

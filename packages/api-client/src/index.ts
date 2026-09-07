@@ -111,3 +111,12 @@ export {
   type ApiTokensApi,
   type IssuedApiToken,
 } from './tokens-api'
+export {
+  createNotificationsApi,
+  type Notification,
+  type NotificationPage,
+  type NotificationPreferences,
+  type NotificationsApi,
+  type WatchStatus,
+  type WatchTarget,
+} from './notifications'

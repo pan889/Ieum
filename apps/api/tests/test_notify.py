@@ -33,6 +33,7 @@ from ieum.modules.notify.handlers import (
     HandlerContext,
     enqueue_webhooks,
     handle_issue_event,
+    handle_page_event,
 )
 from ieum.modules.notify.models import (
     Notification,
@@ -811,6 +812,158 @@ class TestDeliveryQueue:
         session.add(row)
         await session.flush()
         assert row.id not in {d.id for d in await DeliveryRepository(session).due()}
+
+
+class TestPageHandlers:
+    """문서 이벤트 → 알림.
+
+    수신자는 문서 워처 + 스페이스 워처다. 스페이스를 보고 있으면 그 안의
+    문서를 하나하나 챙기지 않아도 된다 — 트리가 깊어지면 그게 유일하게 쓸
+    만한 구독 단위다.
+    """
+
+    def _envelope(self, event_type: str, **payload: object) -> EventEnvelope:
+        return EventEnvelope(
+            id=new_id(),
+            event_type=event_type,
+            aggregate_type="page",
+            aggregate_id=UUID(str(payload.pop("aggregate_id", new_id()))),
+            payload=dict(payload),
+        )
+
+    def _actor(self, user: User) -> Actor:
+        return Actor(user_id=user.id, email=user.email, is_active=True)
+
+    async def _rows(self, session: AsyncSession, ids: list[UUID]) -> list[Notification]:
+        await session.flush()
+        result = await session.execute(select(Notification).where(Notification.id.in_(ids)))
+        return list(result.scalars().all())
+
+    async def test_page_and_space_watchers_both_get_it(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        page_id, space_id = new_id(), new_id()
+        watches = WatchService(session)
+        await watches.watch(self._actor(people["english"]), "page", page_id)
+        await watches.watch(self._actor(people["korean"]), "space", space_id)
+        await session.flush()
+
+        created = await handle_page_event(
+            HandlerContext(session=session, settings=settings),
+            self._envelope(
+                "wiki.page.updated",
+                aggregate_id=page_id,
+                space_id=str(space_id),
+                space_key="ENG",
+                path="deploy",
+                title="배포",
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        rows = await self._rows(session, created)
+        assert {n.user_id for n in rows} == {people["english"].id, people["korean"].id}
+        # 링크는 사람이 주고받는 주소다. id 로 만들면 열어 봐도 어디인지 모른다.
+        assert {n.link for n in rows} == {"/wiki/ENG/deploy"}
+
+    async def test_mention_gets_its_own_kind(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """멘션은 워처 알림과 종류가 달라야 사용자가 따로 끌 수 있다."""
+        created = await handle_page_event(
+            HandlerContext(session=session, settings=settings),
+            self._envelope(
+                "wiki.page.commented",
+                space_id=str(new_id()),
+                space_key="ENG",
+                path="deploy",
+                title="배포",
+                actor_id=str(people["actor"].id),
+                mentioned_ids=[str(people["korean"].id)],
+            ),
+        )
+        rows = await self._rows(session, created)
+        assert [n.kind for n in rows] == ["wiki.mentioned"]
+
+    async def test_mentioned_watcher_gets_one_notification(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """워처이면서 멘션된 사람에게 같은 일로 두 개가 쌓이면 안 된다."""
+        page_id = new_id()
+        await WatchService(session).watch(self._actor(people["korean"]), "page", page_id)
+        await session.flush()
+
+        created = await handle_page_event(
+            HandlerContext(session=session, settings=settings),
+            self._envelope(
+                "wiki.page.updated",
+                aggregate_id=page_id,
+                space_id=str(new_id()),
+                space_key="ENG",
+                path="deploy",
+                title="배포",
+                actor_id=str(people["actor"].id),
+                mentioned_ids=[str(people["korean"].id)],
+            ),
+        )
+        rows = await self._rows(session, created)
+        assert len(rows) == 1
+        assert rows[0].kind == "wiki.mentioned"
+
+    async def test_actor_does_not_notify_self(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        page_id = new_id()
+        await WatchService(session).watch(self._actor(people["actor"]), "page", page_id)
+        await session.flush()
+
+        created = await handle_page_event(
+            HandlerContext(session=session, settings=settings),
+            self._envelope(
+                "wiki.page.updated",
+                aggregate_id=page_id,
+                space_id=str(new_id()),
+                space_key="ENG",
+                path="deploy",
+                title="배포",
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        assert created == []
+
+    async def test_recipient_locale_decides_the_wording(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """발신자 언어가 아니라 수신자 언어로 렌더한다 (i18n.md 3절)."""
+        page_id = new_id()
+        watches = WatchService(session)
+        await watches.watch(self._actor(people["korean"]), "page", page_id)
+        await watches.watch(self._actor(people["english"]), "page", page_id)
+        await session.flush()
+
+        created = await handle_page_event(
+            HandlerContext(session=session, settings=settings),
+            self._envelope(
+                "wiki.page.published",
+                aggregate_id=page_id,
+                space_id=str(new_id()),
+                space_key="ENG",
+                path="deploy",
+                title="배포 절차",
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        rows = await self._rows(session, created)
+        by_user = {n.user_id: n.title for n in rows}
+        assert by_user[people["korean"].id] == "ENG — 새 문서: 배포 절차"
+        assert by_user[people["english"].id] == "ENG — new page: 배포 절차"
+
+    async def test_unmapped_event_is_ignored(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        ctx = HandlerContext(session=session, settings=settings)
+        assert await handle_page_event(ctx, self._envelope("wiki.page.archived")) == []
+        # 이슈 핸들러가 문서 이벤트를 집어삼키면 안 된다.
+        assert await handle_issue_event(ctx, self._envelope("wiki.page.updated")) == []
 
 
 class TestNotificationIdsAreUsable:

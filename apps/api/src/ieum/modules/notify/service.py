@@ -34,6 +34,8 @@ from ieum.modules.notify.repository import (
 log = get_logger(__name__)
 
 WATCH_TARGET_ISSUE = "issue"
+WATCH_TARGET_PAGE = "page"
+WATCH_TARGET_SPACE = "space"
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +299,8 @@ class WebhookService:
 
 __all__ = [
     "WATCH_TARGET_ISSUE",
+    "WATCH_TARGET_PAGE",
+    "WATCH_TARGET_SPACE",
     "NotificationRequest",
     "NotificationService",
     "WatchService",

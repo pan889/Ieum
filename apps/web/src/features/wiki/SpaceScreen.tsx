@@ -17,6 +17,8 @@ import { saveBlob } from '@/shared/download'
 import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 import { PageDetail } from './PageDetail'
+import { WatchButton } from '@/features/notifications/WatchButton'
+
 import { Templates } from './Templates'
 import { usePageByPath, useSpaceByKey, useSpaceTree } from './hooks'
 import { buildTree, flatten } from './tree'
@@ -76,6 +78,8 @@ export function SpaceScreen() {
         >
           {t('wiki:page.newTop')}
         </Button>
+
+        <WatchButton target="space" id={space.data.id} />
 
         <Transfer spaceId={space.data.id} spaceKey={spaceKey} onImported={refresh} />
 

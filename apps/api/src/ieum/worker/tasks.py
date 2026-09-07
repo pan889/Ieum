@@ -31,6 +31,7 @@ from ieum.modules.notify.handlers import (
     HandlerContext,
     enqueue_webhooks,
     handle_issue_event,
+    handle_page_event,
 )
 from ieum.modules.notify.mail import send_all
 from ieum.modules.notify.models import Notification, Webhook
@@ -66,6 +67,7 @@ async def drain_outbox() -> int:
             )
             try:
                 notification_ids.extend(await handle_issue_event(handler_ctx, envelope))
+                notification_ids.extend(await handle_page_event(handler_ctx, envelope))
                 await enqueue_webhooks(handler_ctx, envelope)
             # 한 건이 실패해도 배치 전체를 멈추지 않는다.
             except Exception as exc:

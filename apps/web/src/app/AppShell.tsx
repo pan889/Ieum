@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useAuthStore } from '@/features/auth/store'
+import { useUnreadCount } from '@/features/notifications/NotificationsScreen'
 import { authApi, usersApi } from '@/shared/api'
 import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/shared/i18n'
 import { Button } from '@/shared/ui/primitives'
@@ -14,11 +15,12 @@ const NAV = [
   { to: '/issues', labelKey: 'common:nav.issues' },
   { to: '/boards', labelKey: 'common:nav.boards' },
   { to: '/wiki', labelKey: 'common:nav.wiki' },
+  { to: '/notifications', labelKey: 'common:nav.notifications' },
   { to: '/settings/tokens', labelKey: 'common:nav.settings' },
 ] as const
 
 export function AppShell() {
-  const { t, i18n } = useTranslation(['common'])
+  const { t, i18n } = useTranslation(['common', 'notifications'])
   const user = useAuthStore((s) => s.user)
   const reset = useAuthStore((s) => s.reset)
   const setUser = useAuthStore((s) => s.setUser)
@@ -26,6 +28,7 @@ export function AppShell() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
+  const unread = useUnreadCount()
 
   const signOut = useMutation({
     mutationFn: () => authApi.logout(),
@@ -96,6 +99,19 @@ export function AppShell() {
                 )}
               >
                 {t(item.labelKey)}
+                {/* 안 읽은 알림이 있다는 사실만 표시한다. 0 을 그리면
+                    "아무것도 없음" 을 계속 알리는 셈이다. */}
+                {item.to === '/notifications' && (unread.data ?? 0) > 0 ? (
+                  <span
+                    className="ml-2 rounded-full bg-accent px-1.5 py-0.5 text-xs text-white"
+                    aria-label={t('notifications:list.unreadCount', {
+                      count: unread.data ?? 0,
+                      ns: 'notifications',
+                    })}
+                  >
+                    {unread.data}
+                  </span>
+                ) : null}
               </Link>
             </li>
           ))}

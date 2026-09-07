@@ -24,19 +24,22 @@ from ieum.core.exceptions import (
 )
 from ieum.core.logging import get_logger
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
+from ieum.core.markdown import extract_mentions, to_plaintext
 from ieum.core.markdown import normalize as normalize_markdown
-from ieum.core.markdown import to_plaintext
 from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate
 from ieum.core.markdown.diff import DiffResult, diff_lines
 from ieum.core.markdown.links import ISSUE as ISSUE_SCHEME
 from ieum.core.markdown.links import extract_links
+from ieum.core.outbox import publish
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
+from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
 from ieum.modules.org import contracts as org_links
 from ieum.modules.search import contracts as search
+from ieum.modules.wiki import events as wiki_events
 from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import (
     MAX_DEPTH,
@@ -261,6 +264,34 @@ class SpaceService:
         return space
 
 
+async def resolve_page_mentions(
+    session: AsyncSession,
+    permissions: PermissionService,
+    page: Page,
+    text: str | None,
+) -> list[UUID]:
+    """본문의 멘션 중 **이 문서를 볼 수 있는 사람만** 남긴다.
+
+    권한 검사를 여기서 하는 이유는 notify 가 문서 제한(restriction)을 못 보기
+    때문이다. 거르지 않으면 아무나 멘션해서 제한된 문서의 제목을 알림으로
+    흘릴 수 있다 — 이슈 쪽과 같은 규칙이다.
+    """
+    if not text:
+        return []
+    scope = Scope.space(page.space_id)
+    allowed: list[UUID] = []
+    for user_id in extract_mentions(text):
+        mentioned = await identity.load_actor(session, user_id)
+        if mentioned is None or not mentioned.is_active:
+            continue
+        if not await permissions.has(
+            session, mentioned, perms.PAGE_VIEW, scope=scope, subject=page
+        ):
+            continue
+        allowed.append(user_id)
+    return allowed
+
+
 class PageService:
     def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
         self._s = session
@@ -386,6 +417,23 @@ class PageService:
         await self._s.flush()
         await self._reindex(page, space=space)
         await self._relink(page)
+        # 초안은 알리지 않는다. 아직 아무에게도 보이지 않는 글이다.
+        # 빈 문서도 마찬가지다 — 화면의 만들기는 제목만 받고 본문은 그다음에
+        # 쓴다. 여기서 알리면 문서 하나에 "새 문서" 와 "수정됨" 이 잇달아
+        # 날아간다. 사람이 한 일은 하나인데.
+        if page.status == "published" and body.strip():
+            publish(
+                self._s,
+                wiki_events.PagePublished(
+                    aggregate_id=page.id,
+                    space_id=space.id,
+                    space_key=space.key,
+                    path=page.path,
+                    title=page.title,
+                    actor_id=actor.user_id,
+                    mentioned_ids=await resolve_page_mentions(self._s, self._perms, page, body),
+                ),
+            )
         log.info("wiki.page_created", actor=str(actor.user_id), page=str(page.id))
         return await self.to_view(page, space=space)
 
@@ -409,9 +457,14 @@ class PageService:
         self._check_version(page, expected_version)
 
         changed = False
+        # 게시 여부를 미리 잡아 둔다. 아래에서 뒤집히므로, 뒤에서 보면
+        # "처음 게시" 와 "이미 게시된 문서 수정" 을 구분할 수 없다.
+        was_published = page.status == "published"
+        new_version: PageVersion | None = None
         new_title = page.title if title is None else self._validate_title(title)
         current = await self._current_version(page)
-        new_body = current.body if current else ""
+        previous_body = current.body if current else ""
+        new_body = previous_body
         if body is not None:
             new_body = self._validate_body(body)
 
@@ -428,6 +481,7 @@ class PageService:
             page.title = new_title
             if page.status == "published" or publish:
                 page.current_version_id = version.id
+            new_version = version
             changed = True
         elif front_matter is not None and current is not None:
             current.front_matter = front_matter
@@ -453,10 +507,76 @@ class PageService:
             await self._s.flush()
             await self._reindex(page)
             await self._relink(page)
+            await self._announce_change(
+                page,
+                actor,
+                body=new_body,
+                version=new_version,
+                message=message,
+                # 본문이 비어 있던 문서에 처음 글이 들어온 것이 "새 문서" 다.
+                # 만들기가 제목만 받으므로, 이걸 수정이라고 하면 아무도 새
+                # 문서를 알림으로 못 본다.
+                first_time=not was_published or not previous_body.strip(),
+            )
             # 저장했으면 초안은 할 일을 다했다. 남기면 다음에 열 때
             # "저장 안 한 편집이 있다" 고 거짓말을 한다.
             await self._drafts.clear(page.id, actor.user_id)
         return await self.to_view(page)
+
+    async def _announce_change(
+        self,
+        page: Page,
+        actor: Actor,
+        *,
+        body: str,
+        version: PageVersion | None,
+        message: str | None,
+        first_time: bool,
+    ) -> None:
+        """바뀐 문서를 알린다. 초안은 알리지 않는다.
+
+        판 번호를 싣는 이유: 알림에서 "몇 판이 됐다" 를 말할 수 있어야
+        워처가 무엇을 볼지 정한다. 라벨만 바뀐 경우처럼 새 판이 없으면
+        지금 판을 그대로 싣는다.
+        """
+        if page.status != "published":
+            return
+        space = await self._spaces.get(page.space_id)
+        if space is None:
+            return
+        mentioned = await resolve_page_mentions(self._s, self._perms, page, body)
+        if first_time:
+            publish(
+                self._s,
+                wiki_events.PagePublished(
+                    aggregate_id=page.id,
+                    space_id=space.id,
+                    space_key=space.key,
+                    path=page.path,
+                    title=page.title,
+                    actor_id=actor.user_id,
+                    mentioned_ids=mentioned,
+                ),
+            )
+            return
+        number = version.number if version is not None else 0
+        if number == 0:
+            current = await self._current_version(page)
+            number = current.number if current is not None else 0
+        publish(
+            self._s,
+            wiki_events.PageUpdated(
+                aggregate_id=page.id,
+                space_id=space.id,
+                space_key=space.key,
+                path=page.path,
+                title=page.title,
+                actor_id=actor.user_id,
+                mentioned_ids=mentioned,
+                version_number=number,
+                message=(message or "").strip(),
+            ),
+        )
 
     async def restore(self, actor: Actor, page_id: UUID, number: int) -> PageView:
         """옛 판의 내용으로 **새 판**을 만든다.
@@ -487,6 +607,15 @@ class PageService:
         await self._s.flush()
         await self._reindex(page)
         await self._relink(page)
+        # 복원도 편집이다. 워처에게는 본문이 바뀐 것과 다르지 않다.
+        await self._announce_change(
+            page,
+            actor,
+            body=source.body,
+            version=version,
+            message=version.message,
+            first_time=False,
+        )
         return await self.to_view(page)
 
     async def move(
@@ -1126,6 +1255,7 @@ class PageCommentService:
         self._comments = PageCommentRepository(session)
         self._pages = PageRepository(session)
         self._versions = PageVersionRepository(session)
+        self._spaces = SpaceRepository(session)
 
     async def add(
         self,
@@ -1163,6 +1293,25 @@ class PageCommentService:
             )
         )
         await self._s.flush()
+
+        space = await self._spaces.get(page.space_id)
+        if space is not None:
+            publish(
+                self._s,
+                wiki_events.PageCommented(
+                    aggregate_id=page.id,
+                    space_id=page.space_id,
+                    space_key=space.key,
+                    path=page.path,
+                    title=page.title,
+                    actor_id=actor.user_id,
+                    # 코멘트 본문의 멘션이다. 문서 본문이 아니라 방금 쓴 글에서 찾는다.
+                    mentioned_ids=await resolve_page_mentions(self._s, self._perms, page, text),
+                    comment_id=comment.id,
+                    inline=parsed is not None,
+                ),
+            )
+
         log.info(
             "wiki.comment_added",
             actor=str(actor.user_id),

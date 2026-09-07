@@ -119,8 +119,12 @@ export class ApiClient {
     return response.blob()
   }
 
-  delete<T>(path: string, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
-    return this.request<T>(path, { ...options, method: 'DELETE' })
+  /**
+   * 본문을 받는다. 드문 일이지만 구독 해제(`DELETE /watches`)처럼 대상을
+   * 본문으로 받는 엔드포인트가 있다 — 시작과 해제가 같은 모양이어야 한다.
+   */
+  delete<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method'>): Promise<T> {
+    return this.request<T>(path, { ...options, method: 'DELETE', body })
   }
 
   private async send(path: string, options: RequestOptions): Promise<Response> {

@@ -22,6 +22,8 @@ from ieum.modules.notify.models import WebhookDelivery
 from ieum.modules.notify.repository import DeliveryRepository, WebhookRepository
 from ieum.modules.notify.service import (
     WATCH_TARGET_ISSUE,
+    WATCH_TARGET_PAGE,
+    WATCH_TARGET_SPACE,
     NotificationRequest,
     NotificationService,
     WatchService,
@@ -31,6 +33,7 @@ log = get_logger(__name__)
 
 #: 멘션 알림 종류. 워처 알림과 따로 두어 사용자가 따로 끌 수 있게 한다.
 MENTION_KIND = "issue.mentioned"
+PAGE_MENTION_KIND = "wiki.mentioned"
 
 #: 이벤트 타입 → (알림 종류, 제목 키). 여기 없는 이벤트는 알림을 만들지 않는다.
 ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
@@ -38,6 +41,12 @@ ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     "issue.updated": ("issue.updated", "notifications:issue.updated"),
     "issue.transitioned": ("issue.transitioned", "notifications:issue.transitioned"),
     "issue.commented": ("issue.commented", "notifications:issue.commented"),
+}
+
+PAGE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
+    "wiki.page.published": ("wiki.page.published", "notifications:wiki.published"),
+    "wiki.page.updated": ("wiki.page.updated", "notifications:wiki.updated"),
+    "wiki.page.commented": ("wiki.page.commented", "notifications:wiki.commented"),
 }
 
 
@@ -129,6 +138,79 @@ async def _recipients(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]
         if found is not None:
             watchers.add(found)
     return watchers
+
+
+async def handle_page_event(ctx: HandlerContext, envelope: EventEnvelope) -> list[UUID]:
+    """문서 이벤트 → 알림. 만들어진 알림 id 를 돌려준다.
+
+    수신자는 **문서 워처 + 스페이스 워처**다. 스페이스를 보고 있으면 그 안의
+    문서 하나하나를 따로 챙기지 않아도 된다 — 트리가 깊어질수록 그게 유일하게
+    쓸 만한 구독 단위다.
+    """
+    mapping = PAGE_NOTIFICATIONS.get(envelope.event_type)
+    if mapping is None:
+        return []
+
+    kind, title_key = mapping
+    actor_id = envelope.uuid("actor_id")
+    space_id = envelope.uuid("space_id")
+
+    watches = WatchService(ctx.session)
+    watchers = await watches.watchers_of(WATCH_TARGET_PAGE, envelope.aggregate_id)
+    if space_id is not None:
+        watchers |= await watches.watchers_of(WATCH_TARGET_SPACE, space_id)
+
+    # 멘션은 wiki 가 이미 볼 권한을 확인해서 실어 보낸다 (notify 는 문서
+    # 제한을 못 본다). 본인이 자기를 멘션한 건 알릴 필요가 없다.
+    mentioned = {uid for uid in envelope.uuid_list("mentioned_ids") if uid != actor_id}
+    # 멘션된 사람에게는 멘션 알림 하나만 간다. 워처이기도 하다고 두 번 보내면
+    # 같은 일로 알림이 두 개 쌓인다.
+    watchers -= mentioned
+    if not watchers and not mentioned:
+        return []
+
+    space_key = str(envelope.get("space_key", ""))
+    path = str(envelope.get("path", ""))
+    params = {
+        "title": str(envelope.get("title", "")),
+        "space": space_key,
+        "path": path,
+    }
+    link = f"/wiki/{space_key}/{path}" if space_key and path else None
+    service = NotificationService(ctx.session, ctx.settings)
+    created = []
+
+    if watchers:
+        created += await service.fan_out(
+            watchers,
+            NotificationRequest(
+                kind=kind,
+                title_key=title_key,
+                body_key=None,
+                params=params,
+                link=link,
+                target_type="page",
+                target_id=envelope.aggregate_id,
+                actor_id=actor_id,
+            ),
+        )
+
+    if mentioned:
+        created += await service.fan_out(
+            mentioned,
+            NotificationRequest(
+                kind=PAGE_MENTION_KIND,
+                title_key="notifications:wiki.mentioned",
+                body_key=None,
+                params=params,
+                link=link,
+                target_type="page",
+                target_id=envelope.aggregate_id,
+                actor_id=actor_id,
+            ),
+        )
+
+    return [n.id for n in created]
 
 
 async def enqueue_webhooks(ctx: HandlerContext, envelope: EventEnvelope) -> int:
