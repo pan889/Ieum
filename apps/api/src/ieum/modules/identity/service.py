@@ -242,6 +242,9 @@ class AuthService:
             # 만들어 준다 — 비밀번호만 통과한 세션이 `/auth/refresh` 한 번으로
             # 열리고, 2FA 는 장식이 된다.
             mfa_satisfied=row.mfa_satisfied_at is not None,
+            # 통과했다는 사실도 함께 넘긴다. 안 넘기면 토큰이 돌 때마다
+            # 인증기를 다시 꺼내야 한다.
+            mfa_verified=row.mfa_verified,
         )
         row.rotated_to_id = rotated.session_id
         row.revoked_at = utcnow()
@@ -328,6 +331,7 @@ class AuthService:
             timezone=user.timezone,
             session_id=row.id,
             mfa_satisfied_at=row.mfa_satisfied_at,
+            mfa_verified=row.mfa_verified,
             group_ids=await self._users.group_ids_for(user.id),
         )
         return actor, row
@@ -342,6 +346,7 @@ class AuthService:
         mfa_satisfied: bool = True,
         mfa_satisfied_at: datetime | None = None,
         enrollment_required: bool = False,
+        mfa_verified: bool = False,
     ) -> IssuedTokens:
         access_token = new_token()
         refresh_token = new_token()
@@ -359,6 +364,10 @@ class AuthService:
             user_agent=user_agent,
             expires_at=in_seconds(self._settings.refresh_token_ttl_seconds),
             mfa_satisfied_at=satisfied_at,
+            # 로그인만으로는 증명이 아니다. `satisfied_at` 은 MFA 가 필요 없는
+            # 계정에도 채워지므로, step-up 이 그걸 보면 2FA 없는 관리자가
+            # 민감 작업을 전부 통과한다.
+            mfa_verified=mfa_verified,
         )
         self._sessions.add(row)
         return IssuedTokens(
@@ -476,10 +485,16 @@ class MFAService:
 
         # 방금 맞힌 코드가 곧 소지 증명이다. 이 세션을 여기서 만족시키지
         # 않으면 등록을 마치자마자 같은 인증기의 코드를 또 넣으라고 한다.
-        if session_id is not None and not mfa_satisfied:
+        #
+        # `mfa_satisfied` 여부와 무관하게 표시한다. 2FA 가 없던 계정의 세션은
+        # 이미 "만족" 으로 채워져 있지만 **증명한 적은 없다** — 그 상태에서
+        # 등록만 하고 증명 표시를 안 남기면, 방금 인증기를 등록한 사람이
+        # step-up 작업을 계속 거절당한다.
+        if session_id is not None:
             row = await SessionRepository(self._s).get(session_id)
             if row is not None and row.revoked_at is None:
                 row.mfa_satisfied_at = now
+                row.mfa_verified = True
 
         self._audit.record(
             action=audit.MFA_ENROLLED,
@@ -498,6 +513,7 @@ class MFAService:
 
         if await self._verify_totp(user_id, code) or await self._consume_backup_code(user_id, code):
             row.mfa_satisfied_at = utcnow()
+            row.mfa_verified = True
             self._audit.record(
                 action=audit.MFA_VERIFIED,
                 actor_id=user_id,

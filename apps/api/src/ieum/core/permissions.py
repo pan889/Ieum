@@ -285,6 +285,14 @@ class PermissionService:
                 "이 작업은 API 토큰으로 할 수 없다.",
                 code="auth.step_up_not_available_for_token",
             )
+        # 시각만 보면 안 된다. MFA 를 등록하지 않은 계정은 로그인이 그 값을
+        # 채우므로, 2FA 가 없는 관리자가 민감 작업을 전부 통과한다.
+        # step-up 은 "사람이 방금 다시 증명했다" 는 뜻이다.
+        if not actor.mfa_verified:
+            raise StepUpRequiredError(
+                "이 작업에는 2단계 인증이 필요하다. 먼저 등록해야 한다.",
+                code="auth.step_up_requires_mfa",
+            )
         satisfied_at = actor.mfa_satisfied_at
         if satisfied_at is None:
             raise StepUpRequiredError()

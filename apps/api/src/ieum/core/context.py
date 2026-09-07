@@ -37,6 +37,10 @@ class Actor:
     timezone: str = "UTC"
     session_id: UUID | None = None
     mfa_satisfied_at: Any = None
+    #: **실제로 MFA 챌린지를 통과했는가.** 기본값이 False 인 것이 중요하다 —
+    #: 액터를 손으로 만드는 자리(워커·계약)가 잊으면 통과가 아니라 거절 쪽으로
+    #: 넘어져야 한다. step-up 이 이 값을 본다.
+    mfa_verified: bool = False
     group_ids: frozenset[UUID] = frozenset()
     #: PAT 로 인증했으면 토큰 id. 사람이 브라우저에서 하는 것과 구분한다.
     api_token_id: UUID | None = None

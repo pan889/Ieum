@@ -109,6 +109,10 @@ class UserSession(Entity):
     mfa_satisfied_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: **실제로 MFA 챌린지를 통과했는가.** `mfa_satisfied_at` 과 다르다 —
+    #: 그 값은 MFA 가 필요 없는 계정에도 로그인 시점에 채워진다. step-up 은
+    #: "사람이 방금 다시 증명했다" 는 뜻이라 이쪽을 봐야 한다 (auth.md 3절).
+    mfa_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         Index("ix_session_user_id", "user_id"),

@@ -255,13 +255,27 @@ class TestStepUp:
             user_id=new_id(),
             email="a@e.com",
             mfa_satisfied_at=utcnow() - timedelta(seconds=600),
+            mfa_verified=True,
         )
         with pytest.raises(StepUpRequiredError):
             await service.require(None, stale, IDP_MANAGE, scope=Scope.global_())  # type: ignore[arg-type]
 
+    async def test_mfa_that_was_never_proved_blocks(self, service: PermissionService) -> None:
+        """시각만 최근이고 증명한 적은 없는 액터.
+
+        MFA 를 등록하지 않은 계정은 로그인이 `mfa_satisfied_at` 을 채운다.
+        그 값만 보면 2FA 없는 관리자가 민감 작업을 전부 통과한다.
+        """
+        never = Actor(user_id=new_id(), email="a@e.com", mfa_satisfied_at=utcnow())
+        assert never.mfa_verified is False
+        with pytest.raises(StepUpRequiredError):
+            await service.require(None, never, IDP_MANAGE, scope=Scope.global_())  # type: ignore[arg-type]
+
     async def test_recent_mfa_passes_step_up_then_checks_permission(self) -> None:
         """step-up 을 통과해도 권한 자체가 없으면 여전히 거부다."""
-        fresh = Actor(user_id=new_id(), email="a@e.com", mfa_satisfied_at=utcnow())
+        fresh = Actor(
+            user_id=new_id(), email="a@e.com", mfa_satisfied_at=utcnow(), mfa_verified=True
+        )
         service = PermissionService(resolver=FakeResolver({}))
         with pytest.raises(PermissionDeniedError):
             await service.require(None, fresh, IDP_MANAGE, scope=Scope.global_())  # type: ignore[arg-type]

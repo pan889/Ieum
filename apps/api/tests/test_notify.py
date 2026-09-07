@@ -367,7 +367,13 @@ class TestWebhookService:
             repo.grant(role.id, permission)
         repo.assign(role_id=role.id, scope=scope, principal_kind="user", principal_id=user.id)
         await session.flush()
-        return Actor(user_id=user.id, email=user.email, is_active=True, mfa_satisfied_at=utcnow())
+        return Actor(
+            user_id=user.id,
+            email=user.email,
+            is_active=True,
+            mfa_satisfied_at=utcnow(),
+            mfa_verified=True,
+        )
 
     async def test_requires_permission(
         self,
@@ -381,6 +387,9 @@ class TestWebhookService:
             email=people["korean"].email,
             is_active=True,
             mfa_satisfied_at=utcnow(),
+            # step-up 은 통과시킨다. 여기서 보려는 것은 **권한이 없다** 는
+            # 거절이지, 2FA 가 없다는 거절이 아니다.
+            mfa_verified=True,
         )
         with pytest.raises(PermissionDeniedError):
             await WebhookService(session, settings, permissions).create(

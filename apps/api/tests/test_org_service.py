@@ -51,6 +51,9 @@ def actor_for(user: User, *, group_ids: frozenset[UUID] = frozenset()) -> Actor:
         email=user.email,
         is_active=True,
         mfa_satisfied_at=utcnow(),
+        # 시각만으로는 부족하다 — MFA 를 등록하지 않은 계정도 로그인하면
+        # 그 값이 채워진다. 이 액터는 실제로 통과한 사람이다.
+        mfa_verified=True,
         group_ids=group_ids,
     )
 

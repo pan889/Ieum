@@ -356,9 +356,12 @@ class TestApiTokens:
     async def test_issuing_requires_enrolled_mfa(self, app_client: httpx.AsyncClient) -> None:
         """2FA 를 등록하지 않은 계정은 토큰을 못 만든다.
 
-        step-up(최근 5분 내 MFA)만으로는 부족하다 — MFA 를 아예 등록하지 않은
-        계정은 로그인 자체가 그 창을 채우기 때문이다. PAT 은 만료 없는
-        무기명 자격증명이라 비밀번호 하나로 발급되면 안 된다.
+        PAT 은 만료 없는 무기명 자격증명이라 비밀번호 하나로 발급되면 안 된다.
+
+        예전에는 `identity.token_requires_mfa` 로 여기서만 따로 막았다 —
+        step-up 이 MFA 없는 계정을 그냥 통과시켰기 때문이다. 이제 step-up
+        자체가 실제 통과 여부를 보므로 권한 검사에서 먼저 걸린다. 발급 쪽
+        확인은 두 번째 방어선으로 남겨 둔다(서비스 테스트가 본다).
         """
         headers = _auth(await _login(app_client))
         r = await app_client.post(
@@ -367,7 +370,7 @@ class TestApiTokens:
             headers=headers,
         )
         assert r.status_code == 403, r.text
-        assert r.json()["error"]["code"] == "identity.token_requires_mfa"
+        assert r.json()["error"]["code"] == "auth.step_up_requires_mfa"
 
 
 class TestProfile:
@@ -484,6 +487,8 @@ class TestSessionRevocation:
         me = (await app_client.get(f"{BASE}/auth/me", headers=victim)).json()
 
         admin = _auth(await _login(app_client))
+        # 남의 자리에서 사람을 쫓아내는 일이다. 이제 실제 2FA 통과를 요구한다.
+        await _enroll_totp(app_client, admin)
         r = await app_client.delete(f"{BASE}/users/{me['id']}/sessions", headers=admin)
         assert r.status_code == 204
         assert (await app_client.get(f"{BASE}/auth/me", headers=victim)).status_code == 401
@@ -640,9 +645,14 @@ class TestMFAPolicy:
     ) -> None:
         """관리자·상담원처럼 남의 데이터를 보는 자리에 붙인다. 조직 전체를
         켜지 않고도 강제할 수 있어야 한다."""
-        admin = _auth(await _login(app_client))
+        # 초대를 **먼저** 만든다. 관리자가 2FA 를 등록하고 나면 그 뒤의 로그인은
+        # 미완료 세션이라, 그 세션으로는 초대조차 못 보낸다.
         invited = await _invited_user(app_client, settings)
         me = (await app_client.get(f"{BASE}/auth/me", headers=invited)).json()
+
+        admin = _auth(await _login(app_client))
+        # 역할 정의·할당은 step-up 대상이다. 실제 2FA 통과가 필요하다.
+        await _enroll_totp(app_client, admin)
 
         role = await app_client.post(
             f"{BASE}/roles",
@@ -765,3 +775,55 @@ class TestMFACannotBeRefreshedAway:
 
         blocked = await app_client.get(f"{BASE}/auth/me", headers=_auth(rotated.json()))
         assert blocked.status_code == 403, blocked.text
+
+
+class TestStepUpNeedsRealMFA:
+    """step-up 은 "사람이 방금 MFA 를 다시 통과했다" 는 뜻이어야 한다.
+
+    MFA 를 등록하지 않은 계정은 로그인 자체가 `mfa_satisfied_at` 을 채운다.
+    그 값만 보면 2FA 가 없는 관리자가 민감 작업을 전부 통과한다 — 보호가
+    사실상 없다. PAT 발급만 확인된 TOTP 를 따로 요구해 이 구멍을 피해 갔다.
+    """
+
+    async def test_without_mfa_sensitive_work_is_refused(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = _auth(await _login(app_client))
+        # 시드 관리자는 2FA 를 등록하지 않았다. 역할 정의 변경은 되돌리기
+        # 어려운 작업이라 step-up 대상이다(auth.md 3절).
+        r = await app_client.post(
+            f"{BASE}/roles",
+            json={"name": f"Nope {uuid4().hex[:6]}", "scope_kind": "global", "grants": []},
+            headers=headers,
+        )
+        assert r.status_code == 403, r.text
+        assert r.json()["error"]["code"] == "auth.step_up_requires_mfa"
+
+    async def test_after_enrolling_it_goes_through(self, app_client: httpx.AsyncClient) -> None:
+        headers = _auth(await _login(app_client))
+        await _enroll_totp(app_client, headers)
+
+        r = await app_client.post(
+            f"{BASE}/roles",
+            json={"name": f"Yes {uuid4().hex[:6]}", "scope_kind": "global", "grants": []},
+            headers=headers,
+        )
+        assert r.status_code == 201, r.text
+
+    async def test_rotation_keeps_the_proof(self, app_client: httpx.AsyncClient) -> None:
+        """토큰이 회전해도 "통과했다" 는 사실은 남아야 한다. 안 그러면 15분마다
+        인증기를 다시 꺼내야 한다."""
+        tokens = await _login(app_client)
+        await _enroll_totp(app_client, _auth(tokens))
+
+        rotated = await app_client.post(
+            f"{BASE}/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
+        assert rotated.status_code == 200, rotated.text
+
+        r = await app_client.post(
+            f"{BASE}/roles",
+            json={"name": f"Kept {uuid4().hex[:6]}", "scope_kind": "global", "grants": []},
+            headers=_auth(rotated.json()),
+        )
+        assert r.status_code == 201, r.text
