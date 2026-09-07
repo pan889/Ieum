@@ -146,6 +146,21 @@ class ObjectStore:
 
         return await asyncio.to_thread(_head)
 
+    async def put(self, key: str, data: bytes, *, content_type: str) -> None:
+        """서버가 직접 쓴다.
+
+        presigned PUT 은 **브라우저**가 올릴 때의 길이다. 서버가 이미 손에 쥔
+        바이트를(ZIP 안의 그림 같은 것) 스스로에게 서명해 보내는 것은 왕복만
+        늘린다.
+        """
+
+        def _put() -> None:
+            self._client.put_object(
+                Bucket=self._bucket, Key=key, Body=data, ContentType=content_type
+            )
+
+        await asyncio.to_thread(_put)
+
     async def delete(self, key: str) -> None:
         def _delete() -> None:
             self._client.delete_object(Bucket=self._bucket, Key=key)

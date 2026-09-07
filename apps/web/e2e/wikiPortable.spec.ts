@@ -14,7 +14,7 @@ import { readFile } from 'node:fs/promises'
 
 import type { Page } from '@playwright/test'
 
-import { createSpace, expect, signIn, test, uniqueKey } from './fixtures'
+import { bodyField, createSpace, expect, signIn, test, uniqueKey } from './fixtures'
 
 function spaceKey(): string {
   return uniqueKey('P')
@@ -176,14 +176,53 @@ test('한글 제목 문서도 내려받힌다', async ({ page, consoleErrors }) 
  * 의존성을 하나 더 들이지 않는다 — 여기서 필요한 건 "서버가 읽을 수 있는
  * ZIP" 뿐이고, 그건 30 줄이면 된다.
  */
-function zip(files: [string, string][]): Buffer {
+/** 1x1 PNG. 진짜 그림이라야 브라우저가 실제로 그린다. */
+const DOT_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+test('묶음 안의 그림이 첨부가 되고 실제로 뜬다', async ({ page, consoleErrors }) => {
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await page.goto(`/wiki/${key}`)
+
+  // 상대경로를 그대로 두면 ZIP 에 그림을 같이 넣었는데도 깨진 링크가 된다.
+  await importFile(page, {
+    name: 'assets.zip',
+    mimeType: 'application/zip',
+    buffer: zip([
+      ['docs/guide.md', '# 안내\n\n![그림](images/dot.png)\n'],
+      ['docs/images/dot.png', DOT_PNG],
+    ]),
+  })
+
+  await page.getByRole('link', { name: '안내' }).click()
+  const image = page.locator('article img').first()
+  await expect(image).toBeVisible()
+  // 서명된 주소로 바뀌어야 한다. `attachment:` 를 그대로 두면 안 뜬다.
+  await expect(image).not.toHaveAttribute('src', /^attachment:/)
+  // 그리고 실제로 픽셀이 있어야 한다 — 주소만 맞고 못 받는 경우가 있다.
+  await expect
+    .poll(async () => image.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0))
+    .toBe(true)
+
+  // 본문 정본에는 스킴이 남는다. 서명된 주소를 저장하면 몇 분 뒤 죽는다.
+  await page.getByRole('button', { name: /^edit$/i }).click()
+  await expect(await bodyField(page)).toHaveValue(/!\[그림\]\(attachment:[0-9a-f-]+\/dot\.png\)/)
+
+  expect(consoleErrors).toEqual([])
+})
+
+function zip(files: [string, string | Buffer][]): Buffer {
   const locals: Buffer[] = []
   const centrals: Buffer[] = []
   let offset = 0
 
   for (const [name, content] of files) {
     const nameBytes = Buffer.from(name, 'utf-8')
-    const data = Buffer.from(content, 'utf-8')
+    const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf-8')
     const crc = crc32(data)
 
     const local = Buffer.alloc(30 + nameBytes.length)

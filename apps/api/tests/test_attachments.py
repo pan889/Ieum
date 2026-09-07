@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-import secrets
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from urllib.parse import parse_qsl, urlparse
 from uuid import UUID
 
@@ -16,6 +15,7 @@ import pytest_asyncio
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from conftest import s3_endpoint
 from ieum.config import Settings
 from ieum.core.attachments import (
     MAX_SIZE_BYTES,
@@ -65,39 +65,6 @@ def fake_owner() -> None:
     register_owner(OWNER_LOCKED, _ViewOnly())
 
 
-@pytest.fixture(scope="session")
-def s3_server() -> Iterator[str]:
-    """in-process S3. 실제 HTTP 를 타므로 presigned URL 을 그대로 쓸 수 있다."""
-    from moto.server import ThreadedMotoServer
-
-    server = ThreadedMotoServer(port=0)
-    server.start()
-    host, port = server.get_host_and_port()
-    endpoint = f"http://{host}:{port}"
-    _ENDPOINT[0] = endpoint
-    yield endpoint
-    server.stop()
-
-
-@pytest.fixture
-def store(s3_server: str, settings: Settings) -> ObjectStore:
-    configured = settings.model_copy(
-        update={
-            "s3_endpoint_url": s3_server,
-            "s3_bucket": f"test-{secrets.token_hex(4)}",
-            "s3_access_key": SecretStr("test"),
-            "s3_secret_key": SecretStr("test"),
-        }
-    )
-    return ObjectStore(configured)
-
-
-@pytest_asyncio.fixture
-async def ready_store(store: ObjectStore) -> AsyncIterator[ObjectStore]:
-    await store.ensure_bucket()
-    yield store
-
-
 @pytest_asyncio.fixture
 async def uploader(session: AsyncSession) -> AsyncIterator[Actor]:
     """실제 user 행이 있어야 한다. uploaded_by 에 FK 가 걸려 있다."""
@@ -114,7 +81,7 @@ def _put_directly(store: ObjectStore, key: str, body: bytes) -> None:
 
     client = boto3.client(
         "s3",
-        endpoint_url=_ENDPOINT[0],
+        endpoint_url=s3_endpoint(),
         region_name="us-east-1",
         aws_access_key_id="test",
         aws_secret_access_key="test",
@@ -124,9 +91,6 @@ def _put_directly(store: ObjectStore, key: str, body: bytes) -> None:
 
 
 #: s3_server 픽스처가 채운다. _put_directly 가 세션 픽스처를 못 받아서 둔다.
-_ENDPOINT: list[str] = [""]
-
-
 async def _put(url: str, body: bytes, headers: dict[str, str]) -> int:
     async with httpx.AsyncClient() as client:
         response = await client.put(url, content=body, headers=headers)

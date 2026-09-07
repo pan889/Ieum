@@ -198,6 +198,47 @@ class AttachmentService:
         log.info("attachment.ready", attachment=str(row.id), size=row.size)
         return row
 
+    async def ingest(
+        self,
+        actor: Actor,
+        *,
+        owner_type: str,
+        owner_id: UUID,
+        filename: str,
+        mime: str,
+        data: bytes,
+    ) -> Attachment:
+        """서버가 손에 쥔 바이트를 첨부로. 바로 `ready` 다.
+
+        presigned 왕복(begin → 브라우저 PUT → complete)은 **브라우저**를 위한
+        절차다. ZIP 안의 그림처럼 서버가 이미 읽은 파일에는 그 세 걸음이
+        의미가 없고, 중간에 끊기면 pending 행만 남는다.
+        """
+        resolver = _resolver_for(owner_type)
+        if not await resolver.can_attach(self._s, actor, owner_id):
+            raise PermissionDeniedError("이 대상에 파일을 붙일 권한이 없다.")
+
+        normalized = _validate(filename, mime, len(data))
+        attachment_id = new_id()
+        key = _storage_key(attachment_id, filename)
+        await self._store.put(key, data, content_type=normalized)
+
+        row = Attachment(
+            id=attachment_id,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            filename=safe_filename(filename),
+            mime=normalized,
+            size=len(data),
+            storage_key=key,
+            status=STATUS_READY,
+            uploaded_by=actor.user_id,
+        )
+        self._s.add(row)
+        await self._s.flush()
+        log.info("attachment.ingested", attachment=str(row.id), size=row.size)
+        return row
+
     async def list_for(self, actor: Actor, owner_type: str, owner_id: UUID) -> list[Attachment]:
         resolver = _resolver_for(owner_type)
         if not await resolver.can_view(self._s, actor, owner_id):

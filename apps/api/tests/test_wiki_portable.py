@@ -20,10 +20,13 @@ import pytest
 from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import normalize
 from ieum.modules.wiki.portable import (
+    asset_targets,
     content_disposition,
     parse_document,
     read_archive,
     render_document,
+    resolve_asset,
+    rewrite_assets,
     safe_archive_path,
     write_archive,
 )
@@ -164,19 +167,22 @@ class TestArchive:
                 "docs/notes.txt": b"not markdown",
             }
         )
-        entries = read_archive(data)
-        assert [e.path for e in entries] == ["docs/a.md"]
-        assert entries[0].document.title == "A"
+        archive = read_archive(data)
+        assert [e.path for e in archive.entries] == ["docs/a.md"]
+        assert archive.entries[0].document.title == "A"
+        # `.md` 가 아닌 것은 문서가 아니지만 버리지도 않는다. 본문이 가리키면
+        # 첨부로 흡수한다.
+        assert set(archive.assets) == {"docs/image.png", "docs/notes.txt"}
 
     def test_shallow_entries_come_first(self) -> None:
         """부모가 자식보다 먼저 만들어져야 트리가 이어진다."""
         data = self._zip({"a/b/deep.md": b"deep", "top.md": b"top", "a/mid.md": b"mid"})
-        assert [e.path for e in read_archive(data)] == ["top.md", "a/mid.md", "a/b/deep.md"]
+        assert [e.path for e in read_archive(data).entries] == ["top.md", "a/mid.md", "a/b/deep.md"]
 
     def test_non_utf8_files_are_skipped(self) -> None:
         # 추측해서 열면 깨진 글자가 문서로 들어앉고 되돌릴 방법이 없다.
         data = self._zip({"ok.md": b"fine", "broken.md": "한글".encode("euc-kr")})
-        assert [e.path for e in read_archive(data)] == ["ok.md"]
+        assert [e.path for e in read_archive(data).entries] == ["ok.md"]
 
     def test_rejects_a_broken_zip(self) -> None:
         with pytest.raises(ValidationError) as exc:
@@ -185,7 +191,7 @@ class TestArchive:
 
     def test_write_then_read(self) -> None:
         data = write_archive([("a.md", "# A\n"), ("dir/b.md", "# B\n")])
-        assert {e.path for e in read_archive(data)} == {"a.md", "dir/b.md"}
+        assert {e.path for e in read_archive(data).entries} == {"a.md", "dir/b.md"}
 
 
 class TestSafeArchivePath:
@@ -260,3 +266,66 @@ class TestContentDisposition:
 
     def test_the_extension_is_kept(self) -> None:
         assert content_disposition("ENG.zip").startswith('attachment; filename="ENG.zip"')
+
+
+class TestAssetTargets:
+    """본문이 가리키는 상대 경로 찾기.
+
+    못 찾으면 ZIP 에 같이 넣은 그림이 통째로 깨진 링크가 된다.
+    """
+
+    def test_finds_images_and_links(self) -> None:
+        body = "![그림](images/a.png)\n\n[문서](files/spec.pdf) 참고"
+        assert asset_targets(body) == ["images/a.png", "files/spec.pdf"]
+
+    def test_skips_absolute_and_schemed(self) -> None:
+        body = "[웹](https://x.com/a.png) [뿌리](/a.png) [닻](#section) [첨부](attachment:1/a.png)"
+        assert asset_targets(body) == []
+
+    def test_skips_fenced_code(self) -> None:
+        """문법을 설명한 예시가 링크로 읽히면 안 된다 (links.py 와 같은 이유)."""
+        body = "```md\n![예시](images/a.png)\n```\n\n![진짜](images/b.png)"
+        assert asset_targets(body) == ["images/b.png"]
+
+    def test_angle_brackets(self) -> None:
+        assert asset_targets("![공백 있는 이름](<images/a b.png>)") == ["images/a b.png"]
+
+    def test_no_duplicates(self) -> None:
+        assert asset_targets("![1](a.png) ![2](a.png)") == ["a.png"]
+
+
+class TestResolveAsset:
+    def test_relative_to_the_document(self) -> None:
+        assert resolve_asset("docs/guide.md", "images/a.png") == "docs/images/a.png"
+        assert resolve_asset("guide.md", "images/a.png") == "images/a.png"
+        assert resolve_asset("docs/deep/guide.md", "../a.png") == "docs/a.png"
+
+    def test_escaping_the_archive_is_refused(self) -> None:
+        assert resolve_asset("guide.md", "../../etc/passwd") is None
+        assert resolve_asset("docs/guide.md", "../../../x") is None
+
+    def test_strips_query_and_fragment(self) -> None:
+        assert resolve_asset("guide.md", "a.png?v=2") == "a.png"
+
+    def test_decodes_percent_escapes(self) -> None:
+        assert resolve_asset("guide.md", "images/%ED%95%9C%EA%B8%80.png") == "images/한글.png"
+
+
+class TestRewriteAssets:
+    def test_swaps_only_what_was_absorbed(self) -> None:
+        """바꿀 목록을 미리 정해 두면 예시에 같은 글자가 있어도 안전하다."""
+        body = "![a](images/a.png) ![b](images/b.png)"
+        out = rewrite_assets(body, {"images/a.png": "attachment:1/a.png"})
+        assert out == "![a](attachment:1/a.png) ![b](images/b.png)"
+
+    def test_leaves_fenced_code_alone(self) -> None:
+        body = "```md\n![x](a.png)\n```\n![x](a.png)"
+        out = rewrite_assets(body, {"a.png": "attachment:1/a.png"})
+        assert out == "```md\n![x](a.png)\n```\n![x](attachment:1/a.png)"
+
+    def test_angle_brackets(self) -> None:
+        out = rewrite_assets("![x](<a b.png>)", {"a b.png": "attachment:1/a b.png"})
+        assert out == "![x](attachment:1/a b.png)"
+
+    def test_nothing_to_do(self) -> None:
+        assert rewrite_assets("![x](a.png)", {}) == "![x](a.png)"

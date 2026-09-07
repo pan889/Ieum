@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import mimetypes
+import posixpath
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,6 +16,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.core.attachments import AttachmentService
 from ieum.core.context import Actor
 from ieum.core.exceptions import (
     ConflictError,
@@ -34,6 +37,7 @@ from ieum.core.outbox import publish
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope
+from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
@@ -41,6 +45,7 @@ from ieum.modules.org import contracts as org_links
 from ieum.modules.search import contracts as search
 from ieum.modules.wiki import events as wiki_events
 from ieum.modules.wiki import permissions as perms
+from ieum.modules.wiki.attachments import OWNER_PAGE
 from ieum.modules.wiki.models import (
     MAX_DEPTH,
     PAGE_KINDS,
@@ -55,9 +60,12 @@ from ieum.modules.wiki.models import (
 )
 from ieum.modules.wiki.portable import (
     ArchiveEntry,
+    asset_targets,
     parse_document,
     read_archive,
     render_document,
+    resolve_asset,
+    rewrite_assets,
     write_archive,
 )
 from ieum.modules.wiki.repository import (
@@ -314,9 +322,18 @@ async def resolve_page_mentions(
 
 
 class PageService:
-    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        *,
+        store: ObjectStore | None = None,
+    ) -> None:
         self._s = session
         self._perms = permissions
+        # 임포트가 첨부를 흡수할 때만 쓴다. 없으면 상대경로를 그대로 둔다 —
+        # 조용히 링크를 지우느니 깨진 링크가 낫다. 무엇이 있었는지는 남는다.
+        self._store = store
         self._spaces = SpaceRepository(session)
         self._pages = PageRepository(session)
         self._versions = PageVersionRepository(session)
@@ -880,18 +897,18 @@ class PageService:
         """
         space = await self._require_space(space_id)
         await self._perms.require(self._s, actor, perms.PAGE_CREATE, scope=Scope.space(space.id))
-        entries = read_archive(data)
+        archive = read_archive(data)
 
         #: ZIP 안의 폴더 경로 → 만들어진 문서. 자식이 부모를 찾을 때 쓴다.
         created_by_dir: dict[str, UUID] = {}
         views: list[PageView] = []
-        for entry in entries:
+        for entry in archive.entries:
             directory, _, _ = entry.path.rpartition("/")
-            views.append(
-                await self._import_entry(
-                    actor, space_id, entry, directory, created_by_dir, parent_id
-                )
+            view = await self._import_entry(
+                actor, space_id, entry, directory, created_by_dir, parent_id
             )
+            await self._absorb_assets(actor, view, entry.path, archive.assets)
+            views.append(view)
         log.info(
             "wiki.archive_imported",
             actor=str(actor.user_id),
@@ -932,6 +949,67 @@ class PageService:
             child_dir = f"{directory}/{stem}" if directory else stem
             created_by_dir[child_dir] = view.page.id
         return view
+
+    async def _absorb_assets(
+        self, actor: Actor, view: PageView, document_path: str, assets: dict[str, bytes]
+    ) -> None:
+        """본문이 가리키는 묶음 안의 파일을 첨부로 올리고 주소를 바꾼다.
+
+        안 하면 `![그림](images/a.png)` 이 통째로 깨진 링크가 된다 — 올린
+        사람은 ZIP 에 그림을 같이 넣었는데도.
+
+        **가리켜진 것만** 올린다. 묶음에 딸려 온 `.DS_Store` 까지 첨부가 되면
+        안 된다. 못 찾은 경로는 그대로 둔다: 조용히 지우면 무엇이 있었는지도
+        사라진다.
+        """
+        if self._store is None or not assets:
+            return
+        targets = asset_targets(view.body)
+        if not targets:
+            return
+
+        attachments = AttachmentService(self._s, self._store)
+        replacements: dict[str, str] = {}
+        for target in targets:
+            resolved = resolve_asset(document_path, target)
+            if resolved is None:
+                continue
+            data = assets.get(resolved)
+            if data is None:
+                continue
+            filename = posixpath.basename(resolved)
+            mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            try:
+                row = await attachments.ingest(
+                    actor,
+                    owner_type=OWNER_PAGE,
+                    owner_id=view.page.id,
+                    filename=filename,
+                    mime=mime,
+                    data=data,
+                )
+            except ValidationError:
+                # 너무 크거나 막힌 형식이다. 문서를 통째로 거절하지 않는다 —
+                # 글은 멀쩡한데 그림 하나 때문에 임포트가 실패하면 곤란하다.
+                log.info("wiki.asset_skipped", page=str(view.page.id), path=resolved)
+                continue
+            replacements[target] = f"attachment:{row.id}/{row.filename}"
+
+        if not replacements:
+            return
+
+        rewritten = rewrite_assets(view.body, replacements)
+        if rewritten == view.body:
+            return
+        # 방금 만든 문서의 **첫 판**을 고친다. 새 판을 만들면 올리자마자
+        # 이력이 두 줄이 되고, 첫 줄은 아무도 못 본 깨진 판이다.
+        current = await self._current_version(view.page)
+        if current is None:
+            return
+        current.body = normalize_markdown(rewritten)
+        await self._s.flush()
+        await self._reindex(view.page)
+        await self._relink(view.page)
 
     @staticmethod
     def _nearest_parent(directory: str, created: dict[str, UUID]) -> UUID | None:

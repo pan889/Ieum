@@ -8,18 +8,21 @@ DB 는 실제 Postgres 를 쓴다 (conventions.md 테스트 표).
 from __future__ import annotations
 
 import os
+import secrets
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import httpx
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ieum.config import Settings
 from ieum.core.context import Actor
 from ieum.core.ids import new_id
+from ieum.core.storage import ObjectStore
 from ieum.db.models import Base
 
 TEST_SECRET = "test-secret-key-at-least-32-characters-long-xxxx"
@@ -155,3 +158,48 @@ def actor() -> Actor:
 @pytest.fixture
 def customer_actor() -> Actor:
     return Actor(user_id=new_id(), email="customer@example.com", is_customer=True)
+
+
+# ── 오브젝트 스토리지 ────────────────────────────────────────────
+#
+# 첨부를 쓰는 테스트가 여럿이라(첨부 자체, 위키 임포트) 여기 둔다.
+
+_S3_ENDPOINT: list[str] = [""]
+
+
+def s3_endpoint() -> str:
+    """지금 도는 가짜 S3 의 주소. 버킷에 직접 쓰는 테스트가 쓴다."""
+    return _S3_ENDPOINT[0]
+
+
+@pytest.fixture(scope="session")
+def s3_server() -> Iterator[str]:
+    """in-process S3. 실제 HTTP 를 타므로 presigned URL 을 그대로 쓸 수 있다."""
+    from moto.server import ThreadedMotoServer
+
+    server = ThreadedMotoServer(port=0)
+    server.start()
+    host, port = server.get_host_and_port()
+    endpoint = f"http://{host}:{port}"
+    _S3_ENDPOINT[0] = endpoint
+    yield endpoint
+    server.stop()
+
+
+@pytest.fixture
+def store(s3_server: str, settings: Settings) -> ObjectStore:
+    configured = settings.model_copy(
+        update={
+            "s3_endpoint_url": s3_server,
+            "s3_bucket": f"test-{secrets.token_hex(4)}",
+            "s3_access_key": SecretStr("test"),
+            "s3_secret_key": SecretStr("test"),
+        }
+    )
+    return ObjectStore(configured)
+
+
+@pytest_asyncio.fixture
+async def ready_store(store: ObjectStore) -> AsyncIterator[ObjectStore]:
+    await store.ensure_bucket()
+    yield store

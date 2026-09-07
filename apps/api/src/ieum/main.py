@@ -39,6 +39,7 @@ from ieum.modules.notify.router import (
 from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.router import projects_router, roles_router
 from ieum.modules.search.router import router as unified_search_router
+from ieum.modules.wiki import attachments as wiki_attachments
 from ieum.modules.wiki.contracts import page_model as wiki_page_model
 from ieum.modules.wiki.router import pages_router, spaces_router
 from ieum.modules.wiki.service import PageRestrictionGuard
@@ -127,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     set_permission_service(permissions)
     # 첨부 소유자별 권한 리졸버. core 는 어떤 모듈이 첨부를 쓰는지 모른다.
     issue_attachments.install()
+    wiki_attachments.install()
 
     for router in (
         auth_router,

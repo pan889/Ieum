@@ -14,6 +14,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.core.attachments import Attachment
 from ieum.core.context import Actor
 from ieum.core.exceptions import (
     ConflictError,
@@ -25,11 +26,13 @@ from ieum.core.exceptions import (
 from ieum.core.ids import new_id
 from ieum.core.outbox import OutboxEvent
 from ieum.core.pagination import PageRequest
-from ieum.core.permissions import PermissionService, Scope
+from ieum.core.permissions import PermissionService, Scope, set_permission_service
+from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import GroupMember, User, UserGroup
 from ieum.modules.org.models import Role
 from ieum.modules.org.repository import OrgPermissionResolver, RoleRepository
+from ieum.modules.wiki import attachments as wiki_attachments
 from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import Space
 from ieum.modules.wiki.service import (
@@ -1205,3 +1208,143 @@ class TestBlog:
             actor, post.page.id, body="확인했습니다"
         )
         assert comment.comment.page_id == post.page.id
+
+
+@pytest.fixture
+def page_attachments(permissions: PermissionService) -> None:
+    """문서 첨부의 권한 리졸버. main 이 기동할 때 하는 일과 같다.
+
+    리졸버는 전역 권한 서비스를 본다(core 는 어느 모듈이 첨부를 쓰는지 모른다).
+    라우터 없이 서비스만 쓰는 테스트라 여기서 직접 꽂는다.
+    """
+    wiki_attachments.install()
+    set_permission_service(permissions)
+
+
+class TestImportedAssets:
+    """ZIP 안의 그림을 첨부로 흡수한다.
+
+    안 하면 `![그림](images/a.png)` 이 통째로 깨진 링크가 된다 — 올린 사람은
+    ZIP 에 그림을 같이 넣었는데도.
+    """
+
+    @staticmethod
+    def _zip(files: dict[str, bytes]) -> bytes:
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for path, body in files.items():
+                archive.writestr(path, body)
+        return buffer.getvalue()
+
+    async def _attachments(self, session: AsyncSession, page_id: UUID) -> list[Attachment]:
+        rows = await session.execute(select(Attachment).where(Attachment.owner_id == page_id))
+        return list(rows.scalars().all())
+
+    async def test_relative_image_becomes_an_attachment(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        data = self._zip(
+            {
+                "docs/guide.md": "# 안내\n\n![그림](images/a.png)\n".encode(),
+                "docs/images/a.png": b"\x89PNG\r\n\x1a\n" + b"0" * 32,
+            }
+        )
+        views = await PageService(session, permissions, store=ready_store).import_archive(
+            actor, space_id=space.id, data=data
+        )
+        page = views[0].page
+
+        rows = await self._attachments(session, page.id)
+        assert [row.filename for row in rows] == ["a.png"]
+        assert rows[0].mime == "image/png"
+
+        fresh = await PageService(session, permissions).get(actor, page.id)
+        assert f"attachment:{rows[0].id}/a.png" in fresh.body
+        assert "images/a.png" not in fresh.body
+
+    async def test_only_referenced_files_are_absorbed(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """묶음에 딸려 온 `.DS_Store` 까지 첨부가 되면 안 된다."""
+        actor = await full_access(session, user, space)
+        data = self._zip(
+            {
+                "guide.md": "![그림](a.png)".encode(),
+                "a.png": b"\x89PNG" + b"0" * 16,
+                "unused.png": b"\x89PNG" + b"0" * 16,
+                ".DS_Store": b"junk",
+            }
+        )
+        views = await PageService(session, permissions, store=ready_store).import_archive(
+            actor, space_id=space.id, data=data
+        )
+        rows = await self._attachments(session, views[0].page.id)
+        assert [row.filename for row in rows] == ["a.png"]
+
+    async def test_missing_file_is_left_alone(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """조용히 지우면 무엇이 있었는지도 사라진다. 깨진 링크가 낫다."""
+        actor = await full_access(session, user, space)
+        data = self._zip({"guide.md": "![없는 그림](images/gone.png)".encode()})
+        views = await PageService(session, permissions, store=ready_store).import_archive(
+            actor, space_id=space.id, data=data
+        )
+        assert "images/gone.png" in views[0].body
+        assert await self._attachments(session, views[0].page.id) == []
+
+    async def test_absorption_makes_no_second_version(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """올리자마자 이력이 두 줄이면, 첫 줄은 아무도 못 본 깨진 판이다."""
+        actor = await full_access(session, user, space)
+        data = self._zip({"guide.md": "![그림](a.png)".encode(), "a.png": b"\x89PNG" + b"0" * 16})
+        views = await PageService(session, permissions, store=ready_store).import_archive(
+            actor, space_id=space.id, data=data
+        )
+        history = await PageService(session, permissions).history(actor, views[0].page.id)
+        assert len(history) == 1
+
+    async def test_without_a_store_the_link_stays(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        page_attachments: None,
+    ) -> None:
+        """스토리지가 없으면 손대지 않는다. 링크를 지우는 것보다 낫다."""
+        actor = await full_access(session, user, space)
+        data = self._zip({"guide.md": "![그림](a.png)".encode(), "a.png": b"\x89PNG" + b"0" * 16})
+        views = await PageService(session, permissions).import_archive(
+            actor, space_id=space.id, data=data
+        )
+        assert "a.png" in views[0].body

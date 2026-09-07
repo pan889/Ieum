@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Header, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ieum.core.deps import CurrentActor, DbSession, PermissionDep
+from ieum.core.deps import CurrentActor, DbSession, PermissionDep, StorageDep
 from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown.anchors import MAX_CONTEXT, MAX_QUOTE, Anchor
@@ -510,13 +510,15 @@ async def import_into_space(
     actor: CurrentActor,
     session: DbSession,
     permissions: PermissionDep,
+    store: StorageDep,
     file: Annotated[UploadFile, File()],
     parent_id: UUID | None = None,
 ) -> list[PageResponse]:
     """`.md` 하나 또는 `.md` 를 담은 ZIP 을 올린다.
 
-    스토리지를 거치지 않는다 — 첨부와 달리 내용을 **서버가 읽어야** 하고,
-    묶음 크기가 제한돼 있어 요청 하나로 끝난다.
+    본문은 스토리지를 거치지 않는다 — 첨부와 달리 내용을 **서버가 읽어야**
+    하고, 묶음 크기가 제한돼 있어 요청 하나로 끝난다. 묶음 안의 그림은
+    반대로 스토리지로 간다: 문서가 가리키는 것만 첨부로 흡수한다.
     """
     raw = await file.read()
     if len(raw) > MAX_ARCHIVE_BYTES:
@@ -525,7 +527,7 @@ async def import_into_space(
             code="wiki.import_too_large",
             details={"max": MAX_ARCHIVE_BYTES},
         )
-    service = PageService(session, permissions)
+    service = PageService(session, permissions, store=store)
     name = file.filename or "upload.md"
 
     if raw[:2] == b"PK":

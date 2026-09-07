@@ -1,6 +1,7 @@
 import { useRouter } from '@tanstack/react-router'
 import { useMemo } from 'react'
 
+import { useAttachmentUrls } from './attachments'
 import { renderMarkdown } from './dialect'
 
 /**
@@ -23,11 +24,14 @@ export function MarkdownHtml({
   className?: string | undefined
 }) {
   const router = useRouter()
+  // 저장은 `attachment:` 스킴으로 한다. 그릴 때 서명된 주소로 바꾼다 —
+  // 본문에 박으면 몇 분 뒤 죽는다 (attachments.ts).
+  const resolved = useAttachmentUrls(html)
 
   return (
     <div
       className={className ? `ieum-markdown ${className}` : 'ieum-markdown'}
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: resolved }}
       // `issue:`·`page:` 링크는 렌더 시 앱 주소로 바뀐다. 그냥 두면 전체
       // 새로고침이 나므로 클릭을 가로채 라우터로 넘긴다. 위임으로 잡는다 —
       // innerHTML 로 그린 앵커에는 리스너를 하나씩 못 붙인다.

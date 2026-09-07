@@ -17,7 +17,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import yaml
 
@@ -139,11 +139,111 @@ class ArchiveEntry:
     document: ParsedDocument
 
 
-def read_archive(data: bytes) -> list[ArchiveEntry]:
-    """ZIP 에서 `.md` 를 꺼낸다. 폴더 구조가 곧 문서 트리다.
+#: 본문의 링크·이미지 대상. `](여기)` 만 본다 — 참조 스타일 링크는 드물고,
+#: 못 잡아도 원문 그대로 남을 뿐이라 문서가 깨지지 않는다.
+_LINK_TARGET = re.compile(r"\]\(\s*(<[^>]*>|[^)\s]+)")
 
-    `.md` 가 아닌 파일은 건너뛴다. 첨부로 흡수하는 것은 다음 단계다 —
-    여기서 하면 임포트가 스토리지까지 걸치게 된다.
+#: 코드 울타리. 안쪽은 예시라 건드리지 않는다.
+_FENCE = re.compile(r"^\s{0,3}(```+|~~~+)")
+
+#: 스킴이 붙었으면 우리 파일이 아니다.
+_SCHEME = re.compile(r"\A[a-zA-Z][a-zA-Z0-9+.-]*:")
+
+
+@dataclass(frozen=True, slots=True)
+class Archive:
+    """묶음에서 꺼낸 것. 문서와, 문서가 가리킬 수 있는 나머지 파일들."""
+
+    entries: list[ArchiveEntry]
+    #: 경로 → 바이트. `.md` 가 아닌 파일 전부. 실제로 참조된 것만 흡수한다.
+    assets: dict[str, bytes]
+
+
+def asset_targets(body: str) -> list[str]:
+    """본문이 가리키는 **상대 경로** 목록. 등장 순서대로, 중복 없이.
+
+    울타리 안은 건너뛴다 — 문법을 설명한 코드 예시가 링크로 읽히면 안 된다
+    (links.py 와 같은 이유).
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    fence: str | None = None
+
+    for line in body.split("\n"):
+        marker = _FENCE.match(line)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token[:3]
+            elif token.startswith(fence):
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        for match in _LINK_TARGET.finditer(line):
+            target = match.group(1).strip()
+            if target.startswith("<") and target.endswith(">"):
+                target = target[1:-1].strip()
+            if not target or target in seen:
+                continue
+            # 스킴이 있거나(`https:`·`attachment:`) 절대 경로면 우리 파일이 아니다.
+            if _SCHEME.match(target) or target.startswith(("/", "#")):
+                continue
+            seen.add(target)
+            found.append(target)
+    return found
+
+
+def resolve_asset(document_path: str, target: str) -> str | None:
+    """문서 위치를 기준으로 상대 경로를 묶음 안의 경로로. 밖으로 나가면 None."""
+    cleaned = unquote(target.split("#", 1)[0].split("?", 1)[0]).strip()
+    if not cleaned:
+        return None
+    base = posixpath.dirname(document_path)
+    resolved = posixpath.normpath(posixpath.join(base, cleaned))
+    # `../../etc/passwd` 같은 것. 묶음 밖은 아예 안 본다.
+    if resolved.startswith("../") or resolved in {"..", "."} or resolved.startswith("/"):
+        return None
+    return resolved
+
+
+def rewrite_assets(body: str, replacements: dict[str, str]) -> str:
+    """본문의 상대 경로를 새 주소로. **실제로 흡수한 것만** 바꾼다.
+
+    바꿀 목록을 미리 정해 두면 코드 예시에 우연히 같은 글자가 있어도 안전하다
+    — 그 파일이 묶음에 실제로 있고 첨부가 된 경우에만 목록에 오른다.
+    """
+    if not replacements:
+        return body
+
+    def _swap(match: re.Match[str]) -> str:
+        raw = match.group(1)
+        target = raw[1:-1].strip() if raw.startswith("<") and raw.endswith(">") else raw
+        replaced = replacements.get(target)
+        return match.group(0) if replaced is None else f"]({replaced}"
+
+    out: list[str] = []
+    fence: str | None = None
+    for line in body.split("\n"):
+        marker = _FENCE.match(line)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token[:3]
+            elif token.startswith(fence):
+                fence = None
+            out.append(line)
+            continue
+        out.append(line if fence is not None else _LINK_TARGET.sub(_swap, line))
+    return "\n".join(out)
+
+
+def read_archive(data: bytes) -> Archive:
+    """ZIP 에서 `.md` 와 나머지 파일을 꺼낸다. 폴더 구조가 곧 문서 트리다.
+
+    `.md` 가 아닌 파일도 들고 온다. 문서가 가리키는 것만 첨부로 흡수하고,
+    아무도 안 가리키는 파일은 버린다 — 묶음에 딸려 온 `.DS_Store` 까지
+    첨부가 되면 안 된다.
     """
     if len(data) > MAX_ARCHIVE_BYTES:
         raise ValidationError(
@@ -165,11 +265,15 @@ def read_archive(data: bytes) -> list[ArchiveEntry]:
                 code="wiki.import_too_large",
                 details={"max": MAX_ARCHIVE_FILES},
             )
+        assets: dict[str, bytes] = {}
         for member in members:
             safe = safe_archive_path(member.filename)
-            if safe is None or not safe.lower().endswith(_MD_SUFFIXES):
+            if safe is None:
                 continue
             raw = archive.read(member)
+            if not safe.lower().endswith(_MD_SUFFIXES):
+                assets[safe] = raw
+                continue
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
@@ -182,7 +286,7 @@ def read_archive(data: bytes) -> list[ArchiveEntry]:
             )
     # 얕은 것부터. 부모가 자식보다 먼저 만들어져야 트리가 이어진다.
     entries.sort(key=lambda e: (e.path.count("/"), e.path))
-    return entries
+    return Archive(entries=entries, assets=assets)
 
 
 def safe_archive_path(name: str) -> str | None:
@@ -239,12 +343,16 @@ def write_archive(files: list[tuple[str, str]]) -> bytes:
 
 
 __all__ = [
+    "Archive",
     "ArchiveEntry",
     "ParsedDocument",
+    "asset_targets",
     "content_disposition",
     "parse_document",
     "read_archive",
     "render_document",
+    "resolve_asset",
+    "rewrite_assets",
     "safe_archive_path",
     "write_archive",
 ]
