@@ -229,5 +229,7 @@
   "fields.everywhere": "어디서나",
   "fields.limited": "프로젝트·유형 제한",
   "fields.immutableHint": "키와 종류는 바꿀 수 없습니다 — 키는 저장된 모든 값의 주소이고, 종류는 그 값을 읽는 방법을 정합니다.",
-  "permissionWithKey": "{name} ({key})"
+  "permissionWithKey": "{name} ({key})",
+  "people.searchHint": "이름이나 이메일 주소를 입력하세요.",
+  "people.noMatches": "해당하는 사람이 없습니다."
 }

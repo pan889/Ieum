@@ -229,5 +229,7 @@
   "fields.everywhere": "everywhere",
   "fields.limited": "limited to a project or type",
   "fields.immutableHint": "The key and the type can't be changed — the key is the address of every stored value, and the type decides how those values are read.",
-  "permissionWithKey": "{name} ({key})"
+  "permissionWithKey": "{name} ({key})",
+  "people.searchHint": "Type a name or an email address.",
+  "people.noMatches": "Nobody matches that."
 }

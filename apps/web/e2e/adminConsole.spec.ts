@@ -116,8 +116,11 @@ test.describe('그룹', () => {
     await expect(row).toContainText(/no members/i)
 
     await row.getByRole('button', { name: new RegExp(`members of ${name}`, 'i') }).click()
-    await row.getByLabel(/^add someone$/i).selectOption({ label: `${person.displayName} (${person.email})` })
-    await row.getByRole('button', { name: /^add$/i }).click()
+    // 후보를 통째로 내려 고르는 드롭다운이 아니다 — 사람이 백 명을 넘으면
+    // 마지막 사람이 목록에서 빠진다(실제로 개발 DB 가 103명이 되면서 여기서
+    // 멈췄다). 이제 검색해서 고른다.
+    await row.getByLabel(/^add someone$/i).fill(person.email)
+    await row.getByRole('button', { name: new RegExp(`\\(${person.email}\\)$`) }).click()
     await expect(row).toContainText(/1 member/i)
     await expect(row).toContainText(person.email)
 

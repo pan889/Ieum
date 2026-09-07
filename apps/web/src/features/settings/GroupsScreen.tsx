@@ -19,10 +19,11 @@ import { useTranslation } from 'react-i18next'
 
 import type { CurrentUser, UserGroup } from '@ieum/api-client'
 
+import { PersonPicker } from '@/features/settings/PersonPicker'
 import { SettingsNav } from '@/features/settings/SettingsNav'
-import { groupsApi, usersApi } from '@/shared/api'
+import { groupsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
 
 export function GroupsScreen() {
   const { t } = useTranslation(['admin', 'common'])
@@ -205,19 +206,9 @@ function GroupCard({
 function Members({ group, managed }: { group: UserGroup; managed: boolean }) {
   const { t } = useTranslation(['admin', 'common'])
   const queryClient = useQueryClient()
-  const [picked, setPicked] = useState('')
-
   const members = useQuery({
     queryKey: ['groups', group.id, 'members'],
     queryFn: () => groupsApi.members(group.id),
-  })
-
-  // 넣을 사람을 고른다. 목록이 길어지면 검색으로 바꿔야 하지만, 그때까지는
-  // 고르는 것이 타이핑보다 빠르고 오타가 없다.
-  const candidates = useQuery({
-    queryKey: ['admin', 'users', ''],
-    queryFn: () => usersApi.list({ limit: 100 }),
-    enabled: !managed,
   })
 
   const invalidate = async () => {
@@ -226,10 +217,7 @@ function Members({ group, managed }: { group: UserGroup; managed: boolean }) {
 
   const add = useMutation({
     mutationFn: (userId: string) => groupsApi.addMember(group.id, userId),
-    onSuccess: async () => {
-      setPicked('')
-      await invalidate()
-    },
+    onSuccess: invalidate,
   })
 
   const drop = useMutation({
@@ -239,7 +227,6 @@ function Members({ group, managed }: { group: UserGroup; managed: boolean }) {
 
   const rows = members.data ?? []
   const already = new Set(rows.map((row) => row.id))
-  const pool = (candidates.data?.items ?? []).filter((user) => !already.has(user.id))
 
   return (
     <div className="flex flex-col gap-3 border-t border-border pt-3">
@@ -252,30 +239,14 @@ function Members({ group, managed }: { group: UserGroup; managed: boolean }) {
         // 적어 둔다 — 없는 것과 못 하는 것은 다르다.
         <p className="text-sm text-muted">{t('admin:groups.managedHint')}</p>
       ) : (
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (picked) add.mutate(picked)
-          }}
-        >
-          <Select
-            label={t('admin:groups.addMember')}
-            className="min-w-56"
-            value={picked}
-            onChange={(event) => { setPicked(event.target.value) }}
-          >
-            <option value="">{t('admin:groups.pickPerson')}</option>
-            {pool.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.display_name} ({user.email})
-              </option>
-            ))}
-          </Select>
-          <Button type="submit" disabled={!picked} loading={add.isPending} className="text-xs">
-            {t('common:action.add')}
-          </Button>
-        </form>
+        // 목록을 통째로 내려 고르게 하지 않는다 — 사람이 백 명을 넘으면
+        // 마지막 사람을 넣을 길이 사라진다(PersonPicker 주석 참고).
+        <PersonPicker
+          label={t('admin:groups.addMember')}
+          exclude={already}
+          busy={add.isPending}
+          onPick={(userId) => { add.mutate(userId) }}
+        />
       )}
 
       <ul

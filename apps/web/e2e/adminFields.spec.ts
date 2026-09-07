@@ -11,6 +11,16 @@
 
 import { expect, signIn, signInWithMfa, test, uniqueKey } from './fixtures'
 
+/**
+ * 2단계 인증 대기 때문에 느리다.
+ *
+ * 서버는 **맞은 코드의 타임스텝 이하**를 다시 받지 않는다(재사용 방지). 그래서
+ * 한 스펙에서 여러 번 로그인하면 매번 다음 30초 구간을 기다려야 하고, 기본
+ * 테스트 예산(30초)을 거의 다 쓴다 — 스펙 하나만 돌리면 통과하고 여럿을 함께
+ * 돌리면 시간에 걸려 붉어졌다. 다른 MFA·메일 스펙과 같은 처방이다.
+ */
+test.slow()
+
 test.describe('워크플로우', () => {
   test('2FA 없는 관리자에게는 거절을 그대로 보여 준다', async ({ page }) => {
     await signIn(page)

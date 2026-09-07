@@ -19,8 +19,9 @@ import { useTranslation } from 'react-i18next'
 
 import type { PermissionDef, Role, RoleAssignment } from '@ieum/api-client'
 
+import { PersonPicker } from '@/features/settings/PersonPicker'
 import { SettingsNav } from '@/features/settings/SettingsNav'
-import { groupsApi, rolesApi, usersApi } from '@/shared/api'
+import { groupsApi, rolesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Badge, Button, Card, Chip, Field, Select } from '@/shared/ui/primitives'
 
@@ -285,7 +286,8 @@ function Assignments({ role }: { role: Role }) {
     queryKey: ['roles', role.id, 'assignments'],
     queryFn: () => rolesApi.assignments(role.id),
   })
-  const people = useQuery({ queryKey: ['admin', 'users', ''], queryFn: () => usersApi.list({ limit: 100 }) })
+  // 그룹은 통째로 받는다 — 수가 적고 서버가 전부 준다. 사람은 그럴 수 없어서
+  // 검색으로 고른다(PersonPicker 주석 참고).
   const groups = useQuery({ queryKey: ['groups'], queryFn: () => groupsApi.list() })
 
   const refresh = async () => {
@@ -293,13 +295,13 @@ function Assignments({ role }: { role: Role }) {
   }
 
   const give = useMutation({
-    mutationFn: () =>
+    mutationFn: (principalId: string) =>
       rolesApi.assign({
         role_id: role.id,
         scope_kind: role.scope_kind,
         scope_id: null,
         principal_kind: kind,
-        principal_id: picked,
+        principal_id: principalId,
       }),
     onSuccess: async () => {
       setPicked('')
@@ -313,10 +315,8 @@ function Assignments({ role }: { role: Role }) {
   })
 
   const rows = assignments.data ?? []
-  const options =
-    kind === 'user'
-      ? (people.data?.items ?? []).map((u) => ({ id: u.id, label: `${u.display_name} (${u.email})` }))
-      : (groups.data ?? []).map((g) => ({ id: g.id, label: g.name }))
+  //: 이미 받은 주체. 후보에서 빼면 두 번 주는 실수를 막는다.
+  const already = new Set(rows.map((row) => row.principal_id))
 
   return (
     <div className="flex flex-col gap-2">
@@ -328,15 +328,10 @@ function Assignments({ role }: { role: Role }) {
       {/* 전역 역할만 여기서 준다. 프로젝트·스페이스 스코프는 그 대상을 고르는
           자리가 따로 있어야 하고, 그건 프로젝트 설정 화면의 일이다. */}
       {role.scope_kind === 'global' ? (
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (picked) give.mutate()
-          }}
-        >
+        <div className="flex flex-col gap-2">
           <Select
             label={t('admin:roles.principalKind')}
+            className="max-w-40"
             value={kind}
             onChange={(event) => {
               setKind(event.target.value as 'user' | 'group')
@@ -346,23 +341,43 @@ function Assignments({ role }: { role: Role }) {
             <option value="user">{t('admin:roles.principalUser')}</option>
             <option value="group">{t('admin:roles.principalGroup')}</option>
           </Select>
-          <Select
-            label={t('admin:roles.giveTo')}
-            className="min-w-56"
-            value={picked}
-            onChange={(event) => { setPicked(event.target.value) }}
-          >
-            <option value="">{t('admin:roles.pickPrincipal')}</option>
-            {options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-          <Button type="submit" disabled={!picked} loading={give.isPending} className="text-xs">
-            {t('common:action.add')}
-          </Button>
-        </form>
+
+          {kind === 'user' ? (
+            <PersonPicker
+              label={t('admin:roles.giveTo')}
+              exclude={already}
+              busy={give.isPending}
+              onPick={(userId) => { give.mutate(userId) }}
+            />
+          ) : (
+            <form
+              className="flex flex-wrap items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (picked) give.mutate(picked)
+              }}
+            >
+              <Select
+                label={t('admin:roles.giveTo')}
+                className="min-w-56"
+                value={picked}
+                onChange={(event) => { setPicked(event.target.value) }}
+              >
+                <option value="">{t('admin:roles.pickPrincipal')}</option>
+                {(groups.data ?? [])
+                  .filter((group) => !already.has(group.id))
+                  .map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+              </Select>
+              <Button type="submit" disabled={!picked} loading={give.isPending} className="text-xs">
+                {t('common:action.add')}
+              </Button>
+            </form>
+          )}
+        </div>
       ) : (
         <p className="text-sm text-muted">{t('admin:roles.scopedElsewhere')}</p>
       )}

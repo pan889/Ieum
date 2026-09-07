@@ -51,11 +51,10 @@ test('역할을 만들고, 권한을 고르고, 주고, 되돌린다', async ({ 
   await expect(chip).toHaveAttribute('aria-pressed', 'true')
   await expect(row).toContainText(/1 permission/i)
 
-  // 사람에게 준다.
-  await row.getByLabel(/^give to$/i).selectOption({
-    label: `${person.displayName} (${person.email})`,
-  })
-  await row.getByRole('button', { name: /^add$/i }).click()
+  // 사람에게 준다. 후보는 검색으로 찾는다 — 통째로 내리면 백 명을 넘는
+  // 조직에서 마지막 사람에게 역할을 줄 길이 사라진다.
+  await row.getByLabel(/^give to$/i).fill(person.email)
+  await row.getByRole('button', { name: new RegExp(`\\(${person.email}\\)$`) }).click()
   await expect(row).toContainText(person.email)
   await expect(row).toContainText(/given to 1 principal/i)
 
