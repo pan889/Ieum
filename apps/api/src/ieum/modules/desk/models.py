@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -331,6 +332,17 @@ class SlaPolicy(Entity, Archivable):
     )
     goals: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
+    )
+    #: 이 상태에 있는 동안 시계를 멈춘다. **상태 id 다 — 이름도, category 도
+    #: 아니다.**
+    #:
+    #: category 로 둘 수 없다: 워크플로우의 category 는 `todo`·`in_progress`·
+    #: `done` 셋뿐이고 "고객 답변 대기" 가 없다. 이름으로 두면 관리자가 상태
+    #: 이름을 바꾸는 순간 조용히 안 멈춘다 — 큐 조건을 `type = Request` 로
+    #: 두지 않은 것과 같은 판단이다. id 는 이름을 바꿔도 그대로이고, 상태가
+    #: 지워지면 그 id 가 사라져 그냥 안 멈추게 된다(틀린 답이 아니라 없는 답).
+    pause_state_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(Uuid), nullable=False, default=list, server_default="{}"
     )
     #: 켜져 있는 정책만 새 티켓에 클럭을 건다. 끄면 **이미 걸린 클럭은
     #: 그대로 둔다** — 지난 티켓의 판정이 정책을 끄는 것으로 바뀌면 안 된다.
