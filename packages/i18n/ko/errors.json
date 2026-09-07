@@ -93,6 +93,7 @@
   "desk.reserved_key_mapped": "요약과 내용은 티켓 자신의 칸으로 가므로 커스텀 필드에 매핑하지 않습니다.",
   "desk.sla_calendar_missing": "그 업무 달력이 없습니다.",
   "desk.sla_goals_invalid": "이 목표들로는 잴 수 없습니다 — 조건 없는 기본 목표가 하나 있어야 합니다.",
+  "desk.sla_pause_state_unknown": "이 프로젝트의 티켓이 있을 수 없는 상태입니다 — 이대로면 시계가 그 상태에서 멈추지 않습니다.",
   "desk.sla_name_empty": "SLA 정책에는 이름이 필요합니다.",
   "desk.sla_name_taken": "이 프로젝트에 같은 이름의 SLA 정책이 있습니다.",
   "desk.sla_unknown_metric": "SLA 정책은 첫 응답 또는 해결 중 하나를 잽니다.",

@@ -36,6 +36,7 @@ from ieum.modules.desk import permissions as desk_perms
 from ieum.modules.desk.models import SlaClock, SlaPolicy
 from ieum.modules.desk.service import SlaAdminService
 from ieum.modules.identity.models import User
+from ieum.modules.issues.models import IssueType, Workflow, WorkflowState
 from ieum.modules.org.models import Project
 from ieum.modules.org.repository import OrgPermissionResolver
 from role_grants import actor_for, grant
@@ -70,6 +71,39 @@ async def _admin(session: AsyncSession) -> User:
         scope=Scope.global_(),
     )
     return row
+
+
+async def _project_with_state(session: AsyncSession) -> tuple[Project, WorkflowState]:
+    """프로젝트와 **그 프로젝트에서 실제로 쓸 수 있는** 상태 하나.
+
+    유형을 프로젝트 전용으로 만드는 이유: 전역 유형으로 만들면 모든 프로젝트가
+    그 상태를 고를 수 있게 되어, "다른 프로젝트의 상태는 거절한다" 를 보는
+    시험이 아무것도 안 보게 된다.
+    """
+    project = await _project(session)
+    workflow = Workflow(name=f"wf-{new_id()}")
+    session.add(workflow)
+    await session.flush()
+    state = WorkflowState(
+        workflow_id=workflow.id, name="Open", category="todo", position=0, is_initial=True
+    )
+    session.add(state)
+    session.add(IssueType(project_id=project.id, name="Request", workflow_id=workflow.id))
+    await session.flush()
+    return project, state
+
+
+async def _calendar_id(
+    session: AsyncSession, permissions: PermissionService, admin: User
+) -> object:
+    view = await SlaAdminService(session, permissions).create_calendar(
+        actor_for(admin),
+        name=f"Seoul {new_id().hex[-4:]}",
+        timezone="Asia/Seoul",
+        working_hours=WEEK,
+        holidays=[],
+    )
+    return view.calendar.id
 
 
 async def _nobody(session: AsyncSession) -> User:
@@ -172,18 +206,6 @@ class TestSavingACalendar:
 
 
 class TestSavingAPolicy:
-    async def _calendar_id(
-        self, session: AsyncSession, permissions: PermissionService, admin: User
-    ) -> object:
-        view = await SlaAdminService(session, permissions).create_calendar(
-            actor_for(admin),
-            name=f"Seoul {new_id().hex[-4:]}",
-            timezone="Asia/Seoul",
-            working_hours=WEEK,
-            holidays=[],
-        )
-        return view.calendar.id
-
     async def test_a_good_policy_saves_with_its_calendar_name(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:
@@ -191,7 +213,7 @@ class TestSavingAPolicy:
         달력 목록을 또 받아 짜맞춰야 한다."""
         admin = await _admin(session)
         project = await _project(session)
-        calendar_id = await self._calendar_id(session, permissions, admin)
+        calendar_id = await _calendar_id(session, permissions, admin)
         view = await SlaAdminService(session, permissions).create_policy(
             actor_for(admin),
             project_id=project.id,
@@ -211,7 +233,7 @@ class TestSavingAPolicy:
         있을 뿐이라 아무도 모른다."""
         admin = await _admin(session)
         project = await _project(session)
-        calendar_id = await self._calendar_id(session, permissions, admin)
+        calendar_id = await _calendar_id(session, permissions, admin)
         with pytest.raises(ValidationError) as exc:
             await SlaAdminService(session, permissions).create_policy(
                 actor_for(admin),
@@ -234,7 +256,7 @@ class TestSavingAPolicy:
         """
         admin = await _admin(session)
         project = await _project(session)
-        calendar_id = await self._calendar_id(session, permissions, admin)
+        calendar_id = await _calendar_id(session, permissions, admin)
         with pytest.raises(ValidationError) as exc:
             await SlaAdminService(session, permissions).create_policy(
                 actor_for(admin),
@@ -252,7 +274,7 @@ class TestSavingAPolicy:
     ) -> None:
         admin = await _admin(session)
         project = await _project(session)
-        calendar_id = await self._calendar_id(session, permissions, admin)
+        calendar_id = await _calendar_id(session, permissions, admin)
         with pytest.raises(ValidationError) as exc:
             await SlaAdminService(session, permissions).create_policy(
                 actor_for(admin),
@@ -282,6 +304,144 @@ class TestSavingAPolicy:
                 pause_state_ids=[],
             )
         assert exc.value.code == "desk.sla_calendar_missing"
+
+
+class TestPauseStates:
+    """멈춤 상태는 **고르는 것**이고, 고를 수 없는 것은 저장되지 않는다.
+
+    검증 없이 받으면 잘못된 UUID 가 그대로 저장되고 시계는 영원히 안 멈춘다 —
+    관리자는 멈춤을 설정했다고 믿고, 아무 일도 일어나지 않으며, 틀렸다는
+    신호가 어디에도 없다. 이 결함이 조용한 이유는 멈춤이 **일어나지 않는
+    일**이라서다: 화면에 붉은 줄이 뜨지 않는다.
+    """
+
+    async def test_it_offers_the_states_this_project_can_be_in(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """UUID 를 손으로 적게 하지 않으려면 고를 수 있는 것을 내줘야 한다."""
+        admin = await _admin(session)
+        project, state = await _project_with_state(session)
+        rows = await SlaAdminService(session, permissions).list_states(actor_for(admin), project.id)
+        found = next((r for r in rows if r.id == state.id), None)
+        assert found is not None
+        assert found.name == "Open"
+        assert found.category == "todo"
+        # 같은 이름의 상태가 워크플로우마다 따로 있다 — 어느 쪽인지 알아야 한다.
+        assert found.workflow_name
+
+    async def test_a_state_from_another_project_is_not_offered(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """다른 프로젝트 전용 유형의 상태를 걸어 두면 멈춤이 영원히 안 온다."""
+        admin = await _admin(session)
+        mine, _ = await _project_with_state(session)
+        _, theirs = await _project_with_state(session)
+        rows = await SlaAdminService(session, permissions).list_states(actor_for(admin), mine.id)
+        assert theirs.id not in {r.id for r in rows}
+
+    async def test_a_chosen_state_saves(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project, state = await _project_with_state(session)
+        service = SlaAdminService(session, permissions)
+        view = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[state.id],
+        )
+        assert view.policy.pause_state_ids == [state.id]
+
+    async def test_an_unknown_state_is_refused_on_create(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project = await _project(session)
+        with pytest.raises(ValidationError) as exc:
+            await SlaAdminService(session, permissions).create_policy(
+                actor_for(admin),
+                project_id=project.id,
+                name="첫 응답",
+                metric="first_response",
+                calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+                goals=[{"seconds": 4 * HOUR}],
+                pause_state_ids=[new_id()],
+            )
+        assert exc.value.code == "desk.sla_pause_state_unknown"
+
+    async def test_a_state_from_another_project_is_refused(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**있는 상태인지가 아니라 이 프로젝트의 상태인지를 본다.** 존재만
+        보면 다른 프로젝트의 상태가 통과하고, 그 티켓은 그 상태에 갈 수 없으니
+        멈춤은 영원히 오지 않는다."""
+        admin = await _admin(session)
+        mine = await _project(session)
+        _, theirs = await _project_with_state(session)
+        with pytest.raises(ValidationError) as exc:
+            await SlaAdminService(session, permissions).create_policy(
+                actor_for(admin),
+                project_id=mine.id,
+                name="첫 응답",
+                metric="first_response",
+                calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+                goals=[{"seconds": 4 * HOUR}],
+                pause_state_ids=[theirs.id],
+            )
+        assert exc.value.code == "desk.sla_pause_state_unknown"
+
+    async def test_an_unknown_state_is_refused_on_update(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """고칠 때도 본다. 만들 때만 보면 고치기로 우회할 수 있다."""
+        admin = await _admin(session)
+        project, state = await _project_with_state(session)
+        service = SlaAdminService(session, permissions)
+        view = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[state.id],
+        )
+        with pytest.raises(ValidationError) as exc:
+            await service.update_policy(
+                actor_for(admin), view.policy.id, pause_state_ids=[new_id()]
+            )
+        assert exc.value.code == "desk.sla_pause_state_unknown"
+
+    async def test_clearing_the_list_is_allowed(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """빈 목록은 "멈추지 않는다" 는 뜻이고, 그것도 고를 수 있어야 한다."""
+        admin = await _admin(session)
+        project, state = await _project_with_state(session)
+        service = SlaAdminService(session, permissions)
+        view = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=[{"seconds": 4 * HOUR}],
+            pause_state_ids=[state.id],
+        )
+        updated = await service.update_policy(actor_for(admin), view.policy.id, pause_state_ids=[])
+        assert updated.policy.pause_state_ids == []
+
+    async def test_listing_states_needs_the_permission(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        nobody = await _nobody(session)
+        project = await _project(session)
+        with pytest.raises(PermissionDeniedError):
+            await SlaAdminService(session, permissions).list_states(actor_for(nobody), project.id)
 
 
 class TestNotBreakingPastVerdicts:

@@ -256,14 +256,24 @@ const MFA_ADMIN_SECRET = process.env['SEED_MFA_ADMIN_TOTP_SECRET'] ?? 'IEUMDEVSE
  */
 let usedStep = -1
 
+/**
+ * 스텝이 끝나기 직전에는 코드를 내주지 않는다. 받아서 여섯 자를 타이핑하고
+ * 보내는 사이에 스텝이 넘어가면 서버가 거절하고, 픽스처는 다시 시도하지
+ * 않아 스펙이 붉어진다 — 실제로 그렇게 붉어졌고, 원인이 코드가 아니라
+ * **경계**여서 한참 걸렸다.
+ */
+const TYPING_MARGIN_MS = 6000
+
 async function freshCode(page: Page): Promise<string> {
   for (;;) {
-    const step = Math.floor(Date.now() / 30_000)
-    if (usedStep < step) {
+    const now = Date.now()
+    const step = Math.floor(now / 30_000)
+    const remaining = (step + 1) * 30_000 - now
+    if (usedStep < step && remaining > TYPING_MARGIN_MS) {
       usedStep = step
-      return totpCode(MFA_ADMIN_SECRET)
+      return totpCode(MFA_ADMIN_SECRET, now)
     }
-    await page.waitForTimeout(2000)
+    await page.waitForTimeout(1000)
   }
 }
 

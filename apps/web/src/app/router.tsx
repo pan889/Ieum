@@ -10,6 +10,7 @@ import { BoardsScreen } from '@/features/boards/BoardsScreen'
 import { CustomerOrgsScreen } from '@/features/desk/CustomerOrgsScreen'
 import { PortalsScreen } from '@/features/desk/PortalsScreen'
 import { QueuesScreen } from '@/features/desk/QueuesScreen'
+import { SlaScreen } from '@/features/desk/SlaScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
 import { SpaceScreen } from '@/features/wiki/SpaceScreen'
@@ -177,6 +178,16 @@ const deskRoute = createRoute({
   component: QueuesScreen,
 })
 
+/**
+ * SLA 는 **설정**이다 — 상담원이 매일 여는 자리가 아니라 관리자가 드물게
+ * 고치는 자리다. 그래서 `/settings/` 아래에 둔다(큐는 작업 화면이라 최상위).
+ */
+const slaRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/sla',
+  component: SlaScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -249,6 +260,7 @@ const routeTree = rootRoute.addChildren([
   portalsRoute,
   customerOrgsRoute,
   deskRoute,
+  slaRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

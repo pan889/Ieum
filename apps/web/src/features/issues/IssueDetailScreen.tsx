@@ -3,7 +3,7 @@ import { Link, useParams } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AgentTicket } from '@ieum/api-client'
+import type { AgentTicket, SlaStanding } from '@ieum/api-client'
 
 import { deskApi, issuesApi } from '@/shared/api'
 import { describeError, fieldOfError } from '@/shared/api/errors'
@@ -413,6 +413,74 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 /**
+ * 남은 업무 시간을 사람이 읽는 말로.
+ *
+ * **서버가 준 초를 그대로 센다.** 브라우저가 목표 시각에서 카운트다운하면
+ * 업무 시간이 빠져서, 금요일 저녁에 남은 4시간이 토요일 아침에 0 이 된다.
+ * 그래서 여기서는 초를 글자로 바꾸는 일만 한다.
+ */
+function humanize(seconds: number): string {
+  const total = Math.abs(seconds)
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (days > 0) return `${String(days)}d ${String(hours)}h`
+  if (hours > 0) return `${String(hours)}h ${String(minutes)}m`
+  // 1분 미만도 "0m" 이라고 말한다 — 빈칸이면 값이 없는 것과 구별되지 않는다.
+  return `${String(minutes)}m`
+}
+
+/**
+ * 티켓의 SLA 들 (C5).
+ *
+ * 네 상태를 **다르게** 그린다. 하나로 뭉치면 상담원이 무엇을 해야 하는지
+ * 알 수 없다:
+ *
+ * - 지켰다 — 남은 시간을 그리지 않는다. 끝난 약속이 계속 재촉하면 안 된다.
+ * - 넘겼다 — 얼마나 넘겼는지 말한다. "위반" 만으로는 3분과 3일을 구별 못 한다.
+ * - 멈췄다 — 그렇다고 말한다. 안 그러면 줄지 않는 숫자를 보고 화면이 고장난
+ *   줄 안다.
+ * - 돌고 있다 — 남은 업무 시간.
+ */
+function SlaRows({ rows }: { rows: SlaStanding[] }) {
+  const { t } = useTranslation(['desk'])
+
+  return (
+    <Card className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-muted">{t('desk:sla.title')}</h2>
+      {rows.map((row) => (
+        <Row key={`${row.policy_name}-${row.metric}`} label={row.policy_name}>
+          {row.completed ? (
+            <Badge tone="done">{t('desk:sla.met')}</Badge>
+          ) : row.breached ? (
+            <>
+              <Badge tone="danger">{t('desk:sla.breached')}</Badge>
+              <span className="ml-1 text-xs text-muted">
+                {t('desk:sla.overBy', { time: humanize(row.remaining_seconds) })}
+              </span>
+            </>
+          ) : (
+            <>
+              <span>{t('desk:sla.left', { time: humanize(row.remaining_seconds) })}</span>
+              {row.paused ? (
+                <Badge tone="neutral" className="ml-1">
+                  {t('desk:sla.paused')}
+                </Badge>
+              ) : null}
+            </>
+          )}
+          {/* 어느 지표인지 작게 붙인다. "첫 응답 2시간 남음" 과 "해결 2시간
+              남음" 은 상담원이 해야 하는 일이 다르다. */}
+          <span className="ml-1 text-xs text-muted">
+            {t(`desk:sla.metric.${row.metric}`)}
+          </span>
+        </Row>
+      ))}
+    </Card>
+  )
+}
+
+/**
  * 티켓의 데스크 정보. **누가, 어느 창구로** 가 상담원이 먼저 알아야 하는
  * 것이다.
  *
@@ -426,6 +494,9 @@ function TicketFacts({ ticket }: { ticket: AgentTicket }) {
   return (
     <Card className="flex flex-col gap-2">
       <h2 className="text-sm font-medium text-muted">{t('desk:agent.title')}</h2>
+      {/* **SLA 를 맨 위에 둔다.** 상담원이 이 티켓에서 먼저 알아야 하는 것은
+          "언제까지인가" 다 — 누가 냈는지보다 그것이 먼저 시간에 쫓긴다. */}
+      {ticket.sla.length > 0 ? <SlaRows rows={ticket.sla} /> : null}
       {ticket.requester ? (
         <Row label={t('desk:agent.requester')}>
           <span>{ticket.requester.display_name || ticket.requester.email}</span>

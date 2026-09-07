@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -1781,6 +1782,16 @@ class SlaAdminService:
 
     # ── SLA 정책 ────────────────────────────────────────────────
 
+    async def list_states(self, actor: Actor, project_id: UUID) -> list[issues.StateRef]:
+        """이 프로젝트에서 고를 수 있는 상태. 멈춤 상태 선택 목록이 쓴다.
+
+        **UUID 를 손으로 적게 하지 않는다.** 서버가 모르는 상태를 거절하게
+        만들었으니, 화면에는 고를 수 있는 것만 보여야 한다 — 거절만 하고
+        무엇을 고를 수 있는지 안 알려 주면 관리자는 막힌다.
+        """
+        await self._perms.require(self._s, actor, perms.SLA_MANAGE)
+        return await issues.get_project_states(self._s, project_id)
+
     async def list_policies(self, actor: Actor, project_id: UUID) -> list[SlaPolicyView]:
         await self._perms.require(self._s, actor, perms.SLA_MANAGE)
         rows = await self._s.execute(
@@ -1817,6 +1828,7 @@ class SlaAdminService:
             raise ValidationError(str(exc), code="desk.sla_goals_invalid") from exc
         if await self._policy_name_taken(project_id, clean_name):
             raise ConflictError("같은 이름의 정책이 있다.", code="desk.sla_name_taken")
+        await self._validated_pause_states(project_id, pause_state_ids)
         row = SlaPolicy(
             project_id=project_id,
             name=clean_name,
@@ -1868,6 +1880,7 @@ class SlaAdminService:
             except SlaError as exc:
                 raise ValidationError(str(exc), code="desk.sla_goals_invalid") from exc
         if pause_state_ids is not None:
+            await self._validated_pause_states(row.project_id, pause_state_ids)
             row.pause_state_ids = list(pause_state_ids)
         if is_enabled is not None:
             row.is_enabled = is_enabled
@@ -1886,6 +1899,21 @@ class SlaAdminService:
         await self._s.flush()
 
     # ── 내부 ────────────────────────────────────────────────────
+
+    async def _validated_pause_states(self, project_id: UUID, state_ids: Sequence[UUID]) -> None:
+        """멈춤 상태가 **이 프로젝트에 실제로 있는 상태**인지 본다.
+
+        검증 없이 받으면 잘못된 UUID 가 그대로 저장되고, 시계는 영원히 안
+        멈춘다 — 관리자는 멈춤을 설정했다고 믿고, 아무 일도 일어나지 않으며,
+        틀렸다는 신호가 어디에도 없다. 저장할 때 거절하는 것이 유일하게
+        사람이 알 수 있는 지점이다.
+        """
+        if not state_ids:
+            return
+        known = {row.id for row in await issues.get_project_states(self._s, project_id)}
+        unknown = [sid for sid in state_ids if sid not in known]
+        if unknown:
+            raise ValidationError("이 프로젝트에 없는 상태다.", code="desk.sla_pause_state_unknown")
 
     def _validated_calendar(
         self, *, timezone: str, working_hours: dict[str, Any], holidays: list[str]

@@ -470,6 +470,19 @@ class SlaPolicyResponse(BaseModel):
     is_enabled: bool
 
 
+class WorkflowStateOption(BaseModel):
+    """멈춤 상태로 고를 수 있는 상태 하나.
+
+    `workflow_name` 을 함께 주는 이유: 같은 이름의 상태가 워크플로우마다 따로
+    있다. 이름만 주면 목록에 똑같은 줄이 둘 뜬다.
+    """
+
+    id: UUID
+    name: str
+    category: str
+    workflow_name: str
+
+
 class SlaPolicyCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

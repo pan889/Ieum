@@ -219,6 +219,8 @@ export interface AgentTicket {
   requester: Requester | null
   organization_name: string | null
   csat_score: number | null
+  /** 이 티켓에 걸린 SLA 들. 비어 있으면 정책이 없거나 아직 안 걸렸다. */
+  sla: SlaStanding[]
 }
 
 /**
@@ -304,10 +306,110 @@ export interface CannedResponsePatch {
   clear_shortcut?: boolean
 }
 
+/**
+ * 티켓의 SLA 한 줄 (C5). **서버가 남은 시간을 계산해 준다.**
+ *
+ * 목표 시각만 받아 브라우저가 카운트다운하면 업무 시간이 빠진다 — 금요일
+ * 저녁에 남은 4시간이 토요일 아침에 0 이 된다. 위반이면 `remaining_seconds`
+ * 가 음수다: 화면이 "3시간 초과" 를 말할 수 있어야 한다.
+ */
+export interface SlaStanding {
+  policy_name: string
+  metric: string
+  target_at: string
+  remaining_seconds: number
+  breached: boolean
+  paused: boolean
+  completed: boolean
+}
+
+/** 업무 달력 (C4). 설치 전체에서 공유한다 — 업무 시간은 회사의 성질이다. */
+export interface BusinessCalendar {
+  id: string
+  name: string
+  timezone: string
+  /** `{"0": [["09:00","18:00"]], ...}` — 요일(월=0) → 구간. */
+  working_hours: Record<string, [string, string][]>
+  /** 통째로 쉬는 **현지 날짜**들 (`YYYY-MM-DD`). */
+  holidays: string[]
+}
+
+export interface NewBusinessCalendar {
+  name: string
+  timezone: string
+  working_hours: Record<string, [string, string][]>
+  holidays?: string[]
+}
+
+export interface BusinessCalendarPatch {
+  name?: string
+  timezone?: string
+  working_hours?: Record<string, [string, string][]>
+  holidays?: string[]
+}
+
+/** SLA 정책의 목표 하나. 위에서부터 처음 맞는 것이 이긴다. */
+export interface SlaGoal {
+  seconds: number
+  priority_min?: number
+  request_type_id?: string
+}
+
+export interface SlaPolicy {
+  id: string
+  project_id: string
+  name: string
+  metric: string
+  calendar_id: string
+  /** 목록이 "무엇으로 재는지" 를 바로 보여 준다. */
+  calendar_name: string
+  goals: SlaGoal[]
+  pause_state_ids: string[]
+  is_enabled: boolean
+}
+
+/**
+ * 멈춤 상태로 고를 수 있는 상태 하나.
+ *
+ * **UUID 를 손으로 적게 하지 않는다.** 서버가 모르는 상태를 거절하므로,
+ * 화면에는 고를 수 있는 것만 보여야 한다 — 거절만 하고 무엇을 고를 수
+ * 있는지 안 알려 주면 관리자는 막힌다.
+ */
+export interface WorkflowStateOption {
+  id: string
+  name: string
+  category: string
+  /** 같은 이름의 상태가 워크플로우마다 따로 있다. 어느 쪽인지 알아야 한다. */
+  workflow_name: string
+}
+
+export interface NewSlaPolicy {
+  project_id: string
+  name: string
+  metric: string
+  calendar_id: string
+  goals: SlaGoal[]
+  pause_state_ids?: string[]
+}
+
+/**
+ * **`metric` 이 없다.** 응답 정책을 해결 정책으로 바꾸면 이미 걸린 클럭들이
+ * 갑자기 다른 것을 재는 시계가 된다 — 지난 지표가 뜻을 잃는다.
+ */
+export interface SlaPolicyPatch {
+  name?: string
+  calendar_id?: string
+  goals?: SlaGoal[]
+  pause_state_ids?: string[]
+  is_enabled?: boolean
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
 const QUEUES = '/api/v1/queues'
 const CANNED = '/api/v1/canned-responses'
+const CALENDARS = '/api/v1/business-calendars'
+const SLA = '/api/v1/sla-policies'
 /** 고객 표면. 이 접두사만 고객 격리를 통과한다 (auth.md 5절). */
 const PORTAL = '/api/v1/portal'
 
@@ -452,6 +554,25 @@ export function createDeskApi(client: ApiClient) {
     updateCannedResponse: (id: string, body: CannedResponsePatch) =>
       client.patch<CannedResponse>(`${CANNED}/${id}`, body),
     deleteCannedResponse: (id: string) => client.delete<void>(`${CANNED}/${id}`),
+
+    // ── SLA (C4) ────────────────────────────────────────────
+    // step-up 이 필요하다. 화면은 `auth.mfa_required` 를 받으면 2FA 를
+    // 물어야 한다 — "권한 없음" 과 다른 상황이다.
+    listCalendars: () => client.get<BusinessCalendar[]>(CALENDARS),
+    createCalendar: (body: NewBusinessCalendar) =>
+      client.post<BusinessCalendar>(CALENDARS, body),
+    updateCalendar: (id: string, body: BusinessCalendarPatch) =>
+      client.patch<BusinessCalendar>(`${CALENDARS}/${id}`, body),
+    deleteCalendar: (id: string) => client.delete<void>(`${CALENDARS}/${id}`),
+
+    listSlaPolicies: (projectId: string) =>
+      client.get<SlaPolicy[]>(`${SLA}?project_id=${encodeURIComponent(projectId)}`),
+    createSlaPolicy: (body: NewSlaPolicy) => client.post<SlaPolicy>(SLA, body),
+    updateSlaPolicy: (id: string, body: SlaPolicyPatch) =>
+      client.patch<SlaPolicy>(`${SLA}/${id}`, body),
+    deleteSlaPolicy: (id: string) => client.delete<void>(`${SLA}/${id}`),
+    listPauseStateOptions: (projectId: string) =>
+      client.get<WorkflowStateOption[]>(`${SLA}/states?project_id=${projectId}`),
   }
 }
 

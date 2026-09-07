@@ -93,6 +93,7 @@
   "desk.reserved_key_mapped": "Summary and details go into the ticket itself, so they are not mapped to a custom field.",
   "desk.sla_calendar_missing": "That business calendar does not exist.",
   "desk.sla_goals_invalid": "These targets cannot be used — every policy needs one target with no conditions.",
+  "desk.sla_pause_state_unknown": "That status is not one this project's tickets can be in, so the clock would never pause on it.",
   "desk.sla_name_empty": "An SLA policy needs a name.",
   "desk.sla_name_taken": "An SLA policy with that name already exists in this project.",
   "desk.sla_unknown_metric": "An SLA policy measures either first response or resolution.",

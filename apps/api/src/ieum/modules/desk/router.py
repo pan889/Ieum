@@ -64,6 +64,7 @@ from ieum.modules.desk.schemas import (
     SlaStandingResponse,
     TicketResponse,
     TicketSummaryResponse,
+    WorkflowStateOption,
 )
 from ieum.modules.desk.service import (
     AgentTicketService,
@@ -1051,6 +1052,24 @@ def _policy(view: SlaPolicyView) -> SlaPolicyResponse:
         pause_state_ids=list(view.policy.pause_state_ids),
         is_enabled=view.policy.is_enabled,
     )
+
+
+@sla_router.get("/states", response_model=list[WorkflowStateOption])
+async def list_sla_pause_state_options(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, project_id: UUID
+) -> list[WorkflowStateOption]:
+    """멈춤 상태로 고를 수 있는 상태.
+
+    **`/{policy_id}` 보다 위에 둔다.** 아래에 두면 `states` 가 정책 id 로
+    잡혀 UUID 파싱 오류가 난다 — FastAPI 는 먼저 맞는 경로를 쓴다.
+    """
+    rows = await SlaAdminService(session, permissions).list_states(actor, project_id)
+    return [
+        WorkflowStateOption(
+            id=row.id, name=row.name, category=row.category, workflow_name=row.workflow_name
+        )
+        for row in rows
+    ]
 
 
 @sla_router.get("", response_model=list[SlaPolicyResponse])

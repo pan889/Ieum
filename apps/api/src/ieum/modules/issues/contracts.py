@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
@@ -450,3 +450,51 @@ def issue_id_column() -> Any:
     """`issue.id` 컬럼. 다른 모듈이 자기 테이블과 이 이슈를 잇는 조건을
     만들 때 쓴다 — 모델 자체를 내주지 않으려고 컬럼 하나만 낸다."""
     return Issue.id
+
+
+@dataclass(frozen=True, slots=True)
+class StateRef:
+    """워크플로우 상태 하나. 다른 모듈이 상태를 **고르게** 할 때 쓴다.
+
+    `workflow_name` 을 함께 내는 이유: 같은 이름의 상태가 워크플로우마다
+    따로 있다("대기" 가 버그 워크플로우에도, 문의 워크플로우에도 있다).
+    이름만 보여 주면 목록에 똑같은 줄이 둘 뜨고 어느 쪽을 고른 건지 알 수
+    없다.
+    """
+
+    id: UUID
+    name: str
+    category: str
+    workflow_name: str
+
+
+async def get_project_states(session: AsyncSession, project_id: UUID) -> list[StateRef]:
+    """이 프로젝트의 이슈가 있을 수 있는 상태 전부.
+
+    프로젝트에서 쓸 수 있는 이슈 유형 → 그 유형들의 워크플로우 → 상태.
+    `desk` 의 SLA 정책이 "이 상태에서는 시계를 멈춘다" 를 고르는 데 쓴다.
+    """
+    from ieum.modules.issues.models import Workflow, WorkflowState
+    from ieum.modules.issues.repository import IssueTypeRepository
+
+    types = await IssueTypeRepository(session).available_for(project_id)
+    workflow_ids = {t.workflow_id for t in types}
+    if not workflow_ids:
+        return []
+    rows = (
+        await session.execute(
+            select(WorkflowState, Workflow.name)
+            .join(Workflow, Workflow.id == WorkflowState.workflow_id)
+            .where(WorkflowState.workflow_id.in_(workflow_ids))
+            .order_by(Workflow.name, WorkflowState.position, WorkflowState.name)
+        )
+    ).all()
+    return [
+        StateRef(
+            id=state.id,
+            name=state.name,
+            category=state.category,
+            workflow_name=workflow_name,
+        )
+        for state, workflow_name in rows
+    ]
