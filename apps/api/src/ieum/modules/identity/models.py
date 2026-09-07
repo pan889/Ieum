@@ -201,3 +201,72 @@ class LoginAttempt(Entity):
         Index("ix_login_attempt_email_created_at", "email", "created_at"),
         Index("ix_login_attempt_ip_created_at", "ip", "created_at"),
     )
+
+
+#: 지금은 OIDC 만. SAML 이 같은 표로 들어온다 (auth.md 4절).
+IDP_KINDS = ("oidc",)
+
+
+class IdentityProvider(Entity):
+    """회사 IdP 한 곳. 여러 곳을 동시에 등록할 수 있다.
+
+    클라이언트 시크릿은 애플리케이션 레벨로 암호화해 둔다(AES-GCM). DB 를
+    통째로 읽는 사고가 나도 IdP 로 위장할 수는 없어야 한다.
+    """
+
+    __tablename__ = "identity_provider"
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="oidc")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    #: ID 토큰의 `iss` 와 **정확히** 일치해야 한다.
+    issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    client_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    client_secret_enc: Mapped[str] = mapped_column(Text, nullable=False)
+
+    authorization_endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
+    token_endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
+    jwks_uri: Mapped[str] = mapped_column(String(512), nullable=False)
+    scopes: Mapped[str] = mapped_column(String(512), nullable=False, default="openid email profile")
+
+    #: 클레임 이름. IdP 마다 다르다 — Entra 는 그룹을 `groups`, Okta 는 설정에 따라.
+    email_claim: Mapped[str] = mapped_column(String(64), nullable=False, default="email")
+    name_claim: Mapped[str] = mapped_column(String(64), nullable=False, default="name")
+    groups_claim: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    #: 최초 로그인 시 계정을 만든다. 끄면 미리 초대된 사람만 들어온다.
+    jit_provisioning: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 검증된 이메일이 같으면 기존 계정에 잇는다 (auth.md 4절 기본값).
+    link_verified_email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 이 도메인의 메일 주소를 이 IdP 로 보낸다. 비어 있으면 라우팅 안 한다.
+    email_domains: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    #: IdP 가 2차 요소를 책임진다고 볼 것인가. 켜면 `amr`/`acr` 를 확인한다.
+    trust_idp_mfa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        CheckConstraint(kind.in_(IDP_KINDS), name="identity_provider_kind"),
+        UniqueConstraint("issuer", "client_id", name="uq_identity_provider_issuer_client"),
+    )
+
+
+class UserIdentity(Entity):
+    """IdP 의 한 사람 ↔ 우리 계정.
+
+    `subject` 로 잇는다. 이메일로 이으면 IdP 에서 주소를 바꾼 사람이 남의
+    계정에 들어가거나 자기 계정을 잃는다 — `sub` 는 바뀌지 않는 값이다.
+    """
+
+    __tablename__ = "user_identity"
+
+    provider_id: Mapped[UUID] = mapped_column(
+        ForeignKey("identity_provider.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "subject", name="uq_user_identity_provider_subject"),
+        Index("ix_user_identity_user_id", "user_id"),
+    )

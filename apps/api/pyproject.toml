@@ -52,6 +52,9 @@ dependencies = [
     # dev 에만 두면 개발 환경에서는 멀쩡하고 컨테이너에서만 워커가 죽는다.
     "httpx>=0.28",
     # 관측성
+    # OIDC ID 토큰 검증. 흐름(PKCE·state·nonce)은 우리가 직접 들고 서명 검증만
+    # 맡긴다 — 인증 경계를 프레임워크에 통째로 넘기면 무엇을 검사하는지 안 읽힌다.
+    "pyjwt[crypto]>=2.10",
     "structlog>=25.4",
     "prometheus-client>=0.24",
     # i18n (서버측 알림·메일 렌더)
