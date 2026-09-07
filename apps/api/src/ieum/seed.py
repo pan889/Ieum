@@ -13,6 +13,7 @@ from ieum.config import Settings, get_settings
 from ieum.core.crypto import PasswordHashingService
 from ieum.core.logging import configure_logging, get_logger
 from ieum.core.permissions import Scope, ScopeKind
+from ieum.core.time import utcnow
 from ieum.db.session import init_engine, session_scope
 from ieum.modules.identity import permissions as identity_perms
 from ieum.modules.identity.models import User
@@ -305,6 +306,91 @@ async def seed(session: AsyncSession, settings: Settings) -> None:
             principal_id=admin.id,
         )
         log.info("seed.admin_role_assigned")
+
+    await _seed_mfa_admin(session, settings, admin_role)
+
+
+async def _seed_mfa_admin(session: AsyncSession, settings: Settings, admin_role: Role) -> None:
+    """2FA 를 갖춘 관리자 — **개발 스택 전용.**
+
+    step-up 이 필요한 설정(역할·IdP·워크플로우·웹훅)은 실제로 2FA 를 통과한
+    세션만 만질 수 있다(auth.md 3·6절). 부트스트랩 관리자는 인증기를 직접
+    등록해야 그 문을 지나가는데, 자동 테스트는 인증기를 손에 들 수 없다 —
+    시크릿을 모르기 때문이다. 한 번 등록해 버리면 다음 실행에서는 아무도
+    그 계정으로 로그인할 수 없다(시크릿이 응답에 한 번만 나온다).
+
+    그래서 **시크릿을 환경이 정해 주는** 관리자를 하나 더 둔다. 세 값이 다
+    있어야 만들고, 운영에서는 셋 다 비어 있어 아무것도 하지 않는다.
+
+    부트스트랩 관리자에게 붙이지 않는 이유: 그 계정에 인증기가 생기면
+    로그인마다 코드를 요구받는다. 개발·테스트가 쓰는 평범한 로그인 경로가
+    통째로 바뀌므로 두 계정을 갈라 둔다.
+    """
+    email = os.getenv("SEED_MFA_ADMIN_EMAIL")
+    password = os.getenv("SEED_MFA_ADMIN_PASSWORD")
+    secret = os.getenv("SEED_MFA_ADMIN_TOTP_SECRET")
+    if not (email and password and secret):
+        return
+
+    from ieum.core.crypto import SecretBox
+    from ieum.modules.identity.models import MFACredential
+    from ieum.modules.identity.service import MFA_SECRET_PURPOSE
+
+    email = normalize_email(email)
+    users = UserRepository(session)
+    user = await users.get_by_email(email)
+    if user is None:
+        hasher = PasswordHashingService(
+            memory_cost=settings.argon2_memory_cost,
+            time_cost=settings.argon2_time_cost,
+            parallelism=settings.argon2_parallelism,
+        )
+        user = User(
+            email=email,
+            display_name="Administrator (2FA)",
+            status="active",
+            password_hash=hasher.hash(password),
+            locale=settings.default_locale,
+        )
+        users.add(user)
+        await session.flush()
+        log.info("seed.mfa_admin_created", email=email)
+
+    from sqlalchemy import select
+
+    from ieum.modules.org.models import RoleAssignment
+
+    assigned = select(RoleAssignment).where(
+        RoleAssignment.role_id == admin_role.id,
+        RoleAssignment.principal_id == user.id,
+        RoleAssignment.scope_kind == ScopeKind.GLOBAL.value,
+    )
+    if (await session.execute(assigned)).scalar_one_or_none() is None:
+        RoleRepository(session).assign(
+            role_id=admin_role.id,
+            scope=Scope.global_(),
+            principal_kind="user",
+            principal_id=user.id,
+        )
+
+    existing = select(MFACredential).where(
+        MFACredential.user_id == user.id, MFACredential.kind == "totp"
+    )
+    if (await session.execute(existing)).scalars().first() is not None:
+        return
+
+    box = SecretBox(settings.secret_key.get_secret_value(), purpose=MFA_SECRET_PURPOSE)
+    session.add(
+        MFACredential(
+            user_id=user.id,
+            kind="totp",
+            secret_enc=box.encrypt(secret.strip().upper()),
+            label="seeded",
+            # 확인까지 마친 상태로 넣는다. 확인 절차 자체는 서버 테스트가 본다.
+            confirmed_at=utcnow(),
+        )
+    )
+    log.info("seed.mfa_admin_totp_seeded", email=email)
 
 
 async def run_seed() -> int:

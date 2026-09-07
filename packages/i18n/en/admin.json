@@ -37,5 +37,7 @@
   "sso.emailDomains": "Email domains",
   "sso.redirectHint": "Register this redirect URI with your provider: {uri}",
   "sso.save": "Add provider",
-  "sso.disable": "Disable"
+  "sso.disable": "Disable",
+  "sso.enable": "Enable",
+  "sso.disabled": "Disabled"
 }

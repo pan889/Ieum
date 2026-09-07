@@ -124,6 +124,9 @@ export function createIdpApi(client: ApiClient) {
     /** 지우지 않고 끈다 — 지우면 계정 연결이 따라 사라진다. */
     disable: (id: string) =>
       client.post<void>(`/api/v1/admin/sso/providers/${id}/disable`),
+    /** 다시 켠다. 이게 없으면 끄는 것이 일방통행이다. */
+    enable: (id: string) =>
+      client.post<void>(`/api/v1/admin/sso/providers/${id}/enable`),
   }
 }
 

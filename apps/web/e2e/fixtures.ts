@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto'
+
 import { expect, test as base } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
@@ -122,6 +124,91 @@ async function inviteLink(page: Page, email: string): Promise<string> {
     await page.waitForTimeout(2000)
   }
   throw new Error(`초대 메일이 오지 않았다: ${email}`)
+}
+
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+/**
+ * TOTP 코드 (RFC 6238: 30초·6자리·SHA1 — 서버가 쓰는 그대로).
+ *
+ * 라이브러리를 하나 더 들이지 않는다. 이 열 줄이 인증기 앱 한 대다.
+ */
+export function totpCode(secret: string, at: number = Date.now()): string {
+  let bits = ''
+  for (const char of secret.replace(/=+$/, '').toUpperCase()) {
+    const index = BASE32.indexOf(char)
+    if (index < 0) throw new Error(`base32 가 아니다: ${secret}`)
+    bits += index.toString(2).padStart(5, '0')
+  }
+  const bytes = Buffer.from((bits.match(/.{8}/g) ?? []).map((byte) => parseInt(byte, 2)))
+  const counter = Buffer.alloc(8)
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / 30)))
+  const digest = createHmac('sha1', bytes).update(counter).digest()
+  // RFC 6238 의 동적 절단. 마지막 바이트 하위 4비트가 읽을 자리를 가리킨다.
+  const offset = (digest[digest.length - 1] as number) & 0x0f
+  return String((digest.readUInt32BE(offset) & 0x7fff_ffff) % 1_000_000).padStart(6, '0')
+}
+
+/**
+ * 2FA 를 갖춘 관리자. **시드가 만든다** — 시크릿을 환경이 정해 주기 때문에
+ * 테스트가 코드를 계산할 수 있는 유일한 계정이다 (seed.py `_seed_mfa_admin`).
+ *
+ * 시드 관리자(`ADMIN_EMAIL`)에 인증기를 붙이지 않는 이유: 그 계정에 하나라도
+ * 생기면 로그인마다 코드를 요구받아 모든 스펙의 로그인 경로가 바뀐다.
+ */
+export const MFA_ADMIN = {
+  email: process.env['SEED_MFA_ADMIN_EMAIL'] ?? 'mfa-admin@example.com',
+  password: process.env['SEED_MFA_ADMIN_PASSWORD'] ?? 'seed-mfa-admin-password-1234',
+}
+const MFA_ADMIN_SECRET = process.env['SEED_MFA_ADMIN_TOTP_SECRET'] ?? 'IEUMDEVSEEDTOTPSECRET234'
+
+/**
+ * 이미 쓴 타임스텝. 서버는 **맞은 코드의 스텝 이하**를 다시 받지 않으므로
+ * (재사용 방지), 같은 30초 안에 두 번 증명하려면 다음 스텝을 기다려야 한다.
+ */
+let usedStep = -1
+
+async function freshCode(page: Page): Promise<string> {
+  for (;;) {
+    const step = Math.floor(Date.now() / 30_000)
+    if (usedStep < step) {
+      usedStep = step
+      return totpCode(MFA_ADMIN_SECRET)
+    }
+    await page.waitForTimeout(2000)
+  }
+}
+
+/** 서버의 step-up 창은 5분이다. 그 안쪽으로 넉넉히 잡아 다시 쓴다. */
+const STEP_UP_REUSE_MS = 4 * 60_000
+let cached: { token: string; at: number } | null = null
+
+/**
+ * step-up 을 통과할 수 있는 액세스 토큰.
+ *
+ * step-up 이 필요한 설정(역할·IdP·워크플로우·웹훅)은 **실제로 2FA 를 통과한**
+ * 세션만 받는다 — 비밀번호만 통과한 세션은 거절한다(auth.md 6절).
+ *
+ * 아직 창 안이면 같은 토큰을 다시 준다. 매번 새로 만들면 코드 재사용 방지
+ * 때문에 30초씩 기다리게 되고, 한 스펙이 분 단위로 늘어난다. 창을 넘기면
+ * 새로 만든다 — 한 번 얻은 것을 스펙 전체에서 돌려쓰면 느린 실행에서만
+ * 터지는 테스트가 된다.
+ */
+export async function stepUpToken(page: Page): Promise<string> {
+  if (cached && Date.now() - cached.at < STEP_UP_REUSE_MS) return cached.token
+
+  const signedIn = await page.request.post(`${API}/api/v1/auth/login`, { data: MFA_ADMIN })
+  expect(signedIn.ok(), await signedIn.text()).toBe(true)
+  const token = ((await signedIn.json()) as { access_token: string }).access_token
+
+  // 로그인만으로는 "미완료" 세션이다. 여기서 증명해야 step-up 이 열린다.
+  const verified = await page.request.post(`${API}/api/v1/auth/mfa/verify`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { code: await freshCode(page) },
+  })
+  expect(verified.ok(), await verified.text()).toBe(true)
+  cached = { token, at: Date.now() }
+  return token
 }
 
 /** 로그인한 사람의 액세스 토큰. 메모리에만 있어서 앱에게 물어야 한다. */

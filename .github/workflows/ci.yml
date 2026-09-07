@@ -61,8 +61,8 @@ jobs:
 
       - name: ruff (lint + format)
         run: |
-          uv run --project apps/api ruff check apps/api/src apps/api/tests
-          uv run --project apps/api ruff format --check apps/api/src apps/api/tests
+          uv run --project apps/api ruff check apps/api/src apps/api/tests deploy
+          uv run --project apps/api ruff format --check apps/api/src apps/api/tests deploy
 
       - name: mypy --strict
         # --config-file 없이 워크스페이스 루트에서 돌리면 루트 pyproject.toml 이
@@ -72,7 +72,10 @@ jobs:
       - name: bandit (보안 정적 분석)
         # -ll = medium 이상만 실패. Low 는 assert 와 상수 이름 오탐이라
         # 게이트로 쓰면 무해한 코드에 CI 가 걸린다 (pyproject 의 [tool.bandit] 참조).
-        run: uv run --project apps/api bandit -q -ll -r apps/api/src -x '*/tests/*'
+        run: |
+          uv run --project apps/api bandit -q -ll -r apps/api/src -x '*/tests/*'
+          # 개발 스택 도구도 본다. 저장소에 있는 파이썬은 다 검사한다.
+          uv run --project apps/api bandit -q -ll -r deploy
 
       - name: pytest
         run: uv run --project apps/api pytest apps/api/tests -q --cov=ieum --cov-report=term
@@ -181,6 +184,14 @@ jobs:
         run: pnpm --filter @ieum/web exec playwright install --with-deps chromium
 
       - name: DB 준비
+        env:
+          # 2FA 를 갖춘 관리자. step-up 이 필요한 설정(역할·IdP·워크플로우)은
+          # 실제로 2FA 를 통과한 세션만 만질 수 있어서, E2E 에는 시크릿을 아는
+          # 계정이 하나 필요하다. **이 잡에만 준다** — 백엔드 잡의 pytest 도
+          # 같은 시드를 돌리므로, 전역에 두면 테스트 DB 에 사람이 하나 늘어난다.
+          SEED_MFA_ADMIN_EMAIL: mfa-admin@example.com
+          SEED_MFA_ADMIN_PASSWORD: ci-mfa-admin-password-1234
+          SEED_MFA_ADMIN_TOTP_SECRET: IEUMDEVSEEDTOTPSECRET234
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres -d ieum \
             -f deploy/compose/postgres-init/01-extensions.sql
@@ -262,7 +273,27 @@ jobs:
           done
           echo "web 이 안 떴다"; cat /tmp/web.log; exit 1
 
+      - name: 가짜 IdP 기동
+        # SSO 스펙이 쓴다. 컴포즈에서는 서비스로 뜨지만 여기서는 프로세스로
+        # 띄운다 — api·web 과 같은 방식이다. 브라우저와 api 가 **같은 주소**로
+        # 보므로 `iss` 도 그것 하나다.
+        run: |
+          FAKE_IDP_ISSUER=http://127.0.0.1:9099 \
+            uv run --project apps/api python deploy/compose/fake-idp/idp.py \
+            > /tmp/fake-idp.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:9099/jwks > /dev/null && exit 0
+            sleep 1
+          done
+          echo "가짜 IdP 가 안 떴다"; cat /tmp/fake-idp.log; exit 1
+
       - name: playwright
+        env:
+          SEED_MFA_ADMIN_EMAIL: mfa-admin@example.com
+          SEED_MFA_ADMIN_PASSWORD: ci-mfa-admin-password-1234
+          SEED_MFA_ADMIN_TOTP_SECRET: IEUMDEVSEEDTOTPSECRET234
+          E2E_IDP_URL: http://127.0.0.1:9099
+          E2E_IDP_INTERNAL_URL: http://127.0.0.1:9099
         run: pnpm --filter @ieum/web run e2e
 
       - if: failure()
@@ -273,6 +304,7 @@ jobs:
             apps/web/test-results
             /tmp/api.log
             /tmp/web.log
+            /tmp/fake-idp.log
           retention-days: 7
 
   i18n:

@@ -619,3 +619,19 @@ async def disable_provider(
         actor, provider_id, enabled=False
     )
     await session.commit()
+
+
+@sso_admin_router.post("/providers/{provider_id}/enable", status_code=status.HTTP_204_NO_CONTENT)
+async def enable_provider(
+    provider_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> None:
+    """다시 켠다. **이 문이 없으면 끄는 것이 일방통행이다** — 같은 발급자로
+    새로 등록하는 길은 유일 제약이 막는다."""
+    await IdentityProviderService(session, settings, permissions).set_enabled(
+        actor, provider_id, enabled=True
+    )
+    await session.commit()

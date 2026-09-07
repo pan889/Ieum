@@ -54,17 +54,19 @@ check: lint typecheck security test i18n-check ## 커밋 전 필수 전체 검�
 .PHONY: security
 security: ## bandit 정적 분석 (medium 이상만 실패)
 	$(UV) bandit -q -ll -r $(API)/src -x '*/tests/*'
+	# 개발 스택 도구도 본다. 저장소에 있는 파이썬은 다 검사한다.
+	$(UV) bandit -q -ll -r deploy
 
 .PHONY: lint
 lint: ## ruff + eslint
-	$(UV) ruff check $(API)/src $(API)/tests
-	$(UV) ruff format --check $(API)/src $(API)/tests
+	$(UV) ruff check $(API)/src $(API)/tests deploy
+	$(UV) ruff format --check $(API)/src $(API)/tests deploy
 	pnpm -r --if-present lint
 
 .PHONY: fmt
 fmt: ## 자동 포맷
-	$(UV) ruff format $(API)/src $(API)/tests
-	$(UV) ruff check --fix $(API)/src $(API)/tests
+	$(UV) ruff format $(API)/src $(API)/tests deploy
+	$(UV) ruff check --fix $(API)/src $(API)/tests deploy
 
 .PHONY: typecheck
 typecheck: ## mypy --strict + tsc
@@ -122,7 +124,11 @@ migration-check: ## 모델과 마이그레이션 불일치 검사 (CI 게이트)
 
 .PHONY: seed
 seed: ## 관리자 계정 + 기본 역할·워크스페이스 생성
-	$(UV) python -m ieum.cli seed
+	# `.env` 가 있으면 읽는다. SEED_* 는 pydantic 설정이 아니라 `os.getenv` 로
+	# 보므로, 여기서 넣어 주지 않으면 .env 에 적어 둔 값이 시드에 닿지 않는다 —
+	# 비밀번호가 없으면 관리자 생성이 조용히 넘어간다. 없는 파일을 가리키면
+	# uv 가 실패하므로 있을 때만 붙인다(CI 는 잡 환경으로 준다).
+	$(UV) $$(test -f .env && echo --env-file .env) python -m ieum.cli seed
 
 .PHONY: seed-fields
 seed-fields: ## 데모용 커스텀 필드 정의 (관리 화면이 생기기 전까지)

@@ -144,5 +144,6 @@
   "auth.oidc_nonce_mismatch": "That sign-in response doesn't match the request. Start again.",
   "auth.sso_no_account": "You don't have an account here yet. Ask an administrator for an invite.",
   "auth.sso_email_required": "Your identity provider didn't share a verified email address.",
-  "identity.invalid_email": "That isn't a valid email address."
+  "identity.invalid_email": "That isn't a valid email address.",
+  "identity.idp_already_registered": "This issuer and client ID are already registered."
 }

@@ -37,5 +37,7 @@
   "sso.emailDomains": "이메일 도메인",
   "sso.redirectHint": "IdP 에 이 콜백 주소를 등록하세요: {uri}",
   "sso.save": "추가",
-  "sso.disable": "끄기"
+  "sso.disable": "끄기",
+  "sso.enable": "켜기",
+  "sso.disabled": "꺼짐"
 }

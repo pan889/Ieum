@@ -95,7 +95,11 @@ test('담당자는 이름으로 고르고 ID 가 들어간다', async ({ page, c
   await box.press('Control+ ')
 
   // 사용자 값은 UUID 로 컴파일된다. 손으로 칠 수 있는 값이 아니다.
-  await page.getByRole('option', { name: /Administrator/ }).click()
+  //
+  // 이름 앞부분까지 함께 고정한다. `/Administrator/` 만으로는 시드에 사람이
+  // 하나 늘어나는 순간(이름이 겹치는 사람) 후보가 둘이 되어 터진다 — 앱은
+  // 맞게 굴러가는데 테스트만 붉어진다.
+  await page.getByRole('option', { name: /^Administrator\s+admin@/ }).click()
   await expect(box).toHaveValue(/^assignee = "[0-9a-f-]{36}" $/)
 
   await box.press('Control+Enter')

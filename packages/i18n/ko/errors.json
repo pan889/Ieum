@@ -144,5 +144,6 @@
   "auth.oidc_nonce_mismatch": "로그인 요청과 응답이 맞지 않습니다. 다시 시작해 주세요.",
   "auth.sso_no_account": "아직 이 조직에 계정이 없습니다. 관리자에게 초대를 요청해 주세요.",
   "auth.sso_email_required": "IdP 가 검증된 이메일 주소를 주지 않았습니다.",
-  "identity.invalid_email": "올바른 이메일 주소가 아닙니다."
+  "identity.invalid_email": "올바른 이메일 주소가 아닙니다.",
+  "identity.idp_already_registered": "이 발급자와 클라이언트 ID 로 이미 등록돼 있습니다."
 }

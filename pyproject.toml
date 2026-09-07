@@ -1,3 +1,29 @@
 # uv 워크스페이스 루트. 실제 패키지는 apps/api 에 있다.
 [tool.uv.workspace]
 members = ["apps/api"]
+
+# 저장소의 파이썬은 **한 가지 방식으로** 검사한다. apps/api 밖에도 파이썬이
+# 있고(개발 스택 도구), 여기 설정이 없으면 그 파일들만 ruff 기본값으로
+# 검사돼 규칙과 줄 길이가 조용히 갈라진다.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RUF",
+    "ASYNC",
+    "S",         # bandit
+    "T20",       # print
+]
+
+[tool.ruff.format]
+quote-style = "double"

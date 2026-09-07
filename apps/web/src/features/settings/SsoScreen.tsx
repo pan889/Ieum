@@ -57,8 +57,11 @@ export function SsoScreen() {
     },
   })
 
-  const disable = useMutation({
-    mutationFn: (id: string) => idpApi.disable(id),
+  // 끄고 켜는 것은 한 쌍이다. 끄기만 있으면 일방통행이 되고, 같은 발급자로
+  // 새로 등록하는 길은 서버가 막는다 — 그 IdP 를 영구히 잃는다.
+  const toggle = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      enabled ? idpApi.enable(id) : idpApi.disable(id),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['idp'] }) },
   })
 
@@ -167,7 +170,7 @@ export function SsoScreen() {
         </Card>
       ) : null}
 
-      {disable.isError ? <Alert>{describeError(disable.error)}</Alert> : null}
+      {toggle.isError ? <Alert>{describeError(toggle.error)}</Alert> : null}
 
       {rows.length === 0 && !providers.isPending ? (
         <p className="text-sm text-muted">{t('admin:sso.empty')}</p>
@@ -177,7 +180,16 @@ export function SsoScreen() {
             <li key={provider.id}>
               <Card className="flex items-center gap-3">
                 <div className="flex min-w-0 flex-col gap-0.5">
-                  <p className="text-sm font-medium">{provider.name}</p>
+                  <p className="text-sm font-medium">
+                    {provider.name}
+                    {/* 꺼진 것도 목록에 남는다. 표시가 없으면 왜 로그인
+                        화면에 안 뜨는지 알 수 없다. */}
+                    {!provider.is_enabled ? (
+                      <span className="ml-2 text-xs font-normal text-muted">
+                        {t('admin:sso.disabled')}
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="truncate text-xs text-muted">{provider.issuer}</p>
                   {provider.email_domains.length > 0 ? (
                     <p className="text-xs text-muted">{provider.email_domains.join(', ')}</p>
@@ -186,10 +198,12 @@ export function SsoScreen() {
                 <Button
                   variant="ghost"
                   className="ml-auto shrink-0 text-xs"
-                  loading={disable.isPending}
-                  onClick={() => { disable.mutate(provider.id) }}
+                  loading={toggle.isPending}
+                  onClick={() => {
+                    toggle.mutate({ id: provider.id, enabled: !provider.is_enabled })
+                  }}
                 >
-                  {t('admin:sso.disable')}
+                  {provider.is_enabled ? t('admin:sso.disable') : t('admin:sso.enable')}
                 </Button>
               </Card>
             </li>

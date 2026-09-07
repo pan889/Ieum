@@ -100,6 +100,25 @@ services:
     environment:
       MP_MAX_MESSAGES: "5000"
 
+  # 개발·시험용 가짜 OIDC IdP. mailpit·MinIO 와 같은 자리의 도구다 — 실제
+  # IdP 없이 SSO 경로 전체를 돌린다. api 이미지를 그대로 쓴다(pyjwt 가 이미
+  # 들어 있다). 운영 오버라이드(deploy/compose/)에는 없다.
+  fake-idp:
+    # api 이미지를 그대로 쓴다. pyjwt·cryptography 가 이미 들어 있고, 가짜
+    # IdP 를 위해 이미지를 하나 더 만들 이유가 없다. `image` 이름은 컴포즈가
+    # api 를 빌드할 때 붙이는 것과 같다 — 그래서 `up` 한 번으로 둘 다 선다.
+    image: ieum-api:latest
+    command: ["python", "/app/fake-idp/idp.py"]
+    depends_on:
+      api: {condition: service_started}
+    environment:
+      # `iss` 는 **브라우저가 보는 주소**여야 한다. 서버는 컴포즈 네트워크
+      # 안에서 서비스 이름으로 오지만, 토큰의 발급자는 하나뿐이다.
+      FAKE_IDP_ISSUER: ${IEUM_FAKE_IDP_ISSUER:-http://localhost:9099}
+    ports: ["9099:9099"]
+    volumes:
+      - ./deploy/compose/fake-idp:/app/fake-idp:ro
+
   api:
     build:
       context: .

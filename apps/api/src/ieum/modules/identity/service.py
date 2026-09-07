@@ -1291,11 +1291,24 @@ class IdentityProviderService:
         self._providers = IdentityProviderRepository(session)
 
     async def list_all(self, actor: Actor) -> list[IdentityProvider]:
+        """**꺼진 것도 준다.** 관리 화면에서 사라지면 다시 켤 방법이 없고,
+        같은 발급자로 새로 등록하는 길도 유일 제약이 막는다 — 끄는 순간
+        그 IdP 가 영구히 손에서 벗어난다."""
         await self._require(actor)
-        return await self._providers.enabled()
+        return await self._providers.all()
 
     async def create(self, actor: Actor, new: NewProvider) -> IdentityProvider:
         await self._require(actor)
+        # 같은 (발급자, 클라이언트) 는 하나뿐이다. 먼저 물어보지 않으면 두 번째
+        # 등록이 유일 제약에 걸려 500 으로 떨어진다 — 화면에는 "내부 오류" 만
+        # 뜨고, 관리자는 무엇이 겹쳤는지 알 수 없다.
+        duplicate = await self._providers.find(new.issuer, new.client_id)
+        if duplicate is not None:
+            raise ConflictError(
+                "이 발급자와 클라이언트로 이미 등록돼 있다.",
+                code="identity.idp_already_registered",
+                details={"provider_id": str(duplicate.id), "is_enabled": duplicate.is_enabled},
+            )
         box = SecretBox(self._settings.secret_key.get_secret_value(), purpose="identity.idp.secret")
         provider = self._providers.add(
             IdentityProvider(

@@ -131,12 +131,27 @@ class IdentityProviderRepository:
         return await self._s.get(IdentityProvider, provider_id)
 
     async def enabled(self) -> list[IdentityProvider]:
+        """로그인 화면이 쓴다. 꺼진 것은 버튼도 뜨지 않는다."""
         stmt = (
             select(IdentityProvider)
             .where(IdentityProvider.is_enabled.is_(True))
             .order_by(IdentityProvider.name)
         )
         return list((await self._s.execute(stmt)).scalars().all())
+
+    async def all(self) -> list[IdentityProvider]:
+        """관리 화면이 쓴다. **꺼진 것도 보여야 한다** — 안 보이면 다시 켤
+        방법이 없고, 같은 발급자로 새로 등록하는 것도 유일 제약이 막는다."""
+        stmt = select(IdentityProvider).order_by(IdentityProvider.name)
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def find(self, issuer: str, client_id: str) -> IdentityProvider | None:
+        """같은 (발급자, 클라이언트) 로 이미 등록된 것. 유일 제약과 짝이다 —
+        먼저 물어보지 않으면 두 번째 등록이 500 으로 떨어진다."""
+        stmt = select(IdentityProvider).where(
+            IdentityProvider.issuer == issuer, IdentityProvider.client_id == client_id
+        )
+        return (await self._s.execute(stmt)).scalar_one_or_none()
 
     def add(self, provider: IdentityProvider) -> IdentityProvider:
         self._s.add(provider)

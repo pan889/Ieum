@@ -897,3 +897,52 @@ class TestIdpAdmin:
         )
         assert off.status_code == 204, off.text
         assert (await app_client.get(f"{BASE}/auth/sso/providers")).json() == []
+
+    async def test_disabling_is_not_a_one_way_door(self, app_client: httpx.AsyncClient) -> None:
+        """끈 IdP 는 관리 목록에 **남아 있어야** 하고 다시 켜져야 한다.
+
+        목록에서 사라지면 관리자는 다시 켤 대상을 못 고른다. 같은 발급자로
+        새로 등록하는 길도 유일 제약이 막으므로, 끄는 순간 그 IdP 가 영구히
+        손에서 벗어난다.
+        """
+        headers = _auth(await _login(app_client))
+        await _enroll_totp(app_client, headers)
+        created = await app_client.post(
+            f"{BASE}/admin/sso/providers", json=self.BODY, headers=headers
+        )
+        provider_id = created.json()["id"]
+        await app_client.post(f"{BASE}/admin/sso/providers/{provider_id}/disable", headers=headers)
+
+        listed = await app_client.get(f"{BASE}/admin/sso/providers", headers=headers)
+        assert listed.status_code == 200, listed.text
+        rows = {row["id"]: row for row in listed.json()}
+        assert provider_id in rows, "꺼진 IdP 가 관리 목록에서 사라졌다"
+        assert rows[provider_id]["is_enabled"] is False
+
+        on = await app_client.post(
+            f"{BASE}/admin/sso/providers/{provider_id}/enable", headers=headers
+        )
+        assert on.status_code == 204, on.text
+        public = await app_client.get(f"{BASE}/auth/sso/providers")
+        assert [row["id"] for row in public.json()] == [provider_id]
+
+    async def test_registering_the_same_issuer_twice_is_a_conflict(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """같은 (발급자, 클라이언트) 는 하나뿐이다. 두 번째 등록이 유일 제약에
+        그대로 부딪히면 500 이 나가고, 화면에는 "내부 오류" 만 뜬다 — 관리자는
+        무엇이 겹쳤는지 알 수 없다."""
+        headers = _auth(await _login(app_client))
+        await _enroll_totp(app_client, headers)
+        first = await app_client.post(
+            f"{BASE}/admin/sso/providers", json=self.BODY, headers=headers
+        )
+        assert first.status_code == 201, first.text
+
+        again = await app_client.post(
+            f"{BASE}/admin/sso/providers",
+            json={**self.BODY, "name": "Corp (again)"},
+            headers=headers,
+        )
+        assert again.status_code == 409, again.text
+        assert again.json()["error"]["code"] == "identity.idp_already_registered"
