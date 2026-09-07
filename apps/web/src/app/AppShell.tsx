@@ -32,7 +32,13 @@ export function AppShell() {
 
   const signOut = useMutation({
     mutationFn: () => authApi.logout(),
-    onSettled: () => { reset(); },
+    onSettled: () => {
+      reset()
+      // 캐시를 통째로 버린다. 남겨 두면 다음에 들어온 사람이 앞사람의 목록을
+      // 잠깐 보게 되고, `me` 는 로그아웃 때 받은 401 이 그대로 남아 다시
+      // 불려지지 않는다 — 옆 칸에 이름이 아예 안 뜬다.
+      queryClient.clear()
+    },
   })
 
   /**

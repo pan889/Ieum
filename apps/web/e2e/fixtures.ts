@@ -29,11 +29,132 @@ export function projectKey(): string {
   return uniqueKey('E')
 }
 
-export async function signIn(page: Page): Promise<void> {
+export const API = process.env['E2E_API_BASE_URL'] ?? 'http://127.0.0.1:8000'
+/** 개발 스택의 메일 상자. 나간 메일을 여기서 되읽는다. */
+export const MAILPIT = process.env['E2E_MAILPIT_URL'] ?? 'http://127.0.0.1:8025'
+
+/** 아웃박스는 15초마다 훑는다. 메일은 그 뒤에 나간다. */
+const SWEEP_MS = 15_000
+
+export interface InvitedUser {
+  email: string
+  password: string
+  displayName: string
+}
+
+/**
+ * 두 번째 사람을 만든다 — **초대 메일을 실제로 읽어서**.
+ *
+ * 알림이 남에게 가는지, 권한이 남에게 어떻게 보이는지는 사람이 둘이라야
+ * 볼 수 있다. 토큰을 몰래 만들어 지름길로 가지 않는다: 그러면 초대 흐름이
+ * 죽어 있어도 테스트는 통과한다 (실제로 한동안 죽어 있었다).
+ *
+ * 메일을 기다리므로 느리다. 쓰는 테스트는 `test.slow()` 를 붙인다.
+ */
+export async function inviteUser(
+  page: Page,
+  options: { grants?: string[] } = {},
+): Promise<InvitedUser> {
+  const stamp = uniqueKey('U').toLowerCase()
+  const user: InvitedUser = {
+    email: `${stamp}@example.com`,
+    password: `${stamp}-password-1234`,
+    displayName: `User ${stamp}`,
+  }
+
+  const token = await accessToken(page)
+  const created = await page.request.post(`${API}/api/v1/users/invite`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { email: user.email, display_name: user.displayName, locale: 'en' },
+  })
+  expect(created.ok(), await created.text()).toBe(true)
+  const { id } = (await created.json()) as { id: string }
+
+  if (options.grants?.length) {
+    // 초대받은 사람에게는 아무 권한도 없다. 볼 것을 주지 않으면 화면이 전부
+    // "권한이 없습니다" 다.
+    const role = await page.request.post(`${API}/api/v1/roles`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { name: `Role ${stamp}`, scope_kind: 'global', grants: options.grants },
+    })
+    expect(role.ok(), await role.text()).toBe(true)
+    const assigned = await page.request.post(`${API}/api/v1/roles/assignments`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        role_id: ((await role.json()) as { id: string }).id,
+        scope_kind: 'global',
+        scope_id: null,
+        principal_kind: 'user',
+        principal_id: id,
+      },
+    })
+    expect(assigned.ok(), await assigned.text()).toBe(true)
+  }
+
+  await acceptInvite(page, user)
+  return user
+}
+
+/** 메일함에서 초대 링크를 찾아 열고 비밀번호를 정한다. */
+async function acceptInvite(page: Page, user: InvitedUser): Promise<void> {
+  const link = await inviteLink(page, user.email)
+  // 메일의 주소는 서버가 아는 호스트다. 테스트가 여는 호스트로 맞춘다.
+  await page.goto(new URL(link).pathname + new URL(link).search)
+  await page.getByLabel(/new password/i).fill(user.password)
+  await page.getByRole('button', { name: /activate account/i }).click()
+  await expect(page.getByRole('button', { name: /^sign in$/i })).toBeVisible()
+}
+
+async function inviteLink(page: Page, email: string): Promise<string> {
+  const deadline = Date.now() + SWEEP_MS * 3
+  while (Date.now() < deadline) {
+    const found = await page.request.get(
+      `${MAILPIT}/api/v1/search?query=${encodeURIComponent(email)}`,
+    )
+    const messages = ((await found.json()) as { messages?: { ID: string }[] }).messages ?? []
+    const first = messages[0]
+    if (first) {
+      const detail = await page.request.get(`${MAILPIT}/api/v1/message/${first.ID}`)
+      const body = ((await detail.json()) as { Text?: string }).Text ?? ''
+      const link = /https?:\/\/\S+\/invite\?token=\S+/.exec(body)?.[0]
+      if (link) return link
+    }
+    await page.waitForTimeout(2000)
+  }
+  throw new Error(`초대 메일이 오지 않았다: ${email}`)
+}
+
+/** 로그인한 사람의 액세스 토큰. 메모리에만 있어서 앱에게 물어야 한다. */
+async function accessToken(page: Page): Promise<string> {
+  const response = await page.request.post(`${API}/api/v1/auth/login`, {
+    data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+  })
+  expect(response.ok(), await response.text()).toBe(true)
+  return ((await response.json()) as { access_token: string }).access_token
+}
+
+export async function signIn(
+  page: Page,
+  who: { email: string; password: string } = { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+): Promise<void> {
   await page.goto('/')
-  await page.getByLabel(/email/i).fill(ADMIN_EMAIL)
-  await page.getByLabel(/password/i).fill(ADMIN_PASSWORD)
+  // 한 브라우저에서 사람을 바꿔 가며 보는 테스트가 있다. 이미 들어와 있으면
+  // 로그인 폼이 아예 없으므로 먼저 나간다.
+  const email = page.getByLabel(/email/i)
+  const out = page.getByRole('button', { name: /sign out/i })
+  await expect(email.or(out).first()).toBeVisible()
+  if (await out.isVisible()) {
+    await out.click()
+    await expect(email).toBeVisible()
+  }
+
+  await email.fill(who.email)
+  await page.getByLabel(/password/i).fill(who.password)
   await page.getByRole('button', { name: /sign in/i }).click()
+  // 주소가 아니라 **앱 셸**이 뜰 때까지 기다린다. 나갔다 들어오는 경우 주소는
+  // 이미 `/projects` 라서, 주소만 보면 로그인 요청이 아직 날아가는 중인데도
+  // 다음 줄로 넘어간다.
+  await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible()
   await page.waitForURL(/\/projects/)
 }
 

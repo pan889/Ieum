@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AcceptInviteScreen } from '@/features/auth/AcceptInviteScreen'
 import { LoginScreen } from '@/features/auth/LoginScreen'
 import { MfaEnrollScreen } from '@/features/auth/MfaEnrollScreen'
 import { MfaScreen } from '@/features/auth/MfaScreen'
@@ -25,11 +26,15 @@ export function App() {
   const setStage = useAuthStore((s) => s.setStage)
   const setUser = useAuthStore((s) => s.setUser)
 
+  // 초대 수락은 로그인 **전에** 여는 화면이다. 인증 단계와 무관하게 먼저
+  // 가른다 — 라우터에 넣으면 로그인한 사람만 초대를 받을 수 있게 된다.
+  const invited = window.location.pathname === '/invite'
+
   const me = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: () => authApi.me(),
     retry: false,
-    enabled: stage === 'unknown' || stage === 'authenticated',
+    enabled: !invited && (stage === 'unknown' || stage === 'authenticated'),
   })
 
   useEffect(() => {
@@ -54,6 +59,8 @@ export function App() {
       void setLocale(userLocale as Locale)
     }
   }, [userLocale])
+
+  if (invited) return <AcceptInviteScreen />
 
   switch (stage) {
     case 'unknown':

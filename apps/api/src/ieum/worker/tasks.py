@@ -26,6 +26,8 @@ from ieum.core.outbox import dispatch, fetch_unpublished
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import session_scope
+from ieum.modules.identity.handlers import HandlerContext as IdentityContext
+from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.notify import delivery as webhook_delivery
 from ieum.modules.notify.handlers import (
     HandlerContext,
@@ -33,7 +35,7 @@ from ieum.modules.notify.handlers import (
     handle_issue_event,
     handle_page_event,
 )
-from ieum.modules.notify.mail import send_all
+from ieum.modules.notify.mail import Mail, send_all
 from ieum.modules.notify.models import Notification, Webhook
 from ieum.modules.notify.repository import DeliveryRepository
 from ieum.modules.notify.service import NotificationService
@@ -48,6 +50,9 @@ async def drain_outbox() -> int:
     """미발행 이벤트를 처리한다. 처리한 건수를 돌려준다."""
     settings = get_settings()
     notification_ids: list[Any] = []
+    # 알림 없이 나가는 메일. 초대장이 그렇다 — 받는 사람은 아직 계정을
+    # 활성화하지 않아서 인앱 알림을 볼 수 없다.
+    standalone: list[Mail] = []
 
     async with session_scope() as session:
         rows = await fetch_unpublished(session, limit=OUTBOX_BATCH)
@@ -55,6 +60,7 @@ async def drain_outbox() -> int:
             return 0
 
         handler_ctx = HandlerContext(session=session, settings=settings)
+        identity_ctx = IdentityContext(session=session, settings=settings)
         for row in rows:
             from ieum.core.events import EventEnvelope
 
@@ -68,6 +74,7 @@ async def drain_outbox() -> int:
             try:
                 notification_ids.extend(await handle_issue_event(handler_ctx, envelope))
                 notification_ids.extend(await handle_page_event(handler_ctx, envelope))
+                standalone.extend(await collect_invite_mail(identity_ctx, envelope))
                 await enqueue_webhooks(handler_ctx, envelope)
             # 한 건이 실패해도 배치 전체를 멈추지 않는다.
             except Exception as exc:
@@ -90,6 +97,11 @@ async def drain_outbox() -> int:
 
     if notification_ids:
         await send_pending_mail(notification_ids)
+    if standalone:
+        # 세션을 닫은 뒤 보낸다. SMTP 가 느려도 DB 커넥션을 붙잡지 않는다.
+        log.info(
+            "mail.standalone", queued=len(standalone), sent=await send_all(settings, standalone)
+        )
     return len(rows)
 
 

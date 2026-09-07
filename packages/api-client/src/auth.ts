@@ -64,6 +64,16 @@ export function createUsersApi(client: ApiClient) {
      * 다시 영어로 열리고, 알림 메일도 옛 언어로 나간다.
      */
     updateMe: (body: { locale: string }) => client.patch<CurrentUser>(`${USERS}/me`, body),
+
+    /**
+     * 초대를 받아들이고 비밀번호를 정한다.
+     *
+     * 아직 로그인할 수 없는 사람이 부른다 — 토큰이 곧 신분증이므로 익명으로
+     * 보낸다. 여기에 Authorization 을 붙이면 로그인한 사람만 초대를 받을 수
+     * 있게 된다.
+     */
+    acceptInvite: (body: { token: string; password: string }) =>
+      client.post<CurrentUser>(`${USERS}/accept-invite`, body, { anonymous: true }),
   }
 }
 

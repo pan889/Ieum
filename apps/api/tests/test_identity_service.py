@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.config import Settings
 from ieum.core.crypto import PasswordHashingService
+from ieum.core.events import EventEnvelope
 from ieum.core.exceptions import (
     AuthenticationError,
     ConflictError,
@@ -25,6 +26,7 @@ from ieum.core.exceptions import (
 from ieum.core.ids import new_id
 from ieum.core.outbox import OutboxEvent
 from ieum.core.time import utcnow
+from ieum.modules.identity.handlers import HandlerContext, collect_invite_mail
 from ieum.modules.identity.invites import decode_invite_token, encode_invite_token
 from ieum.modules.identity.models import AuditLog, LoginAttempt, User, UserSession
 from ieum.modules.identity.repository import SessionRepository
@@ -93,6 +95,97 @@ class TestInvite:
         )
         assert [r.event_type for r in rows] == ["identity.user.invited"]
         assert rows[0].published_at is None  # 워커가 처리하기 전
+
+    async def test_invite_mail_carries_a_usable_token(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """이 메일이 없으면 초대받은 사람은 계정을 열 방법이 아예 없다.
+
+        토큰은 아웃박스 페이로드가 아니라 **메일을 만들 때** 만든다. 페이로드에
+        실으면 계정을 활성화할 수 있는 자격 증명이 웹훅 본문과 로그에 흩어진다.
+        """
+        service = UserService(session, settings)
+        user = await service.invite(email="mailed@example.com", display_name="Mailed")
+        await session.flush()
+
+        mails = await collect_invite_mail(
+            HandlerContext(session=session, settings=settings),
+            EventEnvelope(
+                id=new_id(),
+                event_type="identity.user.invited",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                payload={"email": user.email},
+            ),
+        )
+        assert len(mails) == 1
+        assert mails[0].to == "mailed@example.com"
+        assert mails[0].link is not None
+        token = mails[0].link.removeprefix("/invite?token=")
+        assert decode_invite_token(token, settings) == user.id
+        # 토큰이 이벤트 페이로드에 새어 나가면 안 된다.
+        rows = (
+            (await session.execute(select(OutboxEvent).where(OutboxEvent.aggregate_id == user.id)))
+            .scalars()
+            .all()
+        )
+        assert "token" not in str(rows[0].payload)
+
+    async def test_invite_mail_speaks_the_invitees_language(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """초대한 사람이 아니라 받는 사람의 언어다 (i18n.md 3절)."""
+        user = await UserService(session, settings).invite(
+            email="korean@example.com", display_name="한국", locale="ko"
+        )
+        await session.flush()
+        mails = await collect_invite_mail(
+            HandlerContext(session=session, settings=settings),
+            EventEnvelope(
+                id=new_id(),
+                event_type="identity.user.invited",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                payload={},
+            ),
+        )
+        assert mails[0].subject == "Ieum 에 초대되었습니다"
+
+    async def test_no_second_invite_after_activation(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """아웃박스가 재시도될 때 옛 초대가 되살아나면 "왜 또 왔지" 가 된다."""
+        service = UserService(session, settings)
+        user = await service.invite(email="already@example.com", display_name="A")
+        await service.activate_with_password(user_id=user.id, password=PASSWORD)
+        await session.flush()
+
+        mails = await collect_invite_mail(
+            HandlerContext(session=session, settings=settings),
+            EventEnvelope(
+                id=new_id(),
+                event_type="identity.user.invited",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                payload={},
+            ),
+        )
+        assert mails == []
+
+    async def test_other_events_make_no_mail(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        mails = await collect_invite_mail(
+            HandlerContext(session=session, settings=settings),
+            EventEnvelope(
+                id=new_id(),
+                event_type="identity.user.suspended",
+                aggregate_type="user",
+                aggregate_id=new_id(),
+                payload={},
+            ),
+        )
+        assert mails == []
 
     async def test_activation_sets_password_and_status(
         self, session: AsyncSession, settings: Settings
