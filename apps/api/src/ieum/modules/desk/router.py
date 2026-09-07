@@ -27,6 +27,11 @@ from ieum.modules.desk.schemas import (
     AgentTicketResponse,
     AnswerResponse,
     ArticleResponse,
+    AutomationRuleCreateRequest,
+    AutomationRuleResponse,
+    AutomationRuleUpdateRequest,
+    AutomationTargetOption,
+    AutomationTargetsResponse,
     CalendarCreateRequest,
     CalendarResponse,
     CalendarUpdateRequest,
@@ -74,6 +79,8 @@ from ieum.modules.desk.schemas import (
 )
 from ieum.modules.desk.service import (
     AgentTicketService,
+    AutomationRuleView,
+    AutomationService,
     CannedResponseService,
     CannedResponseView,
     CustomerOrgService,
@@ -105,6 +112,9 @@ canned_router = APIRouter(prefix="/canned-responses", tags=["desk"])
 #: `desk.sla.manage`(전역 + step-up)가 필요하다.
 calendars_router = APIRouter(prefix="/business-calendars", tags=["desk"])
 sla_router = APIRouter(prefix="/sla-policies", tags=["desk"])
+#: 자동화 규칙 (C9). 프로젝트 단위 + step-up 이다 — 규칙은 사람이 안 보는
+#: 사이에 티켓을 바꾸고 고객에게 글을 보낸다.
+automation_router = APIRouter(prefix="/automation-rules", tags=["desk"])
 #: 메일 채널 (C6). 프로젝트 단위 + step-up 이다 — 비밀번호를 받는 자리다.
 email_router = APIRouter(prefix="/email-channels", tags=["desk"])
 #: 고객이 쓰는 표면. 이 접두사만 고객 격리를 통과한다.
@@ -1276,4 +1286,101 @@ async def delete_email_channel(
     channel_id: UUID,
 ) -> None:
     await EmailChannelService(session, permissions, settings).delete(actor, channel_id)
+    await session.commit()
+
+
+# ── 자동화 규칙 (C9) ───────────────────────────────────────────
+
+
+def _rule(view: AutomationRuleView) -> AutomationRuleResponse:
+    return AutomationRuleResponse(
+        id=view.rule.id,
+        project_id=view.rule.project_id,
+        name=view.rule.name,
+        trigger=dict(view.rule.trigger),
+        conditions=[dict(row) for row in view.rule.conditions],
+        actions=[dict(row) for row in view.rule.actions],
+        names=dict(view.names),
+        position=view.rule.position,
+        is_enabled=view.rule.is_enabled,
+    )
+
+
+@automation_router.get("/targets", response_model=AutomationTargetsResponse)
+async def list_automation_targets(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, project_id: UUID
+) -> AutomationTargetsResponse:
+    """조건·조치가 고를 수 있는 것들.
+
+    **`/{rule_id}` 보다 위에 둔다.** 아래에 두면 `targets` 가 규칙 id 로
+    잡혀 UUID 파싱 오류가 난다 — SLA 의 `/states` 와 같은 자리다.
+    """
+    found = await AutomationService(session, permissions).targets(actor, project_id)
+    return AutomationTargetsResponse(
+        request_types=[
+            AutomationTargetOption(id=row.id, name=row.name) for row in found.request_types
+        ],
+        organizations=[
+            AutomationTargetOption(id=row.id, name=row.name) for row in found.organizations
+        ],
+    )
+
+
+@automation_router.get("", response_model=list[AutomationRuleResponse])
+async def list_automation_rules(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, project_id: UUID
+) -> list[AutomationRuleResponse]:
+    rows = await AutomationService(session, permissions).list_for(actor, project_id)
+    return [_rule(row) for row in rows]
+
+
+@automation_router.post(
+    "", response_model=AutomationRuleResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_automation_rule(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    payload: AutomationRuleCreateRequest,
+) -> AutomationRuleResponse:
+    view = await AutomationService(session, permissions).create(
+        actor,
+        project_id=payload.project_id,
+        name=payload.name,
+        trigger=payload.trigger,
+        conditions=payload.conditions,
+        actions=payload.actions,
+        position=payload.position,
+    )
+    await session.commit()
+    return _rule(view)
+
+
+@automation_router.patch("/{rule_id}", response_model=AutomationRuleResponse)
+async def update_automation_rule(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    rule_id: UUID,
+    payload: AutomationRuleUpdateRequest,
+) -> AutomationRuleResponse:
+    view = await AutomationService(session, permissions).update(
+        actor,
+        rule_id,
+        name=payload.name,
+        trigger=payload.trigger,
+        conditions=payload.conditions,
+        actions=payload.actions,
+        position=payload.position,
+        is_enabled=payload.is_enabled,
+    )
+    await session.commit()
+    return _rule(view)
+
+
+@automation_router.delete("/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_automation_rule(
+    session: DbSession, permissions: PermissionDep, actor: CurrentActor, rule_id: UUID
+) -> None:
+    await AutomationService(session, permissions).delete(actor, rule_id)
     await session.commit()

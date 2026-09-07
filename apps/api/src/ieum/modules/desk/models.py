@@ -559,3 +559,40 @@ class EmailMessage(Entity):
         # 스레드 매칭이 이 컬럼으로 찾는다. 없으면 회신마다 테이블 전체를 읽는다.
         Index("ix_email_message_in_reply_to", "in_reply_to"),
     )
+
+
+class AutomationRule(Entity, Archivable):
+    """조건-조치 규칙 하나 (feature-map C9).
+
+    **트리거는 이벤트다.** SLA 에스컬레이션과 다른 점이 그것이다 — 거기서는
+    "아무 일도 안 일어나서" 조건이 성립하므로 스윕이 필요했고, 여기서는
+    무언가 일어난 것이 규칙을 깨운다.
+
+    `position` 이 실행 순서다. 순서가 보이는 것이 중요하다: 우선순위를 올리는
+    규칙과 담당자를 정하는 규칙이 둘 다 걸릴 때, 관리자는 자기가 적은 순서대로
+    돌기를 기대한다.
+    """
+
+    __tablename__ = "automation_rule"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: `{"event": "desk.ticket.submitted"}`.
+    trigger: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    #: `[{"field": "priority", "op": "gte", "value": 4}]`. **전부 맞아야 한다.**
+    conditions: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    #: `[{"kind": "assign", "user_id": "..."}]`. 등록된 이름 + 파라미터만.
+    actions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 끄면 안 돈다. 지우는 것과 다르다 — 잠시 멈추고 싶은 것이 대부분이고,
+    #: 지우면 조건과 조치를 다시 적어야 한다.
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_automation_rule_project_id_name"),
+        Index("ix_automation_rule_project_id", "project_id"),
+    )

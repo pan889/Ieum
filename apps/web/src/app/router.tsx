@@ -10,6 +10,7 @@ import { BoardsScreen } from '@/features/boards/BoardsScreen'
 import { CustomerOrgsScreen } from '@/features/desk/CustomerOrgsScreen'
 import { PortalsScreen } from '@/features/desk/PortalsScreen'
 import { QueuesScreen } from '@/features/desk/QueuesScreen'
+import { AutomationScreen } from '@/features/desk/AutomationScreen'
 import { EmailChannelsScreen } from '@/features/desk/EmailChannelsScreen'
 import { SlaScreen } from '@/features/desk/SlaScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
@@ -200,6 +201,16 @@ const emailChannelsRoute = createRoute({
   component: EmailChannelsScreen,
 })
 
+/**
+ * 자동화 (C9). 메일 채널과 같은 이유로 `/settings/` 아래다 — 규칙 하나가
+ * 그 뒤로 오는 모든 티켓에 걸리고, 고객에게 글을 보낸다.
+ */
+const automationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/automation',
+  component: AutomationScreen,
+})
+
 /** 검색어를 URL 이 소유한다. 링크 하나로 같은 결과가 나와야 한다. */
 export interface SearchParams {
   q: string
@@ -274,6 +285,7 @@ const routeTree = rootRoute.addChildren([
   deskRoute,
   slaRoute,
   emailChannelsRoute,
+  automationRoute,
   searchRoute,
   wikiRoute,
   spaceRoute,

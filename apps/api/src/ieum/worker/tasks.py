@@ -40,6 +40,7 @@ from ieum.modules.desk.imap import ImapError, ImapSettings, fetch_unseen
 from ieum.modules.desk.inbound import handle_inbound
 from ieum.modules.desk.models import EmailChannel
 from ieum.modules.desk.outbound import OutboundContext, collect_reply_mail
+from ieum.modules.desk.rules import RuleContext, handle_automation
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.issues import contracts as issue_contracts
@@ -100,6 +101,11 @@ async def drain_outbox() -> int:
                 # SLA 클럭 (C4). 여기서 도는 이유는 요청 경로에서 재면 아무도
                 # 열어 보지 않은 티켓이 영원히 위반이 아니게 되기 때문이다.
                 await handle_desk_event(ClockContext(session=session), envelope)
+                # 자동화 규칙 (C9). **클럭 뒤에 둔다** — 규칙이 우선순위를
+                # 올려도 이미 걸린 클럭의 목표는 그대로다(약속은 접수 시점에
+                # 정해진다). 순서를 바꾸면 같은 티켓이 규칙의 실행 순간에
+                # 따라 다른 목표를 갖는다.
+                await handle_automation(RuleContext(session=session), envelope)
             # 한 건이 실패해도 배치 전체를 멈추지 않는다.
             except Exception as exc:
                 row.attempts += 1

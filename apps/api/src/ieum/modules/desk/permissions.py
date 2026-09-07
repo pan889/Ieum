@@ -37,6 +37,13 @@ CUSTOMER_MANAGE = "desk.customer.manage"
 #: 주소를 바꾸면 그 뒤로 오는 고객의 메일이 다른 프로젝트의 티켓이 된다 —
 #: 세션을 훔친 사람이 조용히 할 수 있는 일 중 가장 큰 것에 가깝다.
 EMAIL_MANAGE = "desk.email.manage"
+#: 자동화 규칙 정의. **프로젝트 단위 + step-up 이다.**
+#:
+#: step-up 인 이유: 규칙은 사람이 안 보는 사이에 티켓을 바꾸고 **고객에게
+#: 글을 보낸다.** 세션을 훔친 사람이 "모든 신규 티켓에 이 문구로 회신" 을
+#: 하나 걸어 두면 그 뒤로 오는 모든 요청에 그 글이 배달된다 — 큐 조건을
+#: 고치는 것과는 무게가 다르다.
+AUTOMATION_MANAGE = "desk.automation.manage"
 
 registry.register_many(
     [
@@ -48,10 +55,19 @@ registry.register_many(
         # 보는 티켓의 범위가 바뀐다. 그래서 전역 + step-up 이다.
         PermissionDef(CUSTOMER_MANAGE, GLOBAL, "고객 조직·소속 관리", requires_step_up=True),
         PermissionDef(EMAIL_MANAGE, PROJECT, "메일 채널 관리", requires_step_up=True),
+        PermissionDef(AUTOMATION_MANAGE, PROJECT, "자동화 규칙 관리", requires_step_up=True),
     ]
 )
 
-ALL = (PORTAL_MANAGE, QUEUE_WORK, QUEUE_MANAGE, SLA_MANAGE, CUSTOMER_MANAGE, EMAIL_MANAGE)
+ALL = (
+    PORTAL_MANAGE,
+    QUEUE_WORK,
+    QUEUE_MANAGE,
+    SLA_MANAGE,
+    CUSTOMER_MANAGE,
+    EMAIL_MANAGE,
+    AUTOMATION_MANAGE,
+)
 
 #: 상담원에게 기본으로 주는 묶음. 시드가 사용한다.
 AGENT_DEFAULTS = (QUEUE_WORK,)

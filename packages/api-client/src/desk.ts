@@ -511,6 +511,96 @@ export interface Article {
   excerpt: string
 }
 
+// ── 자동화 규칙 (C9) ───────────────────────────────────────────
+
+/** 규칙을 깨우는 이벤트. */
+export type AutomationTrigger =
+  | 'desk.ticket.submitted'
+  | 'issue.transitioned'
+  | 'issue.commented'
+
+/** 조건에서 볼 수 있는 것. 서버의 `automation.FIELDS` 와 같아야 한다. */
+export type AutomationField =
+  | 'priority'
+  | 'channel'
+  | 'request_type_id'
+  | 'organization_id'
+  | 'state_category'
+  | 'summary'
+  | 'is_internal'
+  | 'to_state_category'
+
+export type AutomationOperator = 'eq' | 'ne' | 'gte' | 'lte' | 'in' | 'contains'
+
+/** 조건 하나. **전부 맞아야 한다(AND).** */
+export interface AutomationCondition {
+  field: AutomationField
+  op: AutomationOperator
+  value: string | number | boolean | (string | number)[]
+}
+
+/** 조건·조치가 고를 수 있는 것 하나. */
+export interface AutomationTargetOption {
+  id: string
+  name: string
+}
+
+/**
+ * 고를 수 있는 것들. **자동화 권한으로 연다.**
+ *
+ * 요청 유형 목록은 `desk.portal.manage` 가, 고객 조직 목록은
+ * `desk.customer.manage` 가 지킨다. 규칙을 쓰는 사람에게 그 둘을 마저
+ * 요구하면 고를 수는 없는데 UUID 를 적으면 되는 자리가 된다.
+ */
+export interface AutomationTargets {
+  request_types: AutomationTargetOption[]
+  organizations: AutomationTargetOption[]
+}
+
+/** 조치 하나. 등록된 이름 + 파라미터만. */
+export interface AutomationAction {
+  kind: 'set_priority' | 'assign' | 'reply_with_canned' | 'add_note'
+  priority?: number
+  user_id?: string
+  canned_response_id?: string
+}
+
+export interface AutomationRule {
+  id: string
+  project_id: string
+  name: string
+  trigger: { event: AutomationTrigger }
+  conditions: AutomationCondition[]
+  actions: AutomationAction[]
+  /**
+   * 조치가 지목한 사람·정형 응답의 이름. id → 이름.
+   *
+   * 조치 **안이 아니라 옆에** 온다: 저장 요청은 읽은 조치를 그대로 되돌려
+   * 보내는데, 그 안에 이름이 섞이면 서버가 모르는 항목으로 거절한다.
+   */
+  names: Record<string, string>
+  position: number
+  is_enabled: boolean
+}
+
+export interface NewAutomationRule {
+  project_id: string
+  name: string
+  trigger: { event: AutomationTrigger }
+  conditions?: AutomationCondition[]
+  actions: AutomationAction[]
+  position?: number
+}
+
+export interface AutomationRulePatch {
+  name?: string
+  trigger?: { event: AutomationTrigger }
+  conditions?: AutomationCondition[]
+  actions?: AutomationAction[]
+  position?: number
+  is_enabled?: boolean
+}
+
 const PORTALS = '/api/v1/portals'
 const CUSTOMERS = '/api/v1/customer-organizations'
 const QUEUES = '/api/v1/queues'
@@ -518,6 +608,7 @@ const CANNED = '/api/v1/canned-responses'
 const CALENDARS = '/api/v1/business-calendars'
 const SLA = '/api/v1/sla-policies'
 const EMAIL = '/api/v1/email-channels'
+const AUTOMATION = '/api/v1/automation-rules'
 /** 고객 표면. 이 접두사만 고객 격리를 통과한다 (auth.md 5절). */
 const PORTAL = '/api/v1/portal'
 
@@ -703,6 +794,18 @@ export function createDeskApi(client: ApiClient) {
     updateEmailChannel: (id: string, body: EmailChannelPatch) =>
       client.patch<EmailChannel>(`${EMAIL}/${id}`, body),
     deleteEmailChannel: (id: string) => client.delete<void>(`${EMAIL}/${id}`),
+
+    // 자동화 규칙 (C9)
+    listAutomationRules: (projectId: string) =>
+      client.get<AutomationRule[]>(`${AUTOMATION}?project_id=${projectId}`),
+    /** 조건·조치가 고를 수 있는 것들. UUID 를 손으로 적게 하지 않는다. */
+    automationTargets: (projectId: string) =>
+      client.get<AutomationTargets>(`${AUTOMATION}/targets?project_id=${projectId}`),
+    createAutomationRule: (body: NewAutomationRule) =>
+      client.post<AutomationRule>(AUTOMATION, body),
+    updateAutomationRule: (id: string, body: AutomationRulePatch) =>
+      client.patch<AutomationRule>(`${AUTOMATION}/${id}`, body),
+    deleteAutomationRule: (id: string) => client.delete<void>(`${AUTOMATION}/${id}`),
   }
 }
 

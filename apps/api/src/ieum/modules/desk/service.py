@@ -26,12 +26,14 @@ from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
+from ieum.modules.desk import automation
 from ieum.modules.desk import permissions as perms
 from ieum.modules.desk.calendar import CalendarError
 from ieum.modules.desk.events import TicketSubmitted
 from ieum.modules.desk.models import (
     RESERVED_FORM_KEYS,
     SLA_METRICS,
+    AutomationRule,
     BusinessCalendarRow,
     CannedResponse,
     CustomerOrganization,
@@ -2281,3 +2283,347 @@ class EmailChannelService:
         except ImapError as exc:
             raise ValidationError(str(exc), code="desk.email_inbound_invalid") from exc
         return {key: config[key] for key in sorted(config)}
+
+
+@dataclass(frozen=True, slots=True)
+class AutomationRuleView:
+    """화면에 내려가는 규칙."""
+
+    rule: AutomationRule
+    #: 조치가 지목한 사람·정형 응답의 이름. id → 이름.
+    #:
+    #: **조치 안에 넣지 않는다.** 저장 요청은 읽은 조치를 그대로 되돌려
+    #: 보내는데, 그 안에 이름이 섞이면 서버가 모르는 항목으로 거절한다 —
+    #: SLA 에스컬레이션과 같은 판단이다.
+    names: dict[UUID, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class NamedRef:
+    """고를 수 있는 것 하나. id 와 사람이 읽는 이름."""
+
+    id: UUID
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class AutomationTargets:
+    """조건·조치가 고를 수 있는 것들."""
+
+    request_types: list[NamedRef] = field(default_factory=list)
+    organizations: list[NamedRef] = field(default_factory=list)
+
+
+class AutomationService:
+    """자동화 규칙 정의 (feature-map C9). **프로젝트 단위 + step-up.**
+
+    step-up 인 이유: 규칙은 사람이 안 보는 사이에 티켓을 바꾸고 고객에게 글을
+    보낸다. 세션을 훔친 사람이 "모든 신규 티켓에 이 문구로 회신" 을 하나
+    걸어 두면, 그 뒤로 오는 모든 요청에 그 글이 배달된다.
+    """
+
+    def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
+        self._s = session
+        self._perms = permissions
+
+    async def list_for(self, actor: Actor, project_id: UUID) -> list[AutomationRuleView]:
+        await self._perms.require(
+            self._s, actor, perms.AUTOMATION_MANAGE, scope=Scope.project(project_id)
+        )
+        rows = list(
+            (
+                await self._s.execute(
+                    select(AutomationRule)
+                    .where(
+                        AutomationRule.project_id == project_id,
+                        AutomationRule.archived_at.is_(None),
+                    )
+                    .order_by(AutomationRule.position, AutomationRule.name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        names = await self._names(rows)
+        return [AutomationRuleView(rule=row, names=names) for row in rows]
+
+    async def create(
+        self,
+        actor: Actor,
+        *,
+        project_id: UUID,
+        name: str,
+        trigger: dict[str, Any],
+        conditions: list[dict[str, Any]],
+        actions: list[dict[str, Any]],
+        position: int = 0,
+    ) -> AutomationRuleView:
+        await self._perms.require(
+            self._s, actor, perms.AUTOMATION_MANAGE, scope=Scope.project(project_id)
+        )
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("이름을 비울 수 없다.", code="desk.automation_name_empty")
+        checked = self._validated(trigger, conditions, actions)
+        await self._validated_conditions(project_id, checked["conditions"])
+        await self._validated_targets(project_id, checked["actions"])
+        if await self._name_taken(project_id, clean_name):
+            raise ConflictError("같은 이름의 규칙이 있다.", code="desk.automation_name_taken")
+
+        row = AutomationRule(
+            project_id=project_id,
+            name=clean_name,
+            trigger=checked["trigger"],
+            conditions=checked["conditions"],
+            actions=checked["actions"],
+            position=position,
+        )
+        self._s.add(row)
+        await self._s.flush()
+        log.info("desk.automation.created", rule=str(row.id), project=str(project_id))
+        return AutomationRuleView(rule=row, names=await self._names([row]))
+
+    async def update(
+        self,
+        actor: Actor,
+        rule_id: UUID,
+        *,
+        name: str | None = None,
+        trigger: dict[str, Any] | None = None,
+        conditions: list[dict[str, Any]] | None = None,
+        actions: list[dict[str, Any]] | None = None,
+        position: int | None = None,
+        is_enabled: bool | None = None,
+    ) -> AutomationRuleView:
+        row = await self._require(actor, rule_id)
+        if name is not None:
+            clean = name.strip()
+            if not clean:
+                raise ValidationError("이름을 비울 수 없다.", code="desk.automation_name_empty")
+            if await self._name_taken(row.project_id, clean, exclude=row.id):
+                raise ConflictError("같은 이름의 규칙이 있다.", code="desk.automation_name_taken")
+            row.name = clean
+        # 트리거·조건·조치는 **함께** 검증한다. 하나만 바꿔도 나머지와 함께
+        # 성립해야 하고, 따로 보면 "조치는 맞는데 트리거가 없는" 상태가 잠깐
+        # 생긴다.
+        if trigger is not None or conditions is not None or actions is not None:
+            checked = self._validated(
+                trigger if trigger is not None else row.trigger,
+                conditions if conditions is not None else list(row.conditions),
+                actions if actions is not None else list(row.actions),
+            )
+            await self._validated_conditions(row.project_id, checked["conditions"])
+            await self._validated_targets(row.project_id, checked["actions"])
+            row.trigger = checked["trigger"]
+            row.conditions = checked["conditions"]
+            row.actions = checked["actions"]
+        if position is not None:
+            row.position = position
+        if is_enabled is not None:
+            row.is_enabled = is_enabled
+        await self._s.flush()
+        return AutomationRuleView(rule=row, names=await self._names([row]))
+
+    async def delete(self, actor: Actor, rule_id: UUID) -> None:
+        """보관한다. 지운 규칙이 남긴 코멘트와 이력은 그대로 둔다."""
+        row = await self._require(actor, rule_id)
+        row.archived_at = utcnow()
+        await self._s.flush()
+
+    # ── 내부 ────────────────────────────────────────────────────
+
+    async def _require(self, actor: Actor, rule_id: UUID) -> AutomationRule:
+        row = await self._s.get(AutomationRule, rule_id)
+        if row is None or row.archived_at is not None:
+            raise NotFoundError("규칙을 찾을 수 없다.")
+        await self._perms.require(
+            self._s, actor, perms.AUTOMATION_MANAGE, scope=Scope.project(row.project_id)
+        )
+        return row
+
+    async def _name_taken(
+        self, project_id: UUID, name: str, *, exclude: UUID | None = None
+    ) -> bool:
+        stmt = select(AutomationRule.id).where(
+            AutomationRule.project_id == project_id,
+            AutomationRule.name == name,
+            AutomationRule.archived_at.is_(None),
+        )
+        if exclude is not None:
+            stmt = stmt.where(AutomationRule.id != exclude)
+        return (await self._s.execute(stmt.limit(1))).first() is not None
+
+    @staticmethod
+    def _validated(trigger: Any, conditions: Any, actions: Any) -> dict[str, Any]:
+        """저장 전에 전부 통과시킨다.
+
+        **자동화의 실패는 조용하다** — 아무 일도 안 일어난 것과 구별되지
+        않는다. 그래서 저장하는 자리가 마지막 방어선이다.
+        """
+        try:
+            return {
+                "trigger": automation.validate_trigger(trigger),
+                "conditions": automation.validate_conditions(conditions),
+                "actions": automation.validate_actions(actions),
+            }
+        except automation.AutomationError as exc:
+            raise ValidationError(str(exc), code="desk.automation_invalid") from exc
+
+    async def _validated_conditions(
+        self, project_id: UUID, conditions: list[dict[str, Any]]
+    ) -> None:
+        """조건이 지목한 것이 **이 프로젝트에 있는가.**
+
+        순수 층은 값이 UUID 인지까지만 본다 — DB 를 안 보기 때문이다. 다른
+        프로젝트의 요청 유형을 건 조건은 저장되고 **한 번도 안 맞는다.**
+        조치와 같은 판단이다.
+        """
+        wanted_types: set[UUID] = set()
+        wanted_orgs: set[UUID] = set()
+        for row in conditions:
+            field = row["field"]
+            if field not in ("request_type_id", "organization_id"):
+                continue
+            raw = row["value"]
+            # `in` 은 목록이다. 하나만 남의 것이어도 그 갈래는 죽는다.
+            values = raw if isinstance(raw, list) else [raw]
+            target = wanted_types if field == "request_type_id" else wanted_orgs
+            target.update(UUID(str(value)) for value in values)
+
+        if wanted_types:
+            found = set(
+                (
+                    await self._s.execute(
+                        select(RequestType.id)
+                        .join(Portal, Portal.id == RequestType.portal_id)
+                        .where(
+                            RequestType.id.in_(wanted_types),
+                            RequestType.archived_at.is_(None),
+                            Portal.project_id == project_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if found != wanted_types:
+                raise ValidationError(
+                    "이 프로젝트의 요청 유형이 아니다.",
+                    code="desk.automation_request_type_unknown",
+                )
+        if wanted_orgs:
+            found = set(
+                (
+                    await self._s.execute(
+                        select(CustomerOrganization.id).where(
+                            CustomerOrganization.id.in_(wanted_orgs),
+                            CustomerOrganization.archived_at.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if found != wanted_orgs:
+                raise ValidationError(
+                    "그런 고객 조직이 없다.", code="desk.automation_organization_unknown"
+                )
+
+    async def targets(self, actor: Actor, project_id: UUID) -> AutomationTargets:
+        """조건·조치가 고를 수 있는 것들. **자동화 권한으로 연다.**
+
+        요청 유형 목록은 `desk.portal.manage` 가, 고객 조직 목록은
+        `desk.customer.manage` 가 지킨다. 규칙을 쓰는 사람에게 그 둘을 마저
+        요구하면, 고를 수는 없는데 UUID 를 적으면 되는 자리가 된다 — 그건
+        손잡이가 아니다. 여기서는 **이름과 id 만** 내준다.
+        """
+        await self._perms.require(
+            self._s, actor, perms.AUTOMATION_MANAGE, scope=Scope.project(project_id)
+        )
+        types = (
+            (
+                await self._s.execute(
+                    select(RequestType.id, RequestType.name, Portal.name)
+                    .join(Portal, Portal.id == RequestType.portal_id)
+                    .where(
+                        Portal.project_id == project_id,
+                        Portal.archived_at.is_(None),
+                        RequestType.archived_at.is_(None),
+                    )
+                    .order_by(Portal.name, RequestType.name)
+                )
+            )
+            .tuples()
+            .all()
+        )
+        orgs = (
+            (
+                await self._s.execute(
+                    select(CustomerOrganization.id, CustomerOrganization.name)
+                    .where(CustomerOrganization.archived_at.is_(None))
+                    .order_by(CustomerOrganization.name)
+                )
+            )
+            .tuples()
+            .all()
+        )
+        return AutomationTargets(
+            # 포털 이름을 앞에 붙인다. 프로젝트에 창구가 둘이면 "문의" 라는
+            # 요청 유형이 둘 보이고, 어느 쪽인지 알 수 없다.
+            request_types=[
+                NamedRef(id=type_id, name=f"{portal} / {name}") for type_id, name, portal in types
+            ],
+            organizations=[NamedRef(id=org_id, name=name) for org_id, name in orgs],
+        )
+
+    async def _validated_targets(self, project_id: UUID, actions: list[dict[str, Any]]) -> None:
+        """조치가 지목한 것이 **이 프로젝트에서 쓸 수 있는가.**
+
+        정형 응답은 프로젝트 단위다. 다른 프로젝트의 것을 걸면 규칙은
+        저장되고 실행만 조용히 실패한다 — 멈춤 상태·요청 유형과 같은 판단.
+        """
+        for raw in actions:
+            action = automation.parse_action(raw)
+            if action.kind in ("reply_with_canned", "add_note") and action.canned_response_id:
+                canned = await self._s.get(CannedResponse, action.canned_response_id)
+                if (
+                    canned is None
+                    or canned.archived_at is not None
+                    or canned.project_id != project_id
+                ):
+                    raise ValidationError(
+                        "이 프로젝트의 정형 응답이 아니다.",
+                        code="desk.automation_canned_unknown",
+                    )
+            if action.kind == "assign" and action.user_id is not None:
+                who = await identity.get_user(self._s, action.user_id)
+                if who is None or who.is_customer:
+                    # 고객을 담당자로 두면 그 사람이 상담원 화면의 대상이 된다.
+                    raise ValidationError(
+                        "그 사람에게는 배정할 수 없다.", code="desk.automation_assignee_unknown"
+                    )
+
+    async def _names(self, rules: list[AutomationRule]) -> dict[UUID, str]:
+        """조치가 지목한 것들의 이름. 한 번에 모은다 — 규칙마다 조회하면 N+1."""
+        users: set[UUID] = set()
+        canned_ids: set[UUID] = set()
+        for rule in rules:
+            for raw in rule.actions:
+                action = automation.parse_action(raw)
+                if action.user_id is not None:
+                    users.add(action.user_id)
+                if action.canned_response_id is not None:
+                    canned_ids.add(action.canned_response_id)
+
+        names: dict[UUID, str] = {}
+        if users:
+            found = await identity.get_users(self._s, users)
+            names.update({key: ref.display_name for key, ref in found.items()})
+        if canned_ids:
+            rows = (
+                await self._s.execute(
+                    select(CannedResponse).where(CannedResponse.id.in_(canned_ids))
+                )
+            ).scalars()
+            names.update({row.id: row.name for row in rows})
+        return names

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ieum.core.context import Actor
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, get_permission_service
+from ieum.modules.issues.models import STATE_CATEGORIES as _STATE_CATEGORIES
 from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import IssueRepository, WorkflowRepository
 from ieum.modules.org import contracts as org
@@ -37,6 +38,8 @@ class IssueRef:
     state_id: UUID
     state_category: str
     assignee_id: UUID | None
+    #: 1~5. `desk` 의 자동화 조건이 본다 (C9).
+    priority: int
     is_archived: bool
 
 
@@ -53,6 +56,7 @@ async def get_issue(session: AsyncSession, issue_id: UUID) -> IssueRef | None:
         state_id=issue.state_id,
         state_category=state.category if state else "",
         assignee_id=issue.assignee_id,
+        priority=issue.priority,
         is_archived=issue.is_archived,
     )
 
@@ -486,6 +490,11 @@ def issue_id_column() -> Any:
     return Issue.id
 
 
+#: 상태 분류의 어휘. **이슈가 소유한다** — 다른 모듈이 상태를 분류로
+#: 다룰 때(desk 의 SLA·자동화) 문자열을 손으로 적지 않도록 여기서 낸다.
+STATE_CATEGORIES: tuple[str, ...] = _STATE_CATEGORIES
+
+
 @dataclass(frozen=True, slots=True)
 class StateRef:
     """워크플로우 상태 하나. 다른 모듈이 상태를 **고르게** 할 때 쓴다.
@@ -557,3 +566,77 @@ async def raise_priority(session: AsyncSession, issue_id: UUID, *, to: int) -> i
     issue.priority = to
     await session.flush()
     return to
+
+
+async def assign_issue(session: AsyncSession, issue_id: UUID, *, to: UUID) -> bool:
+    """담당자를 정한다. 바뀌었으면 True.
+
+    **이미 담당자가 있으면 안 바꾼다.** 자동화 규칙(desk C9)이 부르는데,
+    사람이 이미 집어 든 티켓을 규칙이 남에게 넘기면 두 사람이 같은 일을
+    하거나 아무도 안 한다. 규칙은 "아직 아무도 안 잡았으면 이 사람" 을
+    뜻한다 — `raise_priority` 가 "적어도 이만큼" 인 것과 같은 결이다.
+
+    이력을 남긴다(`actor_id` 는 비운다 — 사람이 한 일이 아니다).
+    """
+    from ieum.modules.issues.repository import HistoryRepository
+
+    issue = await session.get(Issue, issue_id)
+    if issue is None or issue.assignee_id is not None:
+        return False
+    HistoryRepository(session).record(
+        issue_id=issue_id,
+        actor_id=None,
+        changes=[{"field": "assignee", "from": "", "to": str(to)}],
+    )
+    issue.assignee_id = to
+    await session.flush()
+    return True
+
+
+async def add_comment_as_system(
+    session: AsyncSession, issue_id: UUID, body: str, *, is_internal: bool
+) -> UUID | None:
+    """자동화가 남기는 글. 작성자가 없다.
+
+    `add_public_comment` 와 나누는 이유는 **내부 노트를 쓸 수 있어야** 하기
+    때문이다. 그쪽은 이름 그대로 언제나 공개다 — 한 함수에 스위치를 달면
+    "공개다" 라는 보증이 사라진다.
+
+    이벤트의 페이로드에 `automated` 를 실어 보낸다. 자동화가 만든 변화가
+    자동화를 다시 부르면 고리가 된다 (desk `rules.py`).
+    """
+    from ieum.core.markdown import normalize as normalize_markdown
+    from ieum.core.outbox import publish
+    from ieum.modules.issues import events as issue_events
+    from ieum.modules.issues.models import IssueComment
+    from ieum.modules.issues.repository import CommentRepository
+
+    text = normalize_markdown(body)
+    if not text:
+        return None
+    issue = await IssueRepository(session).get(issue_id)
+    if issue is None:
+        return None
+
+    comment = CommentRepository(session).add(
+        IssueComment(issue_id=issue_id, author_id=None, body=text, is_internal=is_internal)
+    )
+    await session.flush()
+    project = await org.get_project(session, issue.project_id)
+    publish(
+        session,
+        issue_events.IssueCommented(
+            aggregate_id=issue_id,
+            project_id=issue.project_id,
+            issue_key=f"{project.key}-{issue.key_seq}" if project else "",
+            summary=issue.summary,
+            comment_id=comment.id,
+            # 우리 사용자 중 누구도 아니다. 게스트 액터와 같은 자리다.
+            actor_id=UUID(int=0),
+            is_internal=is_internal,
+            assignee_id=issue.assignee_id,
+            reporter_id=issue.reporter_id,
+            automated=True,
+        ),
+    )
+    return comment.id

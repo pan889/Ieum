@@ -615,3 +615,66 @@ class KbSpaceResponse(BaseModel):
     id: UUID
     key: str
     name: str
+
+
+# ── 자동화 규칙 (C9) ───────────────────────────────────────────
+
+
+class AutomationTargetOption(BaseModel):
+    """조건·조치가 고를 수 있는 것 하나."""
+
+    id: UUID
+    name: str
+
+
+class AutomationTargetsResponse(BaseModel):
+    """UUID 를 손으로 적게 하지 않으려고 내주는 목록.
+
+    요청 유형·고객 조직은 각자의 권한이 지키는 목록이지만, 여기서는
+    **이름과 id 만** 자동화 권한으로 내준다 — 고를 수 없는데 적으면 되는
+    자리를 남기지 않기 위해서다.
+    """
+
+    request_types: list[AutomationTargetOption]
+    organizations: list[AutomationTargetOption]
+
+
+class AutomationRuleResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    name: str
+    #: `{"event": "desk.ticket.submitted"}`.
+    trigger: dict[str, Any]
+    #: `[{"field": "priority", "op": "gte", "value": 4}]`. **전부 맞아야 한다.**
+    conditions: list[dict[str, Any]]
+    #: `[{"kind": "assign", "user_id": "..."}]`.
+    actions: list[dict[str, Any]]
+    #: 조치가 지목한 사람·정형 응답의 이름. id → 이름.
+    #:
+    #: 조치 **안이 아니라 옆에** 온다: 저장 요청은 읽은 조치를 그대로 되돌려
+    #: 보내는데, 그 안에 이름이 섞이면 서버가 모르는 항목으로 거절한다.
+    names: dict[UUID, str]
+    position: int
+    is_enabled: bool
+
+
+class AutomationRuleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+    trigger: dict[str, Any]
+    conditions: list[dict[str, Any]] = Field(default_factory=list)
+    actions: list[dict[str, Any]]
+    position: int = Field(default=0, ge=0, le=9999)
+
+
+class AutomationRuleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    trigger: dict[str, Any] | None = None
+    conditions: list[dict[str, Any]] | None = None
+    actions: list[dict[str, Any]] | None = None
+    position: int | None = Field(default=None, ge=0, le=9999)
+    is_enabled: bool | None = None

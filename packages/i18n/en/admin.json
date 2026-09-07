@@ -72,6 +72,7 @@
   "people.noMatches": "Nobody matches that.",
   "people.searchHint": "Type a name or an email address.",
   "permission.desk.email.manage": "Manage email channels",
+  "permission.desk.automation.manage": "Manage automation rules",
   "permission.desk.customer.manage": "Manage customer organizations",
   "permission.desk.portal.manage": "Manage portals and request types",
   "permission.desk.queue.manage": "Manage queues and canned responses",

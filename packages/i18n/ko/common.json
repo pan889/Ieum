@@ -20,6 +20,7 @@
   "editor.mode": "편집 모드",
   "editor.mentionList": "멘션할 사람",
   "editor.slashList": "넣을 것",
+  "no": "아니오",
   "slash.heading1": "제목 1",
   "slash.heading2": "제목 2",
   "slash.heading3": "제목 3",
@@ -69,5 +70,6 @@
   "nav.searchPlaceholder": "이슈·문서 검색",
   "action.add": "추가",
   "action.choose": "고르세요…",
-  "state.matches": "맞는 항목"
+  "state.matches": "맞는 항목",
+  "yes": "예"
 }

@@ -20,6 +20,7 @@
   "editor.mode": "Editor mode",
   "editor.mentionList": "People to mention",
   "editor.slashList": "Things to insert",
+  "no": "No",
   "slash.heading1": "Heading 1",
   "slash.heading2": "Heading 2",
   "slash.heading3": "Heading 3",
@@ -69,5 +70,6 @@
   "nav.searchPlaceholder": "Search issues and docs",
   "action.add": "Add",
   "action.choose": "Choose…",
-  "state.matches": "Matches"
+  "state.matches": "Matches",
+  "yes": "Yes"
 }

@@ -25,6 +25,7 @@ from ieum.core.middleware import TraceMiddleware
 from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
 from ieum.modules.desk.router import (
+    automation_router,
     calendars_router,
     canned_router,
     customers_router,
@@ -179,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         calendars_router,
         sla_router,
         email_router,
+        automation_router,
         portal_router,
     ):
         app.include_router(router, prefix=API_PREFIX)

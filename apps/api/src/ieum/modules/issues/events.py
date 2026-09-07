@@ -89,6 +89,12 @@ class IssueCommented(DomainEvent):
     #: 본문에서 언급된 사용자. **이미 볼 권한을 확인한 사람만** 담는다
     #: — notify 는 이슈 ACL 을 못 보므로 여기서 걸러야 한다.
     mentioned_ids: list[UUID] = field(default_factory=list)
+    #: 자동화가 만든 것인가 (desk C9).
+    #:
+    #: **고리를 막는 표시다.** 규칙이 코멘트를 남기면 그 코멘트가 다시
+    #: `issue.commented` 를 내고, 같은 규칙이 또 걸린다. 자동화는 이 표시가
+    #: 붙은 이벤트를 건너뛴다.
+    automated: bool = False
 
 
 @events.register_event

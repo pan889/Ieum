@@ -294,7 +294,11 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
       </Row>
 
       <Row label={t('issues:detail.priority')}>
+        {/* **이름을 붙인다.** `Row` 의 라벨은 `<span>` 이라 옆에 있을 뿐
+            연결돼 있지 않다 — 화면 낭독기는 이 상자를 이름 없는 콤보박스로
+            읽는다. 체크박스에서 이미 겪은 것과 같은 결함이다. */}
         <Select
+          aria-label={t('issues:detail.priority')}
           className="w-full py-1 text-xs"
           value={String(issue.priority)}
           onChange={(e) => { setPriority.mutate(Number(e.target.value)); }}
