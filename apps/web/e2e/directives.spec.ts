@@ -283,5 +283,15 @@ test('::chart 의 기준 이름이 틀리면 이유를 말한다', async ({ page
   await expect(page.getByRole('heading', { name: 'Bad group' })).toBeVisible()
   await expect(page.locator('.ieum-directive')).toContainText(/count|기준/i)
 
-  expect(consoleErrors).toEqual([])
+  // **이 시험은 422 를 일부러 낸다.** 기준 이름 판정을 서버에 맡겼으니
+  // (`reports.GROUPS` 는 이슈 모듈의 것이다) 그 왕복이 거절로 오는 것이
+  // 정상이다. 그것 **하나만** 있어야 한다 — 다른 요청까지 막혔으면 화면이
+  // 다른 이유로 비어 있는 것이다.
+  //
+  // 배열을 그냥 보지 않고 **기다린다.** 이유를 그리는 순간과 왕복이 끝나는
+  // 순간은 다르고, 그냥 보면 아직 비어 있는 날과 담긴 날이 섞인다 — 그런
+  // 시험은 CI 에서 이유 없이 붉어진다.
+  await expect
+    .poll(() => consoleErrors)
+    .toEqual([expect.stringMatching(/^422 .*\/api\/v1\/reports\/count$/)])
 })
