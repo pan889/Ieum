@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { PortalFormField } from '@ieum/api-client'
 
-import { Chip, Field, Select, Textarea } from '@/shared/ui/primitives'
+import { Checkbox, Chip, Field, Select, Textarea } from '@/shared/ui/primitives'
 
 export type AnswerValue = string | number | boolean | string[] | null
 
@@ -104,17 +104,19 @@ export function PortalField({
 
     case 'bool':
       return (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={value === true}
-            onChange={(event) => {
-              onChange(event.target.checked)
-            }}
-          />
-          <span>{field.label}</span>
-          {field.help ? <span className="text-xs text-muted">{field.help}</span> : null}
-        </label>
+        // `common` 을 그대로 넘기지 않는다. 거기엔 `required` 와 라벨의 `*`
+        // 가 들어 있는데, 체크박스에서 `required` 는 "켜야 보낼 수 있다" 는
+        // 뜻이다. 서버도 화면의 미기입 검사도 참·거짓 항목에서는 **꺼짐도
+        // 답**으로 친다(`value is None` 만 빈 것이다). 그대로 넘기면 끄고
+        // 보내려는 사람이 브라우저에게 막힌다.
+        <Checkbox
+          label={field.label}
+          {...(field.help ? { hint: field.help } : {})}
+          checked={value === true}
+          onChange={(event) => {
+            onChange(event.target.checked)
+          }}
+        />
       )
 
     case 'select':

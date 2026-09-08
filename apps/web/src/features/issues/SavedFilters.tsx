@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 
 import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Field, Chip } from '@/shared/ui/primitives'
+import { Alert, Button, Checkbox, Field, Chip } from '@/shared/ui/primitives'
 
 export interface SavedFiltersProps {
   /** 지금 화면이 보여 주는 질의. "현재 질의 저장" 이 이걸 쓴다. */
@@ -126,15 +126,16 @@ export function SavedFilters({ activeIql, onLoad }: SavedFiltersProps) {
             value={name}
             onChange={(e) => { setName(e.target.value) }}
           />
-          <label className="flex items-center gap-1.5 py-2 text-sm">
-            <input
-              type="checkbox"
+          {/* 이 줄은 `items-end` 다. 프리미티브의 감싸개에는 여백이 없으므로
+              옆의 입력·버튼과 아랫변을 맞추는 여백은 여기서 준다. */}
+          <div className="py-2">
+            <Checkbox
               className="size-4 rounded border-border accent-accent"
+              label={t('issues:filters.share')}
               checked={shared}
               onChange={(e) => { setShared(e.target.checked) }}
             />
-            {t('issues:filters.share')}
-          </label>
+          </div>
           <Button type="submit" loading={save.isPending} disabled={!canSave}>
             {t('common:action.save')}
           </Button>

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { FieldDefinition } from '@ieum/api-client'
-import { Chip, Field, Select } from '@/shared/ui/primitives'
+import { Checkbox, Chip, Field, Select } from '@/shared/ui/primitives'
 
 import {
   asInputText,
@@ -143,20 +143,13 @@ function BoolField({
   onChange: (value: FieldValue) => void
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="flex items-center gap-2 text-sm font-medium text-fg">
-        <input
-          type="checkbox"
-          className="size-4 rounded border-border accent-accent"
-          checked={value}
-          onChange={(e) => { onChange(e.target.checked) }}
-        />
-        {definition.name}
-      </label>
-      {definition.description ? (
-        <p className="text-xs text-muted">{definition.description}</p>
-      ) : null}
-    </div>
+    <Checkbox
+      className="size-4 rounded border-border accent-accent"
+      label={definition.name}
+      {...(definition.description ? { hint: definition.description } : {})}
+      checked={value}
+      onChange={(e) => { onChange(e.target.checked) }}
+    />
   )
 }
 

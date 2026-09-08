@@ -278,6 +278,8 @@ export function RequestTypes({
                         ))}
                       </Select>
                     )}
+                    {/* 표 줄 안이라 프리미티브의 세로 감싸개가 줄을 무너뜨린다.
+                        힌트가 없으므로 라벨만 두르면 접근성 이름은 정확하다. */}
                     <label className="flex items-center gap-1 pb-2 text-xs">
                       <input
                         type="checkbox"

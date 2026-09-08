@@ -227,6 +227,10 @@ export function IssuesScreen() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface-raised text-left">
+                  {/* 표의 고르기 칸은 `Checkbox` 를 쓰지 않는다. 프리미티브는
+                      보이는 라벨을 요구하지만 이 칸에는 체크박스 하나 만큼의
+                      너비밖에 없다. 대신 `aria-label` 로 이름을 준다 — 힌트를
+                      `<label>` 에 넣는 실수가 애초에 생기지 않는 모양이다. */}
                   <th scope="col" className="w-8 px-2">
                     <input
                       type="checkbox"
