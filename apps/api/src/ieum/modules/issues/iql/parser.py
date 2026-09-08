@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import functools
-import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -22,6 +21,8 @@ from ieum.modules.issues.iql.ast import (
     EmptinessCheck,
     FieldRef,
     FunctionCall,
+    HistoryChanged,
+    HistoryWas,
     ListValue,
     Literal,
     Node,
@@ -32,14 +33,12 @@ from ieum.modules.issues.iql.ast import (
     SortDirection,
     SortKey,
     Span,
+    TimeWindow,
 )
+from ieum.modules.issues.iql.history import WindowKind
 
 GRAMMAR_PATH = Path(__file__).with_name("grammar.lark")
 MAX_QUERY_LENGTH = 4000
-
-#: 이력 연산자는 issue_history 스캔이 필요해 비용이 크다. M5 로 미뤘고,
-#: 문법에 넣으면 부분 지원처럼 보이므로 파싱 전에 잡아 명확히 거절한다.
-_HISTORY_OPERATORS = re.compile(r"\b(WAS|CHANGED)\b", re.IGNORECASE)
 
 
 @functools.lru_cache(maxsize=1)
@@ -69,15 +68,6 @@ def parse(source: str) -> Query:
     text = source.strip()
     if not text:
         return Query(where=None, order_by=[], source=source)
-
-    history = _HISTORY_OPERATORS.search(text)
-    if history is not None:
-        raise errors.unsupported(
-            f"이력 연산자 {history.group(0).upper()}",
-            offset=history.start(),
-            length=len(history.group(0)),
-            milestone="M5",
-        )
 
     try:
         tree = _lark().parse(text)
@@ -145,6 +135,10 @@ def _node(item: Any) -> Node:
             return _comparison(item)
         case "emptiness_check" | "emptiness_check_custom":
             return _emptiness(item)
+        case "history_was":
+            return _history_was(item)
+        case "history_changed":
+            return _history_changed(item)
         case _:  # pragma: no cover
             raise errors.syntax_error(f"해석할 수 없는 구문: {item.data}", offset=0)
 
@@ -189,6 +183,97 @@ def _operator(node: Tree[Token]) -> Operator:
             return Operator.NOT_IN
         case _:
             return Operator(text)
+
+
+def _history_was(item: Tree[Token]) -> HistoryWas:
+    """`field WAS ...`. 값·부정·목록과 시간 창을 갈라낸다."""
+    children = [c for c in cast("list[Any]", item.children) if c is not None]
+    field_node = children[0]
+    was_token = next(c for c in children if isinstance(c, Token) and c.type == "WAS")
+    target = next(c for c in children if isinstance(c, Tree) and c.data == "was_target")
+    window = _window(next((c for c in children if _is_window(c)), None))
+
+    negated = any(isinstance(c, Token) and c.type == "NOT_KW" for c in target.children)
+    # `IN (a, b)` 면 목록이 하나 들어 있고, 아니면 값 하나다.
+    values: list[Any] = []
+    for child in target.children:
+        if isinstance(child, Token) and child.type in {"NOT_KW", "IN"}:
+            continue
+        parsed = _value(child)
+        if isinstance(parsed, ListValue):
+            values.extend(parsed.items)
+        else:
+            values.append(parsed)
+    return HistoryWas(
+        field=_field(field_node),
+        values=values,
+        negated=negated,
+        window=window,
+        span=_span(item),
+        operator_span=_span(was_token),
+    )
+
+
+def _history_changed(item: Tree[Token]) -> HistoryChanged:
+    """`field CHANGED [FROM x] [TO y] [창]`."""
+    children = [c for c in cast("list[Any]", item.children) if c is not None]
+    field_node = children[0]
+    changed_token = next(c for c in children if isinstance(c, Token) and c.type == "CHANGED")
+    spec = next(c for c in children if isinstance(c, Tree) and c.data == "changed_spec")
+    window = _window(next((c for c in children if _is_window(c)), None))
+
+    from_value: Any = None
+    to_value: Any = None
+    slot: str | None = None
+    for child in spec.children:
+        if child is None:
+            continue
+        if isinstance(child, Token) and child.type in {"FROM", "TO"}:
+            slot = child.type
+            continue
+        if slot == "FROM":
+            from_value = _value(child)
+        elif slot == "TO":
+            to_value = _value(child)
+    return HistoryChanged(
+        field=_field(field_node),
+        from_value=from_value,
+        to_value=to_value,
+        window=window,
+        span=_span(item),
+        operator_span=_span(changed_token),
+    )
+
+
+def _is_window(child: Any) -> bool:
+    return isinstance(child, Tree) and child.data in {
+        "window_during",
+        "window_after",
+        "window_before",
+    }
+
+
+def _window(item: Any) -> TimeWindow | None:
+    """창이 없으면 `None` — 컴파일러가 "언제든" 으로 읽는다."""
+    if item is None:
+        return None
+    values = [_value(c) for c in item.children if c is not None and not _is_keyword_token(c)]
+    match item.data:
+        case "window_during":
+            return TimeWindow(
+                kind=WindowKind.DURING,
+                start=values[0],
+                end=values[1],
+                span=_span(item),
+            )
+        case "window_after":
+            return TimeWindow(kind=WindowKind.AFTER, start=values[0], span=_span(item))
+        case _:
+            return TimeWindow(kind=WindowKind.BEFORE, end=values[0], span=_span(item))
+
+
+def _is_keyword_token(child: Any) -> bool:
+    return isinstance(child, Token) and child.type in {"DURING", "AFTER", "BEFORE"}
 
 
 def _emptiness(item: Tree[Token]) -> EmptinessCheck:

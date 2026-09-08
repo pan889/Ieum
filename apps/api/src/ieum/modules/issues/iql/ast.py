@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from ieum.modules.issues.iql.history import WindowKind
+
 
 class Operator(StrEnum):
     EQ = "="
@@ -93,6 +95,52 @@ class EmptinessCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class TimeWindow:
+    """이력 조건이 볼 시간 범위.
+
+    `kind` 가 `ANY` 면 `start`·`end` 는 없다. 창을 안 적으면 "언제든" 이고,
+    그건 `issue_history` 를 통째로 훑는다는 뜻이라 상한이 따로 필요하다.
+    """
+
+    kind: WindowKind
+    start: Value | None = None
+    end: Value | None = None
+    span: Span | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryWas:
+    """`field WAS x`, `field WAS NOT x`, `field WAS IN (a, b)`.
+
+    **지금 값도 포함한다.** 만들 때부터 그 값이었던 이슈에는 그렇다고 적힌
+    이력 줄이 없다 — 이력만 보면 그 이슈들이 통째로 빠진다.
+    """
+
+    field: FieldRef
+    values: list[Value]
+    negated: bool = False
+    window: TimeWindow | None = None
+    span: Span | None = None
+    operator_span: Span | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryChanged:
+    """`field CHANGED`, `... FROM x`, `... TO y`, `... FROM x TO y`.
+
+    `FROM x TO y` 는 **한 변경 안에서** x→y 여야 한다. 따로 일어난 두 변경을
+    이어 붙이면 없던 일을 있다고 답한다.
+    """
+
+    field: FieldRef
+    from_value: Value | None = None
+    to_value: Value | None = None
+    window: TimeWindow | None = None
+    span: Span | None = None
+    operator_span: Span | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Not:
     operand: Node
 
@@ -107,7 +155,7 @@ class Or:
     operands: list[Node]
 
 
-Node = Comparison | EmptinessCheck | Not | And | Or
+Node = Comparison | EmptinessCheck | HistoryWas | HistoryChanged | Not | And | Or
 
 
 class SortDirection(StrEnum):

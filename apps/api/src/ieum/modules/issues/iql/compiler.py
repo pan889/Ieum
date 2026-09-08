@@ -17,6 +17,7 @@ from sqlalchemy import (
     ColumnElement,
     Select,
     SQLColumnExpression,
+    Text,
     and_,
     exists,
     func,
@@ -24,12 +25,13 @@ from sqlalchemy import (
     not_,
     or_,
     select,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import aliased
 
 from ieum.core.permissions import Acl
-from ieum.modules.issues.iql import errors
+from ieum.modules.issues.iql import errors, history
 from ieum.modules.issues.iql.ast import (
     And,
     Comparison,
@@ -37,6 +39,8 @@ from ieum.modules.issues.iql.ast import (
     EmptinessCheck,
     FieldRef,
     FunctionCall,
+    HistoryChanged,
+    HistoryWas,
     ListValue,
     Literal,
     Node,
@@ -46,7 +50,10 @@ from ieum.modules.issues.iql.ast import (
     Query,
     SortDirection,
     Span,
+    TimeWindow,
+    Value,
 )
+from ieum.modules.issues.iql.history import HistorySpec, WindowKind
 from ieum.modules.issues.iql.registry import (
     FIELDS,
     FUNCTIONS,
@@ -60,6 +67,7 @@ from ieum.modules.issues.iql.registry import (
 from ieum.modules.issues.models import (
     Issue,
     IssueFieldValue,
+    IssueHistory,
     IssueLabel,
     IssueType,
     Sprint,
@@ -69,6 +77,37 @@ from ieum.modules.issues.models import (
 
 #: 결과 상한. 내보내기는 별도 경로를 쓴다 (query-language.md 3절).
 MAX_RESULTS = 1000
+
+
+def _window_conditions(window: tuple[Any, Any] | None) -> list[ColumnElement[bool]]:
+    """창을 `created_at` 조건으로.
+
+    양 끝을 **포함**한다. 하루 단위 날짜로 창을 적는 사람이 대부분이고,
+    `DURING (1일, 31일)` 이 31일을 빼면 그건 놀라운 일이다.
+    """
+    if window is None:
+        return []
+    start, end = window
+    out: list[ColumnElement[bool]] = []
+    if start is not None:
+        out.append(IssueHistory.created_at >= start)
+    if end is not None:
+        out.append(IssueHistory.created_at <= end)
+    return out
+
+
+def _flatten_values(values: list[Value]) -> list[Literal | FunctionCall]:
+    out: list[Literal | FunctionCall] = []
+    for value in values:
+        out.extend(_flatten(value))
+    return out
+
+
+def _single(value: Value) -> Literal | FunctionCall:
+    """값 하나를 꺼낸다. 문법이 목록을 허용하지 않는 자리에서만 쓴다."""
+    found = _flatten(value)
+    return found[0]
+
 
 _PARENT = aliased(Issue, name="parent_issue")
 
@@ -154,8 +193,190 @@ class Compiler:
                 return self._comparison(node)
             case EmptinessCheck():
                 return self._emptiness(node)
+            case HistoryWas():
+                return self._history_was(node)
+            case HistoryChanged():
+                return self._history_changed(node)
             case _:  # pragma: no cover
                 raise errors.syntax_error("해석할 수 없는 조건", offset=0)
+
+    # ── 이력 (M5) ───────────────────────────────────────────────
+
+    def _history_field(self, ref: FieldRef, op_span: Span | None) -> tuple[FieldSpec, HistorySpec]:
+        """이력을 물을 수 있는 필드인가.
+
+        **못 물으면 조용히 빈 결과를 주지 않는다.** 이력에 UUID 만 남는
+        필드에 이름으로 물으면 절대 안 맞는데, 그건 "그런 이력이 없다" 와
+        똑같이 생겼다 — 그래서 여기서 거절한다.
+        """
+        if ref.is_custom:
+            # `changes` 는 커스텀 필드를 `cf.<key>` 로 적으므로 찾을 수는
+            # 있다. 그런데 값의 모양이 필드 종류마다 달라서(다중 선택은
+            # 배열, 사용자는 UUID) 한 규칙으로 비교할 수 없다 — "언젠가"
+            # 가 아니라 **모양을 정한 뒤에** 열 일이다.
+            span = op_span or ref.span or Span(0, 1)
+            raise errors.invalid_value(
+                ref.label(),
+                "커스텀 필드에는 이력 연산자를 쓸 수 없다",
+                offset=span.offset,
+                length=span.length,
+            )
+        spec = self._spec(ref)
+        found = history.spec_for(spec.name)
+        if found is None:
+            span = op_span or ref.span or Span(0, 1)
+            raise errors.invalid_value(
+                ref.label(),
+                "이력을 물을 수 있는 필드는 " + ", ".join(sorted(history.HISTORY_FIELDS)) + " 다",
+                offset=span.offset,
+                length=span.length,
+            )
+        return spec, found
+
+    def _history_was(self, node: HistoryWas) -> ColumnElement[bool]:
+        """`field WAS x`.
+
+        **지금 값도 답에 넣는다.** 만들 때부터 그 값이었던 이슈에는 그렇다고
+        적힌 이력 줄이 없다 — 이력만 보면 그 이슈들이 통째로 빠진다.
+
+        창이 있으면 "그 창 동안 그 값을 갖고 있었나" 다. 두 가지로 갈린다:
+        창 안에서 그 값이 **된** 적이 있거나, 창이 시작될 때 이미 그 값이었거나.
+        """
+        spec, mapped = self._history_field(node.field, node.operator_span)
+        wanted = [
+            history.stored_value(self._literal_value(v, node.field, spec.type))
+            for v in _flatten_values(node.values)
+        ]
+        window = self._window(node.window)
+
+        parts: list[ColumnElement[bool]] = []
+        for value in wanted:
+            if window is None:
+                # 창이 없으면 "언제든 그 값이었나" 다. `from` 도 센다 — 그
+                # 값에서 벗어난 변경이 그 값이었음을 증언한다.
+                parts.append(
+                    self._history_exists(mapped, from_value=value, window=None)
+                    | self._history_exists(mapped, to_value=value, window=None)
+                    | (self._current_text(spec) == literal(value))
+                )
+            else:
+                parts.append(
+                    self._history_exists(mapped, to_value=value, window=window)
+                    | (self._value_at(mapped, spec, window[0]) == literal(value))
+                )
+        found = or_(*parts)
+        return not_(found) if node.negated else found
+
+    def _history_changed(self, node: HistoryChanged) -> ColumnElement[bool]:
+        """`field CHANGED [FROM x] [TO y]`.
+
+        `FROM x TO y` 는 **한 변경 안에서** x→y 여야 한다. 따로 일어난 두
+        변경을 이어 붙이면 없던 일을 있다고 답한다 — 그래서 두 조건이 같은
+        배열 원소에 걸린다.
+        """
+        spec, mapped = self._history_field(node.field, node.operator_span)
+        return self._history_exists(
+            mapped,
+            from_value=(
+                None
+                if node.from_value is None
+                else history.stored_value(
+                    self._literal_value(_single(node.from_value), node.field, spec.type)
+                )
+            ),
+            to_value=(
+                None
+                if node.to_value is None
+                else history.stored_value(
+                    self._literal_value(_single(node.to_value), node.field, spec.type)
+                )
+            ),
+            window=self._window(node.window),
+        )
+
+    def _window(self, window: TimeWindow | None) -> tuple[Any, Any] | None:
+        """창을 `(시작, 끝)` 로. 한쪽만 있으면 그쪽만 채운다."""
+        if window is None or window.kind is WindowKind.ANY:
+            return None
+        start = None if window.start is None else self._instant(window.start)
+        end = None if window.end is None else self._instant(window.end)
+        if start is not None and end is not None and end < start:
+            span = window.span or Span(0, 1)
+            raise errors.invalid_value(
+                "DURING", "끝이 시작보다 앞선다", offset=span.offset, length=span.length
+            )
+        return (start, end)
+
+    def _instant(self, value: Value) -> Any:
+        """창의 경계 값. 날짜 함수와 날짜 리터럴을 둘 다 받는다."""
+        return self._literal_value(_single(value), FieldRef(name="created"), FieldType.DATE)
+
+    def _history_exists(
+        self,
+        mapped: HistorySpec,
+        *,
+        from_value: str | None = None,
+        to_value: str | None = None,
+        window: tuple[Any, Any] | None = None,
+    ) -> ColumnElement[bool]:
+        """`issue_history.changes` 배열을 펼쳐 한 원소가 조건을 만족하나.
+
+        **한 원소 안에서** 본다. `from` 과 `to` 를 다른 원소에서 찾으면
+        따로 일어난 두 변경이 한 번의 x→y 로 둔갑한다.
+        """
+        element = func.jsonb_array_elements(IssueHistory.changes).table_valued("value").alias("c")
+        item = element.c.value
+        conditions: list[ColumnElement[bool]] = [
+            IssueHistory.issue_id == Issue.id,
+            item.op("->>")(literal("field")) == literal(mapped.stored_as),
+        ]
+        if from_value is not None:
+            conditions.append(item.op("->>")(literal("from")) == literal(from_value))
+        if to_value is not None:
+            conditions.append(item.op("->>")(literal("to")) == literal(to_value))
+        conditions.extend(_window_conditions(window))
+        return exists(
+            select(literal(1)).select_from(IssueHistory).join(element, true()).where(*conditions)
+        )
+
+    def _value_at(self, mapped: HistorySpec, spec: FieldSpec, moment: Any) -> Any:
+        """그 시각에 이 필드가 갖고 있던 값.
+
+        **그 뒤 첫 변경의 `from`** 이 답이다. 그 뒤로 아무 변경도 없었다면
+        지금 값이 그때 값이다. 생성 시점 값은 따로 기록하지 않지만, 첫
+        변경의 `from` 이 그것을 증언하므로 되짚을 수 있다.
+        """
+        if moment is None:
+            return self._current_text(spec)
+        element = func.jsonb_array_elements(IssueHistory.changes).table_valued("value").alias("c")
+        item = element.c.value
+        first_after = (
+            select(item.op("->>")(literal("from")))
+            .select_from(IssueHistory)
+            .join(element, true())
+            .where(
+                IssueHistory.issue_id == Issue.id,
+                item.op("->>")(literal("field")) == literal(mapped.stored_as),
+                IssueHistory.created_at >= moment,
+            )
+            .order_by(IssueHistory.created_at)
+            .limit(1)
+            .scalar_subquery()
+        )
+        return func.coalesce(first_after, self._current_text(spec))
+
+    def _current_text(self, spec: FieldSpec) -> Any:
+        """지금 값을 이력에 적힌 것과 **같은 모양(텍스트)** 으로."""
+        match spec.name:
+            case "status":
+                self._joins.append("status")
+                return WorkflowState.name
+            case "assignee":
+                return func.cast(Issue.assignee_id, Text)
+            case "reporter":
+                return func.cast(Issue.reporter_id, Text)
+            case _:
+                return func.cast(_column(spec.name), Text)
 
     def _comparison(self, node: Comparison) -> ColumnElement[bool]:
         if node.field.is_custom:

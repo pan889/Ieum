@@ -115,13 +115,27 @@ class TestParser:
         assert exc.value.code == "iql.syntax_error"
         assert exc.value.details["offset"] > 0
 
-    @pytest.mark.parametrize("text", ['status WAS "In Progress"', "assignee CHANGED FROM a TO b"])
-    def test_history_operators_rejected_clearly(self, text: str) -> None:
-        """미지원 기능은 조용히 무시하지 않는다. 언제 되는지까지 알려준다."""
-        with pytest.raises(iql_errors.IQLError) as exc:
-            parse(text)
-        assert exc.value.code == "iql.unsupported"
-        assert exc.value.details["milestone"] == "M5"
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'status WAS "In Progress"',
+            'status WAS NOT "Open"',
+            'status WAS IN ("Open", "Closed")',
+            "assignee CHANGED",
+            'assignee CHANGED FROM "a" TO "b"',
+            'status WAS "Open" DURING (2026-01-01, 2026-02-01)',
+            "priority CHANGED AFTER 2026-01-01",
+            "priority CHANGED BEFORE 2026-01-01",
+        ],
+    )
+    def test_history_operators_parse(self, text: str) -> None:
+        """이력 연산자는 M5 에 열렸다 (`iql/history.py`).
+
+        전에는 파서가 원문에서 `WAS|CHANGED` 를 찾아 "M5 예정" 으로 거절했다.
+        그 자리를 문법으로 갈아 끼웠고, 문법이 LALR 충돌을 안 낸다는 것도
+        여기서 함께 확인한다 — 예전 주석이 걱정했던 것이다.
+        """
+        assert parse(text).where is not None
 
     def test_overlong_query_rejected(self) -> None:
         with pytest.raises(iql_errors.IQLError):

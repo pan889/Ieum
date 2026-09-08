@@ -15,16 +15,26 @@ query: [expr] [order_clause]
 
 condition: FIELD_NAME comparison_op value    -> compare
          | FIELD_NAME IS NOT_KW? emptiness   -> emptiness_check
+         | FIELD_NAME WAS was_target window? -> history_was
+         | FIELD_NAME CHANGED changed_spec window? -> history_changed
          | custom_field comparison_op value  -> compare_custom
          | custom_field IS NOT_KW? emptiness -> emptiness_check_custom
 
 custom_field: CF "[" STRING "]"
 
+// 이력 연산자 (M5). `WAS` 는 값 하나·부정·목록을, `CHANGED` 는 FROM/TO 를
+// 받는다. 둘 다 시간 창이 붙을 수 있고, 안 붙으면 "언제든" 이다.
+!was_target: NOT_KW? value
+           | NOT_KW? IN list
+
+changed_spec: (FROM value)? (TO value)?
+
+window: DURING "(" value "," value ")"  -> window_during
+      | AFTER value                     -> window_after
+      | BEFORE value                    -> window_before
+
 !comparison_op: "=" | "!=" | ">=" | "<=" | ">" | "<" | "~" | "!~"
               | IN | NOT_KW IN
-
-// 이력 연산자(WAS/CHANGED)는 M5 다. 문법에 넣으면 LALR 충돌이 생기고
-// 부분 지원처럼 보이므로, 파서 진입 전에 원문에서 찾아 명확히 거절한다.
 
 !emptiness: EMPTY | NULL
 
@@ -65,6 +75,13 @@ ORDER.10: /ORDER/i
 BY.10: /BY/i
 ASC.10: /ASC/i
 DESC.10: /DESC/i
+WAS.10: /WAS/i
+CHANGED.10: /CHANGED/i
+FROM.10: /FROM/i
+TO.10: /TO/i
+DURING.10: /DURING/i
+AFTER.10: /AFTER/i
+BEFORE.10: /BEFORE/i
 
 CF.6: /cf(?=\s*\[)/
 FUNC_NAME.5: /[a-zA-Z][a-zA-Z0-9_]*(?=\s*\()/

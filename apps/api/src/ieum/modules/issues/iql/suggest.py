@@ -20,6 +20,7 @@ from typing import cast
 from lark import Token
 from lark.exceptions import LarkError
 
+from ieum.modules.issues.iql import history
 from ieum.modules.issues.iql.ast import Operator
 from ieum.modules.issues.iql.parser import MAX_QUERY_LENGTH, grammar
 from ieum.modules.issues.iql.registry import FIELDS, FUNCTIONS, FieldSpec, FieldType
@@ -140,6 +141,9 @@ _OPERATOR_ORDER: tuple[str, ...] = (
     "NOT IN",
     "IS EMPTY",
     "IS NOT EMPTY",
+    # 이력 연산자는 뒤에 둔다. 흔한 것부터 보여야 한다.
+    "WAS",
+    "CHANGED",
 )
 
 
@@ -325,6 +329,24 @@ def _operators(ctx: Context) -> list[Suggestion]:
                 weight=_operator_weight("IS NOT EMPTY"),
             )
         )
+
+    # 이력 연산자 (M5). **이력을 물을 수 있는 필드에만 준다.**
+    #
+    # 문법은 어느 필드 뒤에서든 `WAS` 를 받지만 컴파일러는 네 필드만 답한다.
+    # 안 되는 자리에 제안하면 사람은 제안을 믿고 적었다가 거절당한다 — 제안이
+    # 거절로 이어지면 다음부터 제안을 안 본다.
+    if ctx.spec is not None and history.supports(ctx.spec.name):
+        for name in ("WAS", "CHANGED"):
+            if name not in ctx.accepts:
+                continue
+            out.append(
+                Suggestion(
+                    label=name,
+                    insert=f"{name} ",
+                    kind=SuggestKind.OPERATOR,
+                    weight=_operator_weight(name),
+                )
+            )
     return out
 
 
