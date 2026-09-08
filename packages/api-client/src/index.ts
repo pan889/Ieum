@@ -123,6 +123,12 @@ export {
   type GanttWindow,
 } from './gantt'
 export {
+  createReportsApi,
+  type CountReport,
+  type ReportBucket,
+  type ReportsApi,
+} from './reports'
+export {
   createSprintsApi,
   type BurndownPoint,
   type NewSprint,

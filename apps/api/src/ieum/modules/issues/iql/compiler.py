@@ -111,6 +111,9 @@ def _single(value: Value) -> Literal | FunctionCall:
 
 _PARENT = aliased(Issue, name="parent_issue")
 
+#: 묶기 전용 라벨 별칭. 조건의 EXISTS 와 같은 테이블을 쓰면 상관이 꼬인다.
+GROUPED_LABEL = aliased(IssueLabel, name="grouped_label")
+
 #: 필드가 요구하는 조인. 컴파일러가 모아서 한 번씩만 건다.
 #: project 는 조인하지 않는다 — 키를 미리 ID 로 해석해 Issue.project_id 로
 #: 거른다. 모듈 경계(절대규칙 1)를 지키면서 인덱스도 그대로 탄다.
@@ -122,7 +125,19 @@ _JOINS: dict[str, Any] = {
     # `sprint != "..."` 가 "다른 스프린트에 있는 것" 만 뜻하게 된다 —
     # 사람이 기대하는 것은 "그 스프린트가 아닌 것 전부" 다.
     "sprint": (Sprint, Issue.sprint_id == Sprint.id),
+    # 라벨은 조건에서는 EXISTS 로 다루지만(이슈 하나가 여럿을 단다), 세는
+    # 질의에서는 **묶을 열**이 필요해서 조인이 있어야 한다.
+    #
+    # **별칭을 쓴다.** 같은 테이블을 조건의 EXISTS 와 묶는 조인이 함께 쓰면,
+    # EXISTS 안의 `IssueLabel` 이 바깥 조인으로 자동 상관되어 FROM 절을
+    # 잃는다(SQLAlchemy 가 그렇다고 말해 준다). 그러면 `labels = "x"` 로
+    # 걸러 놓고 라벨로 묶는 리포트가 통째로 터진다.
+    "labels": (GROUPED_LABEL, GROUPED_LABEL.issue_id == Issue.id),
 }
+
+#: 바깥으로 걸어야 하는 조인. 안쪽으로 걸면 그 값이 없는 이슈가 통째로
+#: 사라진다 — 조건에서는 결과가 줄고, 세는 질의에서는 **총계가 안 맞는다.**
+_OUTER_JOINS = frozenset({"sprint", "labels"})
 
 
 @dataclass(slots=True)
@@ -137,7 +152,7 @@ class CompiledQuery:
             target, onclause = _JOINS[name]
             stmt = (
                 stmt.outerjoin(target, onclause)
-                if name == "sprint"
+                if name in _OUTER_JOINS
                 else stmt.join(target, onclause)
             )
         if self.where is not None:
@@ -146,6 +161,29 @@ class CompiledQuery:
             stmt = stmt.order_by(*self.order_by)
         # 커서 페이지네이션의 tie-breaker. UUIDv7 이라 시간순이기도 하다.
         return stmt.order_by(Issue.id)
+
+    def apply_for_aggregate(
+        self, stmt: Select[Any], *, extra_joins: tuple[str, ...] = ()
+    ) -> Select[Any]:
+        """세는 질의에 얹는다. **정렬을 붙이지 않는다.**
+
+        `apply` 는 커서를 위해 `ORDER BY issue.id` 를 붙이는데, 묶는 질의
+        에서는 그게 "묶지 않은 열로 정렬한다" 가 되어 Postgres 가 거절한다.
+
+        `extra_joins` 는 묶을 열을 얻기 위해 더 필요한 조인이다. **이미 건
+        것과 겹치면 한 번만 건다** — 같은 테이블을 두 번 조인하면 행이
+        곱해지고, 그러면 세는 값이 조용히 커진다.
+        """
+        for name in dict.fromkeys([*self.joins, *extra_joins]):
+            target, onclause = _JOINS[name]
+            stmt = (
+                stmt.outerjoin(target, onclause)
+                if name in _OUTER_JOINS
+                else stmt.join(target, onclause)
+            )
+        if self.where is not None:
+            stmt = stmt.where(self.where)
+        return stmt
 
 
 class Compiler:

@@ -26,12 +26,14 @@ WRITE_METHODS = {"post", "patch", "put", "delete"}
 NO_WRITE = {
     # 전이 상태를 `state` 파라미터에 봉해 나간다 — DB 에 남기지 않는다.
     "start_sso",
-    # 아래 넷은 본문이 긴 **조회**다. POST 인 것은 IQL 을 URL 에 넣을 수
+    # 아래 다섯은 본문이 긴 **조회**다. POST 인 것은 IQL 을 URL 에 넣을 수
     # 없기 때문이고(길이·인코딩), 쓰는 것은 없다.
     "search_issues",
     "validate_iql",
     "suggest_iql",
     "export_issues",
+    # 리포트도 같은 이유다 — 세기만 하고 아무것도 남기지 않는다 (A29).
+    "count_issues",
 }
 
 

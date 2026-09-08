@@ -37,6 +37,7 @@ import { SearchScreen } from '@/features/search/SearchScreen'
 import { SprintsScreen } from '@/features/sprints/SprintsScreen'
 import { CalendarScreen } from '@/features/calendar/CalendarScreen'
 import { GanttScreen } from '@/features/gantt/GanttScreen'
+import { CountScreen } from '@/features/reports/CountScreen'
 
 import { AppShell } from './AppShell'
 
@@ -111,6 +112,12 @@ const ganttRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/gantt',
   component: GanttScreen,
+})
+
+const reportsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/reports',
+  component: CountScreen,
 })
 
 const tokensRoute = createRoute({
@@ -293,6 +300,7 @@ const routeTree = rootRoute.addChildren([
   sprintsRoute,
   calendarRoute,
   ganttRoute,
+  reportsRoute,
   tokensRoute,
   sessionsRoute,
   auditRoute,

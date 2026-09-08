@@ -1,0 +1,22 @@
+{
+  "title": "리포트",
+  "nav": "리포트",
+  "groupBy": "기준",
+  "group.status": "상태",
+  "group.statuscategory": "상태 분류",
+  "group.assignee": "담당자",
+  "group.reporter": "보고자",
+  "group.priority": "우선순위",
+  "group.type": "유형",
+  "group.sprint": "스프린트",
+  "group.labels": "라벨",
+  "query": "질의 (IQL)",
+  "queryHint": "비워 두면 볼 수 있는 것 전부를 셉니다.",
+  "run": "세기",
+  "total": "{count, plural, other {전체 #건}}",
+  "empty": "셀 것이 없습니다.",
+  "none": "없음",
+  "multiValued": "이슈 하나가 여러 칸에 들어갈 수 있어 칸의 합이 전체보다 큽니다.",
+  "truncated": "칸이 너무 많아 앞의 것만 보여 줍니다. 질의를 좁혀 주세요.",
+  "share": "이 셈을 목록으로 열기"
+}

@@ -192,6 +192,7 @@
   "issues.parent_in_other_project": "The parent issue must be in the same project.",
   "issues.progress_is_derived": "Progress on a parent issue comes from its sub-issues.",
   "issues.project_archived": "This project is archived, so no new issues can be created in it.",
+  "issues.report_unknown_group": "You can't count by that.",
   "issues.required_custom_field_missing": "Fill in the required fields first.",
   "issues.self_link": "An issue can't be linked to itself.",
   "issues.sprint_active": "A running sprint can't be deleted. Close it first.",

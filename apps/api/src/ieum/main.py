@@ -65,6 +65,7 @@ from ieum.modules.issues.board_router import boards_router
 from ieum.modules.issues.calendar_router import calendar_router
 from ieum.modules.issues.contracts import issue_model
 from ieum.modules.issues.gantt_router import gantt_router
+from ieum.modules.issues.report_router import reports_router
 from ieum.modules.issues.router import fields_router, issues_router, workflows_router
 from ieum.modules.issues.search_router import filters_router, search_router
 from ieum.modules.issues.service import SecurityLevelGuard
@@ -247,6 +248,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sprints_router,
         calendar_router,
         gantt_router,
+        reports_router,
         attachments_router,
         search_router,
         filters_router,

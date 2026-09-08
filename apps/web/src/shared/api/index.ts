@@ -14,6 +14,7 @@ import {
   createIssuesApi,
   createNotificationsApi,
   createProjectsApi,
+  createReportsApi,
   createRolesApi,
   createSearchApi,
   createSecurityApi,
@@ -54,3 +55,4 @@ export const deskApi = createDeskApi(apiClient)
 export const sprintsApi = createSprintsApi(apiClient)
 export const calendarApi = createCalendarApi(apiClient)
 export const ganttApi = createGanttApi(apiClient)
+export const reportsApi = createReportsApi(apiClient)

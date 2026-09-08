@@ -1,0 +1,22 @@
+{
+  "title": "Reports",
+  "nav": "Reports",
+  "groupBy": "Group by",
+  "group.status": "Status",
+  "group.statuscategory": "Status category",
+  "group.assignee": "Assignee",
+  "group.reporter": "Reporter",
+  "group.priority": "Priority",
+  "group.type": "Type",
+  "group.sprint": "Sprint",
+  "group.labels": "Labels",
+  "query": "Query (IQL)",
+  "queryHint": "Leave empty to count everything you can see.",
+  "run": "Count",
+  "total": "{count, plural, one {# issue in total} other {# issues in total}}",
+  "empty": "Nothing to count.",
+  "none": "None",
+  "multiValued": "An issue can fall into several buckets, so the buckets add up to more than the total.",
+  "truncated": "Too many buckets to show. Narrow the query.",
+  "share": "Open this count as a list"
+}
