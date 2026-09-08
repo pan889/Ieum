@@ -14,6 +14,7 @@ import issuesEn from '@ieum/i18n/en/issues.json'
 import markdownEn from '@ieum/i18n/en/markdown.json'
 import notificationsEn from '@ieum/i18n/en/notifications.json'
 import projectsEn from '@ieum/i18n/en/projects.json'
+import recurrencesEn from '@ieum/i18n/en/recurrences.json'
 import reportsEn from '@ieum/i18n/en/reports.json'
 import searchEn from '@ieum/i18n/en/search.json'
 import sprintsEn from '@ieum/i18n/en/sprints.json'
@@ -30,6 +31,7 @@ import issuesKo from '@ieum/i18n/ko/issues.json'
 import markdownKo from '@ieum/i18n/ko/markdown.json'
 import notificationsKo from '@ieum/i18n/ko/notifications.json'
 import projectsKo from '@ieum/i18n/ko/projects.json'
+import recurrencesKo from '@ieum/i18n/ko/recurrences.json'
 import reportsKo from '@ieum/i18n/ko/reports.json'
 import searchKo from '@ieum/i18n/ko/search.json'
 import sprintsKo from '@ieum/i18n/ko/sprints.json'
@@ -48,6 +50,7 @@ const resources = {
     projects: projectsEn,
     issues: issuesEn,
     boards: boardsEn,
+    recurrences: recurrencesEn,
     sprints: sprintsEn,
     calendar: calendarEn,
     gantt: ganttEn,
@@ -66,6 +69,7 @@ const resources = {
     projects: projectsKo,
     issues: issuesKo,
     boards: boardsKo,
+    recurrences: recurrencesKo,
     sprints: sprintsKo,
     calendar: calendarKo,
     gantt: ganttKo,

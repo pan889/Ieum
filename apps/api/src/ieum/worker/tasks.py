@@ -47,6 +47,7 @@ from ieum.modules.desk.survey import SurveyContext, collect_survey_mail
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.issues import contracts as issue_contracts
+from ieum.modules.issues.recurring import run_due_recurrences
 from ieum.modules.issues.sprints import snapshot_sprints
 from ieum.modules.notify import delivery as webhook_delivery
 from ieum.modules.notify import digest as digests
@@ -441,11 +442,23 @@ async def _sweep_once(started: datetime) -> dict[str, int]:
     # 스프린트 번다운의 오늘 점 (M5). **되짚어 계산하지 않으므로** 여기서
     # 계속 덮어써야 오늘 값이 살아 있고, 날짜가 바뀌면 그대로 굳는다.
     sprints = await snapshot_active_sprints()
+    # 반복 이슈 (A27). **드레인 뒤에 둔다** — 여기서 만든 이슈의 알림은
+    # 다음 주기의 드레인이 집는다. 앞에 두면 같은 주기에 나가지만, 그러면
+    # 15초 주기의 길이가 이슈 생성 수에 묶인다.
+    recurrences = await run_due_recurrences()
     elapsed = (utcnow() - started).total_seconds()
     # **스프린트는 조건에 안 넣는다.** 도는 스프린트가 하나라도 있으면 매
     # 주기 점을 덮어쓰므로, 조건에 넣으면 이 줄이 30초마다 찍힌다 — "무슨
     # 일이 있었다" 를 뜻하던 줄이 심장박동이 되어 버린다. 값은 찍는다.
-    if processed or delivered or attachments or sla_breaches or sla_escalations or emails:
+    if (
+        processed
+        or delivered
+        or attachments
+        or sla_breaches
+        or sla_escalations
+        or emails
+        or recurrences
+    ):
         log.info(
             "worker.sweep",
             outbox=processed,
@@ -455,6 +468,7 @@ async def _sweep_once(started: datetime) -> dict[str, int]:
             sla_escalations=sla_escalations,
             emails=emails,
             sprints=sprints,
+            recurrences=recurrences,
             duration_s=round(elapsed, 2),
         )
     await _beat("sweep", started)
@@ -466,6 +480,7 @@ async def _sweep_once(started: datetime) -> dict[str, int]:
         "sla_escalations": sla_escalations,
         "emails": emails,
         "sprints": sprints,
+        "recurrences": recurrences,
     }
 
 

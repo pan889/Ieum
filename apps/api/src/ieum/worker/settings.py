@@ -11,6 +11,7 @@ from arq.typing import WorkerCoroutine
 from ieum.config import get_settings
 from ieum.core.logging import configure_logging, get_logger
 from ieum.db.session import dispose_engine, init_engine
+from ieum.wiring import install_permissions
 from ieum.worker.tasks import (
     task_deliver_webhooks,
     task_drain_outbox,
@@ -26,6 +27,9 @@ async def startup(_ctx: dict[str, Any]) -> None:
     settings = get_settings()
     configure_logging(debug=settings.debug, json_output=settings.is_production)
     init_engine(settings)
+    # **앱과 같은 배선을 쓴다.** 워커도 이슈를 만들고(반복 이슈, A27) 알림을
+    # 내므로 권한 관문이 꽂혀 있어야 한다 — 없으면 그 경로만 제한을 안 본다.
+    install_permissions(settings)
     log.info("worker.startup", env=settings.env)
 
 

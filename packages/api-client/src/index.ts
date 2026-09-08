@@ -123,6 +123,14 @@ export {
   type GanttWindow,
 } from './gantt'
 export {
+  createRecurrencesApi,
+  type Cadence,
+  type Recurrence,
+  type RecurrenceInput,
+  type RecurrenceSchedule,
+  type RecurrencesApi,
+} from './recurrences'
+export {
   createReportsApi,
   type CountReport,
   type ReportBucket,

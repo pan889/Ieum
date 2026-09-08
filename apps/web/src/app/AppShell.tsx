@@ -15,6 +15,7 @@ const NAV = [
   { to: '/issues', labelKey: 'common:nav.issues' },
   { to: '/boards', labelKey: 'common:nav.boards' },
   { to: '/sprints', labelKey: 'common:nav.sprints' },
+  { to: '/recurrences', labelKey: 'common:nav.recurrences' },
   { to: '/calendar', labelKey: 'common:nav.calendar' },
   { to: '/gantt', labelKey: 'common:nav.gantt' },
   { to: '/reports', labelKey: 'common:nav.reports' },

@@ -27,14 +27,28 @@ def _catalog(locale: str) -> dict[str, str]:
 def _emitted_codes() -> set[str]:
     """소스에서 실제로 발생할 수 있는 에러 코드를 모은다.
 
-    두 경로가 있다: 예외 클래스의 `code = "..."` 기본값과,
-    호출부에서 넘기는 `code="..."` 키워드 인자.
+    세 경로가 있다: 예외 클래스의 `code = "..."` 기본값, 호출부에서 넘기는
+    `code="..."` 키워드 인자, 그리고 **모듈 상수를 넘기는 것**
+    (`code=SOME_CODE`).
+
+    상수를 푸는 이유: 안 풀면 그 코드가 이 검사에 **안 보인다.** 번역이 없는
+    코드를 상수로 넘기는 순간 사용자는 번역 키를 날것으로 보게 되고, 이 검사는
+    초록이다. 실제로 반복 이슈(A27)가 그 자리에 처음 닿았다.
     """
     codes: set[str] = set()
     for path in API_SRC.rglob("*.py"):
         if "migrations" in path.parts:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        # 이 파일의 모듈 수준 문자열 상수. `code=NAME` 을 풀 때 쓴다.
+        constants = {
+            target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        }
         for node in ast.walk(tree):
             # class Foo(IeumError): code = "..."
             if isinstance(node, ast.Assign):
@@ -49,12 +63,12 @@ def _emitted_codes() -> set[str]:
             # raise Foo(..., code="...")
             elif isinstance(node, ast.Call):
                 for kw in node.keywords:
-                    if (
-                        kw.arg == "code"
-                        and isinstance(kw.value, ast.Constant)
-                        and isinstance(kw.value.value, str)
-                    ):
+                    if kw.arg != "code":
+                        continue
+                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
                         codes.add(kw.value.value)
+                    elif isinstance(kw.value, ast.Name) and kw.value.id in constants:
+                        codes.add(constants[kw.value.id])
     # 내부용이라 사용자에게 보이지 않는 것들
     return {c for c in codes if "." in c and not c.startswith("request.")}
 

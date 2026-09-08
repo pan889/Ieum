@@ -535,6 +535,95 @@ class Sprint(Entity):
     )
 
 
+class RecurringIssue(Entity):
+    """주기적으로 같은 이슈를 만드는 스케줄 (A27, M5).
+
+    ## 왜 별도 표인가
+
+    이슈의 사본이 아니라 **틀**이다. 만들어진 이슈를 고쳐도 다음 이슈는 틀에서
+    나오고, 틀을 고쳐도 이미 만들어진 이슈는 그대로다. 그 둘이 같은 행에
+    있으면 "다음 것부터 바꾸고 싶다" 를 표현할 수 없다.
+
+    ## 다음 시각을 행이 들고 있다
+
+    크론 표현식을 저장하고 매번 계산하지 않는다 — 계산이 틀리면 **아무 일도
+    일어나지 않고**, 아무 일도 일어나지 않는 것은 화면에 안 보인다. 다음
+    시각을 값으로 들고 있으면 화면이 "다음: 9월 15일 09:00" 을 보여 줄 수
+    있고, 지나갔는데 안 돌았다는 것도 보인다.
+
+    전진은 **이슈를 만드는 것과 같은 트랜잭션**에서 한다. 나누면 워커가 그
+    사이에 죽었을 때 같은 이슈가 두 번 만들어진다.
+
+    ## 왜 끈 이유를 적는가
+
+    스케줄은 조용히 멈추면 안 된다. 만든 사람의 계정이 정지되면 그 이름으로
+    계속 이슈가 만들어지는 것도 옳지 않아서 끄는데, 이유가 없으면 사람은
+    "왜 안 돌지" 를 로그에서 찾아야 한다 (`email_channel.last_error` 와 같은
+    자리다).
+    """
+
+    __tablename__ = "recurring_issue"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    #: 스케줄의 이름. 만들어지는 이슈의 요약과 다르다 — 목록에서 구분하는 이름이다.
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # ── 만들 이슈의 틀 ────────────────────────────────────────
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("issue_type.id", ondelete="SET NULL"), nullable=True
+    )
+    assignee_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    labels: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    #: 만들 때 기한을 며칠 뒤로 둘 것인가. 없으면 기한 없는 이슈다.
+    #:
+    #: 절대 날짜를 둘 수 없는 이유: 반복이니까. "9월 30일" 은 한 번만 맞다.
+    due_in_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # ── 언제 도는가 ──────────────────────────────────────────
+    cadence: Mapped[str] = mapped_column(String(20), nullable=False)
+    hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    minute: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 0=월 … 6=일. 매주일 때만 쓴다.
+    weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 1~31. 매월일 때만 쓴다. 짧은 달에서는 당긴다(`recurrence.next_after`).
+    day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: **스케줄의 시간대다.** 보는 사람의 것이 아니다.
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+
+    # ── 상태 ────────────────────────────────────────────────
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 마지막으로 만든 이슈. 화면에서 "이게 그것" 으로 갈 수 있어야 한다.
+    last_issue_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("issue.id", ondelete="SET NULL"), nullable=True
+    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 스스로 껐으면 그 이유. 사람이 끈 것과 구분된다(사람이 끄면 비어 있다).
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_recurring_issue_project_id_name"),
+        # 워커가 "지금 지난 것" 만 훑는다. 꺼진 것은 애초에 안 본다.
+        Index(
+            "ix_recurring_issue_due",
+            "next_run_at",
+            postgresql_where=text("is_enabled"),
+        ),
+    )
+
+
 class SprintSnapshot(Base):
     """그날 남아 있던 양 (M5).
 

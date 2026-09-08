@@ -40,8 +40,17 @@ _CLEANUP = (
 
 @pytest_asyncio.fixture
 async def worker_env(engine: object) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    from ieum.db import session as session_module
+    """워커가 도는 환경을 흉내낸다 — **기동 배선까지.**
 
+    스윕이 이슈를 만들기 때문에(반복 이슈, A27) 권한 관문이 꽂혀 있어야 한다.
+    실제 워커는 `worker.settings.startup` 에서 같은 함수를 부른다. 여기서 빼
+    두면 시험만 통과하고 실제 워커는 안 도는 상태가 될 수 있다.
+    """
+    from ieum.config import get_settings
+    from ieum.db import session as session_module
+    from ieum.wiring import install_permissions
+
+    install_permissions(get_settings())
     factory = async_sessionmaker(bind=engine, expire_on_commit=False)  # type: ignore[arg-type]
     saved_factory = session_module._session_factory
     saved_engine = session_module._engine
@@ -392,6 +401,7 @@ class TestSweep:
             "sla_escalations": 0,
             "emails": 0,
             "sprints": 0,
+            "recurrences": 0,
         }
 
     async def test_it_leaves_a_heartbeat(
@@ -420,4 +430,5 @@ class TestSweep:
             "sla_escalations": 0,
             "emails": 0,
             "sprints": 0,
+            "recurrences": 0,
         }

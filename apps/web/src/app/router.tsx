@@ -36,6 +36,7 @@ import { WorkflowsScreen } from '@/features/settings/WorkflowsScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
+import { RecurrencesScreen } from '@/features/recurrences/RecurrencesScreen'
 import { SprintsScreen } from '@/features/sprints/SprintsScreen'
 import { CalendarScreen } from '@/features/calendar/CalendarScreen'
 import { GanttScreen } from '@/features/gantt/GanttScreen'
@@ -96,6 +97,12 @@ const boardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/boards/$boardId',
   component: BoardScreen,
+})
+
+const recurrencesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/recurrences',
+  component: RecurrencesScreen,
 })
 
 const sprintsRoute = createRoute({
@@ -324,6 +331,7 @@ const routeTree = rootRoute.addChildren([
   boardsRoute,
   boardRoute,
   sprintsRoute,
+  recurrencesRoute,
   calendarRoute,
   ganttRoute,
   reportsRoute,
