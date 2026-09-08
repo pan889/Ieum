@@ -25,7 +25,7 @@ export function NewIssueScreen() {
 
   // 프로젝트는 **검색으로** 고른다. 목록을 통째로 `<select>` 에 넣으면
   // 설치가 커진 순간 뒤쪽 프로젝트에 이슈를 만들 길이 사라진다 — 개발 DB 가
-  // 2334개가 됐을 때 실제로 그랬다(allProjects.ts, ux-principles 4절).
+  // 2334개가 됐을 때 실제로 그랬다(ux-principles 4절).
   const [project, setProject] = useState<Project | null>(null)
   const projectId = project?.id ?? null
   //: 사용자가 직접 고른 유형. null 이면 그 프로젝트의 첫 유형을 쓴다.

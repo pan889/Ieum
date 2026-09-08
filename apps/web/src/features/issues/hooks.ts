@@ -17,9 +17,10 @@ export function projectByKey(key: string) {
  * 키 하나로 프로젝트를 찾는다. 목록 필터가 쓴다 — 필터는 URL 에서 **키**를
  * 받는데(`?project=ENG`), 화면에는 이름을 보여 줘야 한다.
  *
- * 전체 목록을 받아 훑지 않는다. 그러려고 만들었던 `fetchAllProjects` 는
- * 상한(2000개)에 닿는 순간 조용히 잘렸고, 개발 DB 가 2334개가 되자 필터에서
- * 프로젝트가 사라졌다. 서버가 이미 키로 찾아 주므로 한 번만 물으면 된다.
+ * 전체 목록을 받아 훑지 않는다. 예전에는 커서를 끝까지 따라가는 함수로 그렇게
+ * 했는데, 상한(2000개)에 닿는 순간 조용히 잘렸고 개발 DB 가 2334개가 되자
+ * 필터에서 프로젝트가 사라졌다(ux-principles "잘린 선택 목록 — 세 번째").
+ * 서버가 이미 키로 찾아 주므로 한 번만 물으면 된다.
  */
 export function useProjectByKey(key: string | null) {
   return useQuery({

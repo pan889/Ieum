@@ -31,7 +31,7 @@ export function BoardsScreen() {
   const { t } = useTranslation(['boards', 'common', 'issues'])
   const queryClient = useQueryClient()
   // 프로젝트는 검색으로 고른다. 전체를 `<select>` 에 넣으면 설치가 커진
-  // 순간 뒤쪽 프로젝트의 보드를 볼 길이 사라진다(allProjects.ts 참고).
+  // 순간 뒤쪽 프로젝트의 보드를 볼 길이 사라진다(ux-principles 4절).
   const [project, setProject] = useState<Project | null>(null)
   const projectId = project?.id ?? null
   const [name, setName] = useState('')

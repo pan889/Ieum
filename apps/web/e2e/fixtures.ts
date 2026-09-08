@@ -492,7 +492,7 @@ export async function createSpace(page: Page, key: string): Promise<void> {
  * 바뀌었다. 목록을 통째로 받아 그리면 개수가 상한을 넘는 순간 방금 만든
  * 프로젝트가 옵션에서 사라지기 때문이다 — 개발 DB 가 2334개가 되자
  * `boards.spec.ts` 와 `bulk.spec.ts` 가 실제로 그렇게 붉어졌다
- * (`allProjects.ts`, ux-principles 4절).
+ * (ux-principles "잘린 선택 목록 — 세 번째").
  *
  * 피커는 **고른 뒤 접힌다.** 접힌 상태에는 입력창이 아예 없으므로 먼저
  * 펼쳐야 한다. 그리고 결과는 `role="option"` 이 아니라 **버튼**이다 —
