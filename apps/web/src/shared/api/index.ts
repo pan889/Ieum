@@ -8,6 +8,7 @@ import {
   createCalendarApi,
   createDeskApi,
   createFieldsApi,
+  createGanttApi,
   createGroupsApi,
   createIdpApi,
   createIssuesApi,
@@ -52,3 +53,4 @@ export const fieldsApi = createFieldsApi(apiClient)
 export const deskApi = createDeskApi(apiClient)
 export const sprintsApi = createSprintsApi(apiClient)
 export const calendarApi = createCalendarApi(apiClient)
+export const ganttApi = createGanttApi(apiClient)

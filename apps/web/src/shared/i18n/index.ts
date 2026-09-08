@@ -9,6 +9,7 @@ import calendarEn from '@ieum/i18n/en/calendar.json'
 import commonEn from '@ieum/i18n/en/common.json'
 import deskEn from '@ieum/i18n/en/desk.json'
 import errorsEn from '@ieum/i18n/en/errors.json'
+import ganttEn from '@ieum/i18n/en/gantt.json'
 import issuesEn from '@ieum/i18n/en/issues.json'
 import markdownEn from '@ieum/i18n/en/markdown.json'
 import notificationsEn from '@ieum/i18n/en/notifications.json'
@@ -23,6 +24,7 @@ import calendarKo from '@ieum/i18n/ko/calendar.json'
 import commonKo from '@ieum/i18n/ko/common.json'
 import deskKo from '@ieum/i18n/ko/desk.json'
 import errorsKo from '@ieum/i18n/ko/errors.json'
+import ganttKo from '@ieum/i18n/ko/gantt.json'
 import issuesKo from '@ieum/i18n/ko/issues.json'
 import markdownKo from '@ieum/i18n/ko/markdown.json'
 import notificationsKo from '@ieum/i18n/ko/notifications.json'
@@ -46,6 +48,7 @@ const resources = {
     boards: boardsEn,
     sprints: sprintsEn,
     calendar: calendarEn,
+    gantt: ganttEn,
     notifications: notificationsEn,
     wiki: wikiEn,
     markdown: markdownEn,
@@ -62,6 +65,7 @@ const resources = {
     boards: boardsKo,
     sprints: sprintsKo,
     calendar: calendarKo,
+    gantt: ganttKo,
     notifications: notificationsKo,
     wiki: wikiKo,
     markdown: markdownKo,

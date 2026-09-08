@@ -116,6 +116,13 @@ export {
   type CalendarWindow,
 } from './calendar'
 export {
+  createGanttApi,
+  type GanttApi,
+  type GanttConflict,
+  type GanttRow,
+  type GanttWindow,
+} from './gantt'
+export {
   createSprintsApi,
   type BurndownPoint,
   type NewSprint,
