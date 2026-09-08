@@ -2,18 +2,37 @@ import { useQuery } from '@tanstack/react-query'
 
 import { issuesApi, projectsApi, usersApi } from '@/shared/api'
 
-import { fetchAllProjects } from './allProjects'
+/** 키로 프로젝트 하나 찾기에 받아 보는 개수. 정확히 맞는 하나만 쓴다. */
+const BY_KEY_LIMIT = 20
 
 /**
- * 프로젝트 목록. 필터·생성 폼이 공유한다.
- *
- * 한 페이지만 받지 않는다 — 잘린 목록은 "그 프로젝트가 없다" 와 구별되지
- * 않는다 (allProjects.ts 참고).
+ * `useProjectByKey` 의 캐시 키. 피커가 방금 준 프로젝트를 미리 넣어 둘 때
+ * 쓴다 — 안 넣으면 화면이 키만 보여 주다 한 박자 뒤에 이름으로 바뀐다.
  */
-export function useProjects() {
+export function projectByKey(key: string) {
+  return ['projects', 'byKey', key]
+}
+
+/**
+ * 키 하나로 프로젝트를 찾는다. 목록 필터가 쓴다 — 필터는 URL 에서 **키**를
+ * 받는데(`?project=ENG`), 화면에는 이름을 보여 줘야 한다.
+ *
+ * 전체 목록을 받아 훑지 않는다. 그러려고 만들었던 `fetchAllProjects` 는
+ * 상한(2000개)에 닿는 순간 조용히 잘렸고, 개발 DB 가 2334개가 되자 필터에서
+ * 프로젝트가 사라졌다. 서버가 이미 키로 찾아 주므로 한 번만 물으면 된다.
+ */
+export function useProjectByKey(key: string | null) {
   return useQuery({
-    queryKey: ['projects', 'all'],
-    queryFn: () => fetchAllProjects(projectsApi),
+    // 키가 없으면 질의도 안 돈다. `projectByKey` 와 같은 모양을 유지해서
+    // 미리 넣어 둔 값이 확실히 이 질의에 걸리게 한다.
+    queryKey: key === null ? ['projects', 'byKey'] : projectByKey(key),
+    queryFn: async () => {
+      const page = await projectsApi.list({ q: key as string, limit: BY_KEY_LIMIT })
+      // `q` 는 부분 일치다(`ENG` 가 `ENGX` 에도 맞는다). 정확히 그 키만 쓴다 —
+      // 비슷한 이름을 대신 보여 주면 필터가 거짓말을 한다.
+      return page.items.find((project) => project.key === key) ?? null
+    },
+    enabled: key !== null,
     staleTime: 60_000,
   })
 }

@@ -17,5 +17,9 @@
   "detail.archive": "Archive project",
   "detail.subprojects": "{count, plural, one {# sub-project} other {# sub-projects}}",
   "list.search": "Find a project",
-  "list.noMatch": "No project matches that."
+  "list.noMatch": "No project matches that.",
+  "pick.none": "Not chosen",
+  "pick.change": "Change",
+  "pick.searchHint": "Search by key or name.",
+  "pick.more": "More projects match than shown. Type to narrow it down."
 }

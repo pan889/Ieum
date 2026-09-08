@@ -1,11 +1,13 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { Alert, Button, Chip, Field, Select } from '@/shared/ui/primitives'
+import { ProjectPicker } from '@/features/projects/ProjectPicker'
+import { Alert, Button, Chip, Field } from '@/shared/ui/primitives'
 
 import { IqlEditor } from './IqlEditor'
 import type { IssueFilters } from './iql'
 import { EMPTY_FILTERS, isEmptyFilters, matchesChips, toIql, toggle } from './iql'
-import { useIssueTypes, useProjects } from './hooks'
+import { projectByKey, useIssueTypes, useProjectByKey } from './hooks'
 
 const CATEGORIES = ['todo', 'in_progress', 'done'] as const
 const PRIORITIES = [1, 2, 3, 4, 5] as const
@@ -30,9 +32,10 @@ export function FilterBar({
   invalid,
 }: FilterBarProps) {
   const { t } = useTranslation(['issues', 'common'])
-  const projects = useProjects()
-
-  const project = projects.data?.find((p) => p.key === filters.projectKey) ?? null
+  const queryClient = useQueryClient()
+  // 고른 프로젝트만 물어본다. 예전에는 전체 목록을 받아 훑었는데, 그 목록이
+  // 상한에서 잘리면 필터에서 프로젝트가 통째로 사라졌다(hooks.ts 참고).
+  const project = useProjectByKey(filters.projectKey).data ?? null
   const types = useIssueTypes(project?.id ?? null)
 
   const patch = (next: Partial<IssueFilters>) => {
@@ -75,21 +78,26 @@ export function FilterBar({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end gap-3">
-        <Select
+        <ProjectPicker
           label={t('issues:list.project')}
-          value={filters.projectKey ?? ''}
-          onChange={(e) => {
-            // 프로젝트가 바뀌면 유형 칩은 의미를 잃는다 — 같이 비운다.
-            patch({ projectKey: e.target.value || null, typeNames: [] })
+          chosen={project}
+          emptyLabel={t('issues:list.projectAll')}
+          // 이름을 아직 못 읽었으면 **키라도** 보여 준다. "전체 프로젝트" 라고
+          // 쓰면 목록은 걸러져 있는데 화면만 아니라고 말하는 셈이다.
+          unresolvedLabel={filters.projectKey ?? undefined}
+          // 프로젝트가 바뀌면 유형 칩은 의미를 잃는다 — 같이 비운다.
+          onPick={(picked) => {
+            // 피커가 방금 준 것을 캐시에 넣는다. 안 그러면 키만 보이다가
+            // 한 박자 뒤에 이름으로 바뀐다 — 같은 답을 두 번 묻는 셈이다.
+            queryClient.setQueryData(projectByKey(picked.key), picked)
+            patch({ projectKey: picked.key, typeNames: [] })
           }}
-        >
-          <option value="">{t('issues:list.projectAll')}</option>
-          {projects.data?.map((p) => (
-            <option key={p.id} value={p.key}>
-              {p.key} · {p.name}
-            </option>
-          ))}
-        </Select>
+          onClear={
+            filters.projectKey === null
+              ? undefined
+              : () => { patch({ projectKey: null, typeNames: [] }) }
+          }
+        />
 
         <div className="min-w-48 flex-1">
           <Field

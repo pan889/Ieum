@@ -1,4 +1,4 @@
-import { createIssue, createProject, expect, projectKey, signIn, test, writeBody } from './fixtures'
+import { createIssue, createProject, expect, pickProject, projectKey, signIn, test, writeBody } from './fixtures'
 
 test('이슈를 만들고 전이·코멘트·담당자를 다룬다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -57,7 +57,7 @@ test('필터 칩과 IQL 이 같은 결과를 낸다', async ({ page, consoleErro
   await createIssue(page, key, 'todo issue')
 
   await page.goto('/issues')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await expect(page.locator('tbody tr')).toHaveCount(1)
 
   // Done 칩은 아무것도 안 걸러야 한다 (이슈는 To do 상태다).

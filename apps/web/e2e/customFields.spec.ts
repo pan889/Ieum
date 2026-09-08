@@ -6,7 +6,7 @@
  * 거절하는데, 유닛 테스트는 위젯과 서버를 각각 통과시킨다.
  */
 
-import { createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createProject, expect, pickProject, projectKey, signIn, test } from './fixtures'
 
 test('종류별 위젯으로 값을 넣고 되읽는다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -14,7 +14,7 @@ test('종류별 위젯으로 값을 넣고 되읽는다', async ({ page, console
   await createProject(page, key)
 
   await page.goto('/issues/new')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await page.getByLabel(/^summary$/i).fill('custom fields')
 
   // 정의는 프로젝트·유형을 고른 뒤에 불린다.
@@ -55,7 +55,7 @@ test('상세 화면에서 고치고 저장한다', async ({ page, consoleErrors 
   await createProject(page, key)
 
   await page.goto('/issues/new')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await page.getByLabel(/^summary$/i).fill('edit fields')
   await expect(page.getByLabel(/^severity$/i)).toBeVisible()
   await page.getByLabel(/^severity$/i).selectOption('low')
@@ -95,7 +95,7 @@ test('서버가 거절하면 어느 필드인지 알려준다', async ({ page, c
   await createProject(page, key)
 
   await page.goto('/issues/new')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await page.getByLabel(/^summary$/i).fill('bad value')
   await expect(page.getByLabel(/^severity$/i)).toBeVisible()
   await page.getByRole('button', { name: /create issue/i }).click()

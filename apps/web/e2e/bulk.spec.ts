@@ -1,4 +1,4 @@
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, expect, pickProject, projectKey, signIn, test } from './fixtures'
 
 test('선택한 이슈를 한 번에 바꾼다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -8,7 +8,7 @@ test('선택한 이슈를 한 번에 바꾼다', async ({ page, consoleErrors })
   await createIssue(page, key, 'bulk two')
 
   await page.goto('/issues')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await expect(page.locator('tbody tr')).toHaveCount(2)
 
   await page.getByLabel(/select all on this page/i).check()
@@ -34,7 +34,7 @@ test('CSV 를 내보낸다', async ({ page, consoleErrors }) => {
   await createIssue(page, key, 'exported issue')
 
   await page.goto('/issues')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await expect(page.locator('tbody tr')).toHaveCount(1)
 
   const [download] = await Promise.all([

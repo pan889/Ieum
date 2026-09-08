@@ -1,8 +1,8 @@
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, expect, pickProject, projectKey, signIn, test } from './fixtures'
 
 async function createBoard(page: import('@playwright/test').Page, key: string, name: string) {
   await page.goto('/boards')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await page.getByLabel(/board name/i).fill(name)
   await page.getByRole('button', { name: /create board/i }).click()
   await page.getByRole('link', { name: /open board/i }).click()

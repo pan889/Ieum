@@ -23,7 +23,7 @@ import type { Project, Queue } from '@ieum/api-client'
 
 import { IqlEditor } from '@/features/issues/IqlEditor'
 import { categoryTone, formatDateTime, priorityLabel } from '@/features/issues/format'
-import { ProjectPicker } from '@/features/settings/ProjectPicker'
+import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { deskApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'

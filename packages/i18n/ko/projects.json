@@ -17,5 +17,9 @@
   "detail.archive": "프로젝트 아카이브",
   "detail.subprojects": "하위 프로젝트 {count}개",
   "list.search": "프로젝트 찾기",
-  "list.noMatch": "일치하는 프로젝트가 없습니다."
+  "list.noMatch": "일치하는 프로젝트가 없습니다.",
+  "pick.none": "고르지 않음",
+  "pick.change": "바꾸기",
+  "pick.searchHint": "키나 이름으로 찾습니다.",
+  "pick.more": "보여 준 것보다 많이 맞습니다. 더 쳐서 좁히세요."
 }

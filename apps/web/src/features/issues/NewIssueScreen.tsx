@@ -3,6 +3,9 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { Project } from '@ieum/api-client'
+
+import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { issuesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
@@ -11,7 +14,7 @@ import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { CustomField } from './CustomField'
 import type { FieldValue } from './customFields'
 import { priorityLabel } from './format'
-import { useFieldDefinitions, useIssueTypes, useProjects } from './hooks'
+import { useFieldDefinitions, useIssueTypes } from './hooks'
 
 export function NewIssueScreen() {
   const { t } = useTranslation(['issues', 'common'])
@@ -20,8 +23,11 @@ export function NewIssueScreen() {
   // "하위 이슈 만들기" 가 이 경로로 보낸다.
   const search = useSearch({ from: '/issues/new' })
 
-  const projects = useProjects()
-  const [projectId, setProjectId] = useState<string | null>(null)
+  // 프로젝트는 **검색으로** 고른다. 목록을 통째로 `<select>` 에 넣으면
+  // 설치가 커진 순간 뒤쪽 프로젝트에 이슈를 만들 길이 사라진다 — 개발 DB 가
+  // 2334개가 됐을 때 실제로 그랬다(allProjects.ts, ux-principles 4절).
+  const [project, setProject] = useState<Project | null>(null)
+  const projectId = project?.id ?? null
   //: 사용자가 직접 고른 유형. null 이면 그 프로젝트의 첫 유형을 쓴다.
   const [pickedTypeId, setPickedTypeId] = useState<string | null>(null)
   const [summary, setSummary] = useState('')
@@ -81,25 +87,15 @@ export function NewIssueScreen() {
         >
           {create.isError ? <Alert>{describeError(create.error)}</Alert> : null}
 
-          <Select
+          <ProjectPicker
             label={t('issues:create.project')}
-            required
-            value={projectId ?? ''}
-            onChange={(e) => {
+            chosen={project}
+            onPick={(picked) => {
               // 프로젝트가 바뀌면 고른 유형은 그 프로젝트에 없을 수 있다.
-              setProjectId(e.target.value || null)
+              setProject(picked)
               setPickedTypeId(null)
             }}
-          >
-            <option value="" disabled>
-              {t('issues:list.projectAll')}
-            </option>
-            {projects.data?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.key} · {p.name}
-              </option>
-            ))}
-          </Select>
+          />
 
           {types.data && types.data.length > 0 ? (
             <Select
@@ -170,9 +166,17 @@ export function NewIssueScreen() {
             />
           ))}
 
-          <Button type="submit" loading={create.isPending} disabled={projectId === null}>
-            {t('issues:create.submit')}
-          </Button>
+          {/* 눌리지 않는 버튼만 두지 않는다 — 무엇이 남았는지 옆에 적는다
+              (ux-principles). `<select required>` 를 걷어내면서 유일한 단서가
+              사라졌다. */}
+          <div className="flex items-center gap-3">
+            <Button type="submit" loading={create.isPending} disabled={projectId === null}>
+              {t('issues:create.submit')}
+            </Button>
+            {projectId === null ? (
+              <span className="text-xs text-muted">{t('issues:create.projectFirst')}</span>
+            ) : null}
+          </div>
         </form>
       </Card>
     </section>

@@ -6,7 +6,7 @@
  * 라우터·히스토리·역직렬화가 전부 얽혀 있다.
  */
 
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, expect, pickProject, projectKey, signIn, test } from './fixtures'
 
 test('칩이 URL 에 실리고 새로고침해도 남는다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -15,13 +15,14 @@ test('칩이 URL 에 실리고 새로고침해도 남는다', async ({ page, con
   await createIssue(page, key, 'url shared issue')
 
   await page.goto('/issues')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await expect(page).toHaveURL(new RegExp(`project=${key}`))
   await expect(page.locator('tbody tr')).toHaveCount(1)
 
   await page.reload()
   // 새로고침해도 같은 목록이다. 필터가 컴포넌트 state 였다면 여기서 날아간다.
-  await expect(page.getByLabel(/^project$/i)).toHaveValue(key)
+  // 피커는 URL 의 **키**로 프로젝트를 되찾아 이름까지 보여 준다.
+  await expect(page.getByText(`${key} · E2E`)).toBeVisible()
   await expect(page.locator('tbody tr')).toHaveCount(1)
 
   expect(consoleErrors).toEqual([])
@@ -70,7 +71,7 @@ test('IQL 로 전환해도 칩으로 돌아갈 수 있다', async ({ page, conso
   await expect(back).toBeEnabled()
   await back.click()
   await expect(page).not.toHaveURL(/[?&]iql=/)
-  await expect(page.getByLabel(/^project$/i)).toHaveValue(key)
+  await expect(page.getByText(`${key} · E2E`)).toBeVisible()
 
   expect(consoleErrors).toEqual([])
 })

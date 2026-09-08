@@ -27,7 +27,7 @@ import type {
 } from '@ieum/api-client'
 
 import { PersonPicker } from '@/features/settings/PersonPicker'
-import { ProjectPicker } from '@/features/settings/ProjectPicker'
+import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { deskApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'

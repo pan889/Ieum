@@ -485,6 +485,34 @@ export async function createSpace(page: Page, key: string): Promise<void> {
   await expect(page.getByText(key).first()).toBeVisible()
 }
 
+/**
+ * 프로젝트 피커에서 프로젝트를 고른다.
+ *
+ * 이슈 생성·목록 필터·보드가 전부 `<select>` 를 버리고 **검색으로** 고르게
+ * 바뀌었다. 목록을 통째로 받아 그리면 개수가 상한을 넘는 순간 방금 만든
+ * 프로젝트가 옵션에서 사라지기 때문이다 — 개발 DB 가 2334개가 되자
+ * `boards.spec.ts` 와 `bulk.spec.ts` 가 실제로 그렇게 붉어졌다
+ * (`allProjects.ts`, ux-principles 4절).
+ *
+ * 피커는 **고른 뒤 접힌다.** 접힌 상태에는 입력창이 아예 없으므로 먼저
+ * 펼쳐야 한다. 그리고 결과는 `role="option"` 이 아니라 **버튼**이다 —
+ * 데스크 스펙들이 이미 같은 순서로 하고 있고, 둘 다 처음에 틀려서 90초를
+ * 기다리다 죽었다.
+ */
+export async function pickProject(page: Page, key: string, name = 'E2E'): Promise<void> {
+  // 화면 언어는 서버가 기억한다 — 앞선 스펙이 한국어로 바꿔 두었을 수 있다.
+  const search = page.getByRole('textbox', { name: /^(project|프로젝트)$/i })
+  if (!(await search.isVisible())) {
+    await page.getByRole('button', { name: /^(choose…|change|고르세요…|바꾸기)$/i }).click()
+  }
+  await search.fill(key)
+  await page.getByRole('button', { name: `${key} · ${name}` }).click()
+  // 고르면 **접힌다.** 접혔다는 것을 보고 나가야 다음 줄이 아직 열려 있는
+  // 피커를 건드리지 않는다. 고른 이름 글자로 기다리지 않는 이유가 있다:
+  // 그 글자는 접힌 자리에도 목록에도 있어서 전환 중에 둘로 잡힌다.
+  await expect(page.getByRole('button', { name: /^(change|바꾸기)$/i })).toBeVisible()
+}
+
 export async function createIssue(
   page: Page,
   key: string,
@@ -492,7 +520,7 @@ export async function createIssue(
   options: { priority?: '1' | '2' | '3' | '4' | '5' } = {},
 ): Promise<string> {
   await page.goto('/issues/new')
-  await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+  await pickProject(page, key)
   await page.getByLabel(/^summary$/i).fill(summary)
   if (options.priority) await page.getByLabel(/^priority$/i).selectOption(options.priority)
   await page.getByRole('button', { name: /create issue/i }).click()

@@ -176,5 +176,6 @@
   "list.group.assignee": "Assignee",
   "list.group.priority": "Priority",
   "list.group.project": "Project",
-  "linkedDocs.title": "Mentioned in docs"
+  "linkedDocs.title": "Mentioned in docs",
+  "create.projectFirst": "Pick a project first."
 }

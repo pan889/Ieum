@@ -1,4 +1,4 @@
-import { createIssue, createProject, expect, projectKey, signIn, test } from './fixtures'
+import { createIssue, createProject, expect, pickProject, projectKey, signIn, test } from './fixtures'
 
 test('이슈를 연결하면 양쪽 방향 문구가 다르게 보인다', async ({ page, consoleErrors }) => {
   const key = projectKey()
@@ -39,7 +39,7 @@ test('하위 이슈 진행률이 부모로 올라간다', async ({ page, console
     await page.goto(`/issues/${parent}`)
     await page.getByRole('link', { name: /new sub-issue/i }).click()
     await expect(page.getByLabel(/^parent issue$/i)).toHaveValue(parent)
-    await page.getByLabel(/^project$/i).selectOption({ label: `${key} · E2E` })
+    await pickProject(page, key)
     await page.getByLabel(/^summary$/i).fill(label)
     await page.getByRole('button', { name: /create issue/i }).click()
     await page.waitForURL(new RegExp(`/issues/${key}-`))

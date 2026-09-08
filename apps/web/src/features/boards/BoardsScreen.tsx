@@ -3,10 +3,12 @@ import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useProjects } from '@/features/issues/hooks'
+import type { Project } from '@ieum/api-client'
+
+import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { boardsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 
 /**
  * 새 보드의 출발점. 컬럼 이름은 **만든 시점의 언어로 저장된다** — 보드
@@ -28,8 +30,10 @@ function defaultColumns(t: (key: string) => string) {
 export function BoardsScreen() {
   const { t } = useTranslation(['boards', 'common', 'issues'])
   const queryClient = useQueryClient()
-  const projects = useProjects()
-  const [projectId, setProjectId] = useState<string | null>(null)
+  // 프로젝트는 검색으로 고른다. 전체를 `<select>` 에 넣으면 설치가 커진
+  // 순간 뒤쪽 프로젝트의 보드를 볼 길이 사라진다(allProjects.ts 참고).
+  const [project, setProject] = useState<Project | null>(null)
+  const projectId = project?.id ?? null
   const [name, setName] = useState('')
 
   const boards = useQuery({
@@ -55,16 +59,11 @@ export function BoardsScreen() {
     <section className="mx-auto flex max-w-3xl flex-col gap-5">
       <h1 className="text-xl font-semibold">{t('boards:list.title')}</h1>
 
-      <Select
+      <ProjectPicker
         label={t('issues:list.project')}
-        value={projectId ?? ''}
-        onChange={(e) => { setProjectId(e.target.value || null); }}
-      >
-        <option value="">{t('issues:list.projectAll')}</option>
-        {projects.data?.map((p) => (
-          <option key={p.id} value={p.id}>{p.key} · {p.name}</option>
-        ))}
-      </Select>
+        chosen={project}
+        onPick={setProject}
+      />
 
       {projectId === null ? null : boards.isPending ? (
         <p className="text-sm text-muted">{t('common:state.loading')}</p>

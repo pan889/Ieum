@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { Portal, Project } from '@ieum/api-client'
 
-import { ProjectPicker } from '@/features/settings/ProjectPicker'
+import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { deskApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
