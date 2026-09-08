@@ -115,7 +115,7 @@ async def full_access(session: AsyncSession, user: User, project: Project) -> Ac
     await grant(
         session,
         principal_id=user.id,
-        granted=perms.ALL[:-2],
+        granted=perms.project_scoped(),
         scope=Scope.project(project.id),
     )
     return actor_for(user)

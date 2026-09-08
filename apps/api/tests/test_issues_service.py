@@ -142,7 +142,7 @@ async def full_access(session: AsyncSession, user: User, project: Project) -> Ac
     await grant(
         session,
         principal_id=user.id,
-        granted=perms.ALL[:-2],  # 워크플로우·필드 정의 관리는 전역이라 제외
+        granted=perms.project_scoped(),
         scope=Scope.project(project.id),
     )
     return actor_for(user)

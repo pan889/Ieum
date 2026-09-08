@@ -75,6 +75,8 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             issue_perms.WORKLOG_EDIT_ANY,
             issue_perms.SECURITY_LEVEL_SET,
             issue_perms.BOARD_MANAGE,
+            # 스프린트는 계획 회의에서 만든다 — 프로젝트를 굴리는 사람의 일이다.
+            issue_perms.SPRINT_MANAGE,
             # 프로젝트 관리자는 자기 프로젝트의 웹훅을 본다. 만드는 것은
             # 데이터를 외부로 내보내는 일이라 step-up 대상이다.
             notify_perms.WEBHOOK_VIEW,

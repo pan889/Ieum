@@ -47,6 +47,7 @@ from ieum.modules.desk.survey import SurveyContext, collect_survey_mail
 from ieum.modules.identity.handlers import HandlerContext as IdentityContext
 from ieum.modules.identity.handlers import collect_invite_mail
 from ieum.modules.issues import contracts as issue_contracts
+from ieum.modules.issues.sprints import snapshot_sprints
 from ieum.modules.notify import delivery as webhook_delivery
 from ieum.modules.notify import digest as digests
 from ieum.modules.notify.handlers import (
@@ -437,7 +438,13 @@ async def _sweep_once(started: datetime) -> dict[str, int]:
     # 처리하려면 드레인을 두 번 돌려야 하고, 그러면 한 주기의 길이가 IMAP
     # 왕복에 묶인다.
     emails = await poll_email()
+    # 스프린트 번다운의 오늘 점 (M5). **되짚어 계산하지 않으므로** 여기서
+    # 계속 덮어써야 오늘 값이 살아 있고, 날짜가 바뀌면 그대로 굳는다.
+    sprints = await snapshot_active_sprints()
     elapsed = (utcnow() - started).total_seconds()
+    # **스프린트는 조건에 안 넣는다.** 도는 스프린트가 하나라도 있으면 매
+    # 주기 점을 덮어쓰므로, 조건에 넣으면 이 줄이 30초마다 찍힌다 — "무슨
+    # 일이 있었다" 를 뜻하던 줄이 심장박동이 되어 버린다. 값은 찍는다.
     if processed or delivered or attachments or sla_breaches or sla_escalations or emails:
         log.info(
             "worker.sweep",
@@ -447,6 +454,7 @@ async def _sweep_once(started: datetime) -> dict[str, int]:
             sla_breaches=sla_breaches,
             sla_escalations=sla_escalations,
             emails=emails,
+            sprints=sprints,
             duration_s=round(elapsed, 2),
         )
     await _beat("sweep", started)
@@ -457,7 +465,19 @@ async def _sweep_once(started: datetime) -> dict[str, int]:
         "sla_breaches": sla_breaches,
         "sla_escalations": sla_escalations,
         "emails": emails,
+        "sprints": sprints,
     }
+
+
+async def snapshot_active_sprints() -> int:
+    """도는 스프린트에 오늘 점을 찍는다. 실패해도 스윕을 죽이지 않는다 —
+    번다운 한 점을 놓치는 것과 메일이 안 나가는 것은 무게가 다르다."""
+    try:
+        async with session_scope() as session:
+            return await snapshot_sprints(session)
+    except Exception as exc:
+        log.error("issues.sprint_snapshot_failed", error=f"{type(exc).__name__}: {exc}")
+        return 0
 
 
 async def _beat(task: str, started: datetime, *, error: str | None = None) -> None:

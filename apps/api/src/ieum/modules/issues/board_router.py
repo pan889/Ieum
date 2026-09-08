@@ -15,10 +15,11 @@ from ieum.modules.issues.boards import (
     MAX_COLUMNS,
     SWIMLANE_FIELDS,
     BoardService,
+    BoardSprint,
     ColumnResult,
     Swimlane,
 )
-from ieum.modules.issues.models import Board
+from ieum.modules.issues.models import BOARD_SPRINT_MODES, Board
 from ieum.modules.issues.service import IssueView
 
 boards_router = APIRouter(prefix="/boards", tags=["boards"])
@@ -39,6 +40,10 @@ def _parse_if_match(raw: str | None) -> int | None:
 SwimlaneField = Literal["assignee", "priority", "type"]
 assert set(get_args(SwimlaneField)) == set(SWIMLANE_FIELDS)
 
+#: 보드가 스프린트를 다루는 방식. 위와 같은 이유로 손으로 적고 묶어 둔다.
+SprintMode = Literal["all", "active"]
+assert set(get_args(SprintMode)) == set(BOARD_SPRINT_MODES)
+
 
 class BoardColumnPayload(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -53,6 +58,8 @@ class BoardCreateRequest(BaseModel):
     columns: list[BoardColumnPayload] = Field(min_length=1, max_length=MAX_COLUMNS)
     swimlane_by: SwimlaneField | None = None
     base_iql: str | None = Field(default=None, max_length=4000)
+    #: 기본은 "이번 스프린트". 스프린트가 없으면 거를 것이 없어 전부 보인다.
+    sprint_mode: SprintMode = "active"
 
 
 class BoardUpdateRequest(BaseModel):
@@ -60,6 +67,7 @@ class BoardUpdateRequest(BaseModel):
     columns: list[BoardColumnPayload] | None = Field(default=None, max_length=MAX_COLUMNS)
     swimlane_by: SwimlaneField | None = None
     base_iql: str | None = Field(default=None, max_length=4000)
+    sprint_mode: SprintMode | None = None
     #: null 을 "값 없음" 과 구분할 방법이 JSON 에 없다. 지우려면 이 플래그를 쓴다.
     clear_swimlane: bool = False
     clear_base_iql: bool = False
@@ -74,6 +82,7 @@ class BoardResponse(BaseModel):
     columns: list[dict[str, Any]]
     swimlane_by: str | None
     base_iql: str | None
+    sprint_mode: str
     position: int
 
 
@@ -115,9 +124,20 @@ class BoardSwimlaneResponse(BaseModel):
     columns: list[BoardColumnResponse]
 
 
+class BoardSprintResponse(BaseModel):
+    id: UUID
+    name: str
+
+
 class BoardContentResponse(BaseModel):
     board: BoardResponse
     lanes: list[BoardSwimlaneResponse]
+    #: 이 보드가 **실제로 걸어 준** 스프린트.
+    #:
+    #: `board.sprint_mode` 가 `"active"` 인데 여기가 `null` 이면 도는
+    #: 스프린트가 없어서 거르지 않은 것이다 — 화면은 그렇게 말해야 한다.
+    #: 안 그러면 백로그까지 올라온 보드를 "이번 스프린트" 로 읽는다.
+    sprint: BoardSprintResponse | None = None
 
 
 class BoardMoveRequest(BaseModel):
@@ -168,6 +188,10 @@ def _board(board: Board) -> BoardResponse:
     return BoardResponse.model_validate(board)
 
 
+def _sprint(sprint: BoardSprint | None) -> BoardSprintResponse | None:
+    return None if sprint is None else BoardSprintResponse(id=sprint.id, name=sprint.name)
+
+
 @boards_router.post("", response_model=BoardResponse, status_code=status.HTTP_201_CREATED)
 async def create_board(
     body: BoardCreateRequest,
@@ -182,6 +206,7 @@ async def create_board(
         columns=[c.model_dump() for c in body.columns],
         swimlane_by=body.swimlane_by,
         base_iql=body.base_iql,
+        sprint_mode=body.sprint_mode,
     )
     await session.commit()
     return _board(board)
@@ -223,6 +248,7 @@ async def update_board(
         columns=None if body.columns is None else [c.model_dump() for c in body.columns],
         swimlane_by=body.swimlane_by,
         base_iql=body.base_iql,
+        sprint_mode=body.sprint_mode,
         clear_swimlane=body.clear_swimlane,
         clear_base_iql=body.clear_base_iql,
     )
@@ -251,8 +277,12 @@ async def load_board(
     """컬럼별 이슈. 컬럼마다 IQL 질의가 한 번씩 나간다."""
     service = BoardService(session, permissions)
     board = await service.get(actor, board_id)
-    lanes = await service.load(actor, board_id)
-    return BoardContentResponse(board=_board(board), lanes=[_lane(lane) for lane in lanes])
+    content = await service.load(actor, board_id)
+    return BoardContentResponse(
+        board=_board(board),
+        lanes=[_lane(lane) for lane in content.lanes],
+        sprint=_sprint(content.sprint),
+    )
 
 
 @boards_router.post("/{board_id}/move", response_model=BoardCardResponse)

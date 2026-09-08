@@ -143,7 +143,7 @@ async def full_access(session: AsyncSession, user: User, *projects: Project) -> 
             session,
             principal_id=user.id,
             # 워크플로우·필드 정의 관리는 전역 권한이라 프로젝트 스코프에 못 준다.
-            granted=perms.ALL[:-2],
+            granted=perms.project_scoped(),
             scope=Scope.project(project.id),
         )
     return actor_for(user)
@@ -317,7 +317,7 @@ async def load_columns(
     board_id: UUID,
 ) -> list[ColumnResult]:
     """스윔레인이 없는 보드의 컬럼. 레인 하나만 오는 게 맞는지도 함께 본다."""
-    lanes = await BoardService(session, permissions).load(actor, board_id)
+    lanes = (await BoardService(session, permissions).load(actor, board_id)).lanes
     assert [lane.key for lane in lanes] == [""]
     return lanes[0].columns
 
@@ -438,7 +438,7 @@ class TestSwimlanes:
             name="Plain",
             columns=[{"name": "All", "iql": ""}],
         )
-        lanes = await BoardService(session, permissions).load(actor, board.id)
+        lanes = (await BoardService(session, permissions).load(actor, board.id)).lanes
         assert [(lane.key, lane.label) for lane in lanes] == [("", "")]
 
     async def test_splits_by_assignee_with_unassigned_last(
@@ -462,7 +462,7 @@ class TestSwimlanes:
             columns=[{"name": "All", "iql": ""}],
             swimlane_by="assignee",
         )
-        lanes = await BoardService(session, permissions).load(actor, board.id)
+        lanes = (await BoardService(session, permissions).load(actor, board.id)).lanes
 
         # 담당자 없음은 맨 아래. 보통 아직 아무도 안 본 일이다.
         assert [lane.key for lane in lanes] == [str(user.id), "none"]
@@ -489,7 +489,7 @@ class TestSwimlanes:
             columns=[{"name": "All", "iql": ""}],
             swimlane_by="priority",
         )
-        lanes = await BoardService(session, permissions).load(actor, board.id)
+        lanes = (await BoardService(session, permissions).load(actor, board.id)).lanes
         # 1 이 가장 높다. 급한 것이 위로 온다.
         assert [lane.key for lane in lanes] == ["1", "5"]
         # 우선순위 이름("가장 높음" 등)은 번역 대상이라 서버가 정하지 않는다.
@@ -514,7 +514,7 @@ class TestSwimlanes:
             columns=[{"name": "All", "iql": ""}],
             swimlane_by="priority",
         )
-        lanes = await BoardService(session, permissions).load(actor, board.id)
+        lanes = (await BoardService(session, permissions).load(actor, board.id)).lanes
         assert [lane.key for lane in lanes] == ["2"]
 
     async def test_wip_stays_column_wide(
@@ -538,7 +538,7 @@ class TestSwimlanes:
             columns=[{"name": "All", "iql": "", "wip_limit": 2}],
             swimlane_by="priority",
         )
-        lanes = await BoardService(session, permissions).load(actor, board.id)
+        lanes = (await BoardService(session, permissions).load(actor, board.id)).lanes
         assert len(lanes) == 3
         # 레인마다 카드는 하나뿐이지만 컬럼 전체로는 3장이라 제한을 넘었다.
         for lane in lanes:

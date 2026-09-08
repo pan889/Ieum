@@ -86,3 +86,27 @@ def test_the_scope_of_every_grant_fits_the_role() -> None:
             if scope_kind not in kinds:
                 bad.append(f"{name}({scope_kind}) → {grant} (허용: {sorted(kinds)})")
     assert not bad, "스코프가 맞지 않는 내장 역할 권한:\n  " + "\n  ".join(bad)
+
+
+def test_every_module_lists_its_own_permissions_in_all() -> None:
+    """모듈의 `ALL` 은 **그 모듈이 등록한 것 전부**여야 한다.
+
+    `ALL` 은 손으로 든 목록이다. 상수를 만들고 `register_many` 에는 넣었는데
+    `ALL` 에 빠뜨리면 아무것도 터지지 않는다 — 시드는 상수를 직접 이름으로
+    부르므로 위의 도달 가능성 시험도 통과한다. 대신 `ALL` 을 훑는 것들이
+    조용히 그 권한을 빠뜨린다: `project_scoped()` 가 그렇고, 그러면 시험의
+    "전권" 배우가 실은 그 권한이 없는 채로 돌아간다.
+
+    빠졌다는 사실이 **주고 싶던 것을 안 주는 쪽**으로 나타나기 때문에 시험은
+    초록으로 남는다. 그런 것은 세어 둔다.
+    """
+    bad: list[str] = []
+    for path in sorted(MODULES_DIR.glob("*/permissions.py")):
+        module = importlib.import_module(f"ieum.modules.{path.parent.name}.permissions")
+        listed = set(getattr(module, "ALL", ()))
+        for name, value in vars(module).items():
+            if not name.isupper() or not isinstance(value, str):
+                continue
+            if value in _registered() and value not in listed:
+                bad.append(f"{path.parent.name}.{name} ({value})")
+    assert not bad, "모듈의 `ALL` 에 빠진 권한:\n  " + "\n  ".join(bad)

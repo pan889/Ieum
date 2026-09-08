@@ -88,6 +88,7 @@
   "permission.identity.user.view": "View people",
   "permission.issue.assign": "Set the assignee",
   "permission.issue.board.manage": "Edit board definitions",
+  "permission.issue.sprint.manage": "Manage sprints",
   "permission.issue.comment.add": "Add comments",
   "permission.issue.comment.edit_any": "Edit anyone's comments",
   "permission.issue.comment.edit_own": "Edit your own comments",

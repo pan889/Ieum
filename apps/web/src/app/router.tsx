@@ -34,6 +34,7 @@ import { WorkflowsScreen } from '@/features/settings/WorkflowsScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
+import { SprintsScreen } from '@/features/sprints/SprintsScreen'
 
 import { AppShell } from './AppShell'
 
@@ -90,6 +91,12 @@ const boardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/boards/$boardId',
   component: BoardScreen,
+})
+
+const sprintsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sprints',
+  component: SprintsScreen,
 })
 
 const tokensRoute = createRoute({
@@ -269,6 +276,7 @@ const routeTree = rootRoute.addChildren([
   issueDetailRoute,
   boardsRoute,
   boardRoute,
+  sprintsRoute,
   tokensRoute,
   sessionsRoute,
   auditRoute,

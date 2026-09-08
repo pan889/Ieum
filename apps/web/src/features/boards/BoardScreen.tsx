@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
-import type { Board, BoardCard, BoardColumnContent, BoardSwimlane } from '@ieum/api-client'
+import type {
+  Board,
+  BoardCard,
+  BoardColumnContent,
+  BoardSwimlane,
+  SprintMode,
+} from '@ieum/api-client'
 import { SWIMLANE_FIELDS } from '@ieum/api-client'
 import clsx from 'clsx'
 import { useMemo, useState } from 'react'
@@ -28,7 +34,7 @@ interface PendingMove {
 
 export function BoardScreen() {
   const { boardId } = useParams({ from: '/boards/$boardId' })
-  const { t } = useTranslation(['boards', 'common', 'issues'])
+  const { t } = useTranslation(['boards', 'common', 'issues', 'sprints'])
   const queryClient = useQueryClient()
 
   const content = useQuery({
@@ -86,8 +92,24 @@ export function BoardScreen() {
           {t('boards:list.title')}
         </Link>
         <h1 className="text-xl font-semibold">{board.name}</h1>
-        <SwimlanePicker board={board} className="ml-auto" />
+        <span className="ml-auto flex items-start gap-4">
+          <SprintModePicker board={board} />
+          <SwimlanePicker board={board} />
+        </span>
       </header>
+
+      {/*
+        **무엇으로 걸렀는지 말한다.** 보드가 이번 스프린트만 보여 주는데
+        그 사실을 안 적으면, 백로그에 쌓인 일이 안 보이는 것과 아예 없는
+        것을 구분할 수 없다. 도는 스프린트가 없어서 안 거른 경우도 같다.
+      */}
+      {board.sprint_mode === 'active' ? (
+        <p className="text-xs text-muted">
+          {content.data.sprint === null
+            ? t('sprints:board.noActive')
+            : t('sprints:board.filtered', { name: content.data.sprint.name })}
+        </p>
+      ) : null}
 
       {moveError ? <Alert>{moveError}</Alert> : null}
 
@@ -121,6 +143,37 @@ export function BoardScreen() {
         />
       ) : null}
     </section>
+  )
+}
+
+/**
+ * 보드가 스프린트를 볼지 말지.
+ *
+ * 스윔레인과 같은 자리의 설정이다 — 보드 정의라 **모두**에게 적용된다.
+ */
+function SprintModePicker({ board }: { board: Board }) {
+  const { t } = useTranslation(['sprints'])
+  const queryClient = useQueryClient()
+
+  const change = useMutation({
+    mutationFn: (mode: string) =>
+      boardsApi.update(board.id, { sprint_mode: mode as SprintMode }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['boards', 'content', board.id] }),
+  })
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Select
+        label={t('sprints:board.mode')}
+        className="py-1 text-xs"
+        value={board.sprint_mode}
+        onChange={(e) => { change.mutate(e.target.value) }}
+      >
+        <option value="active">{t('sprints:board.mode.active')}</option>
+        <option value="all">{t('sprints:board.mode.all')}</option>
+      </Select>
+      {change.isError ? <Alert>{describeError(change.error)}</Alert> : null}
+    </div>
   )
 }
 

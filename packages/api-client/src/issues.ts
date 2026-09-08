@@ -34,6 +34,14 @@ export interface Issue {
   due_date: string | null
   estimate_minutes: number | null
   progress: number
+  /**
+   * 어느 스프린트에 있나. `null` 이면 백로그다.
+   *
+   * **이름은 안 온다.** 목록·보드도 같은 스키마를 쓰고, 이름을 채우려면
+   * 카드마다 조회가 하나씩 는다 — 보드는 한 번에 600장을 그린다. 이름이
+   * 필요한 화면은 그 프로젝트의 스프린트 목록을 한 번 받아 맞춘다.
+   */
+  sprint_id: string | null
   resolved_at: string | null
   archived_at: string | null
   version: number

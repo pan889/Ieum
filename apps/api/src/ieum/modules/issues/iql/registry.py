@@ -98,6 +98,19 @@ for _spec in (
     FieldSpec("startdate", FieldType.DATE, "시작일"),
     FieldSpec("resolved", FieldType.DATE, "완료 시각", aliases=("resolutiondate",)),
     FieldSpec("estimate", FieldType.NUMBER, "추정 공수(분)"),
+    # 스프린트 (M5). **이름으로 고르고, 비어 있으면 백로그다.**
+    #
+    # "지금 도는 스프린트" 를 뜻하는 마법 값(`sprint = current`)을 두지
+    # 않는다 — 저장한 필터가 시간이 지나면 다른 것을 가리키고, 그
+    # 사실이 질의문에 안 적혀 있다. 대신 `sprintstate = active` 로
+    # 조합한다: 무엇을 묻는지가 글자에 남는다.
+    FieldSpec("sprint", FieldType.KEYWORD, "스프린트 이름"),
+    FieldSpec(
+        "sprintstate",
+        FieldType.KEYWORD,
+        "스프린트 상태 (future/active/closed)",
+        sortable=False,
+    ),
     # 실적은 worklog 합계라 상관 서브쿼리로 계산한다. 이슈에 합계 컬럼을
     # 두면 두 값이 어긋나는 순간 어느 쪽이 진실인지 알 수 없다.
     FieldSpec(

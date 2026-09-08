@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { AgentTicket, SlaStanding } from '@ieum/api-client'
 
-import { deskApi, issuesApi } from '@/shared/api'
+import { deskApi, issuesApi, sprintsApi } from '@/shared/api'
 import { describeError, fieldOfError } from '@/shared/api/errors'
 import { RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
@@ -216,7 +216,7 @@ function Transitions({ issue, onMoved }: { issue: Issue; onMoved: () => void }) 
 }
 
 function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
-  const { t } = useTranslation(['issues'])
+  const { t } = useTranslation(['issues', 'sprints'])
   const names = useUserNames([issue.assignee_id, issue.reporter_id])
   const [assigning, setAssigning] = useState(false)
   const [search, setSearch] = useState('')
@@ -235,6 +235,27 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
 
   const archive = useMutation({
     mutationFn: () => issuesApi.archive(issue.id),
+    onSuccess: onSaved,
+  })
+
+  /**
+   * 이 프로젝트의 스프린트. **이름을 여기서 맞춘다.**
+   *
+   * 이슈 응답에는 `sprint_id` 만 온다 — 목록·보드도 같은 스키마를 쓰고,
+   * 이름을 채우려면 카드마다 조회가 하나씩 늘어난다.
+   */
+  const sprints = useQuery({
+    queryKey: ['sprints', 'list', issue.project_id],
+    queryFn: () => sprintsApi.list(issue.project_id),
+  })
+
+  const moveSprint = useMutation({
+    mutationFn: (sprintId: string | null) =>
+      sprintsApi.assign({
+        project_id: issue.project_id,
+        sprint_id: sprintId,
+        issue_ids: [issue.id],
+      }),
     onSuccess: onSaved,
   })
 
@@ -309,6 +330,33 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
         </Select>
       </Row>
 
+      {/*
+        스프린트. 목록을 못 받았으면(권한이 없거나 아직 오는 중) **아무것도
+        안 그린다** — 빈 선택기를 그려 두면 "스프린트가 없다" 로 읽힌다.
+      */}
+      {sprints.data === undefined ? null : (
+        <Row label={t('sprints:title')}>
+          <Select
+            aria-label={t('sprints:title')}
+            className="w-full py-1 text-xs"
+            value={issue.sprint_id ?? ''}
+            onChange={(e) => { moveSprint.mutate(e.target.value === '' ? null : e.target.value) }}
+          >
+            <option value="">{t('sprints:backlog.title')}</option>
+            {sprints.data
+              // 닫힌 스프린트로는 옮길 수 없다(서버가 거절한다). 지금 들어
+              // 있는 곳이 닫힌 스프린트면 그것만은 보여 준다 — 안 그러면
+              // 선택기가 "백로그" 를 가리켜 거짓말을 한다.
+              .filter((row) => row.state !== 'closed' || row.id === issue.sprint_id)
+              .map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+          </Select>
+        </Row>
+      )}
+
       <Row label={t('issues:detail.due')}>
         {formatDate(issue.due_date) || t('issues:detail.none')}
       </Row>
@@ -323,6 +371,7 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
 
       {assign.isError ? <Alert>{describeError(assign.error)}</Alert> : null}
       {setPriority.isError ? <Alert>{describeError(setPriority.error)}</Alert> : null}
+      {moveSprint.isError ? <Alert>{describeError(moveSprint.error)}</Alert> : null}
 
       {!issue.archived_at ? (
         <Button

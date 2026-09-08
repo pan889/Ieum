@@ -102,10 +102,21 @@ export {
   type BoardPatch,
   type BoardsApi,
   type BoardSwimlane,
+  type BoardSprintRef,
   type NewBoard,
+  type SprintMode,
   type SwimlaneField,
   SWIMLANE_FIELDS,
 } from './boards'
+export {
+  createSprintsApi,
+  type BurndownPoint,
+  type NewSprint,
+  type Sprint,
+  type SprintPatch,
+  type SprintState,
+  type SprintsApi,
+} from './sprints'
 export {
   createWikiApi,
   type CommentAnchor,

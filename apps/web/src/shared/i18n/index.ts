@@ -13,6 +13,7 @@ import markdownEn from '@ieum/i18n/en/markdown.json'
 import notificationsEn from '@ieum/i18n/en/notifications.json'
 import projectsEn from '@ieum/i18n/en/projects.json'
 import searchEn from '@ieum/i18n/en/search.json'
+import sprintsEn from '@ieum/i18n/en/sprints.json'
 import wikiEn from '@ieum/i18n/en/wiki.json'
 import adminKo from '@ieum/i18n/ko/admin.json'
 import authKo from '@ieum/i18n/ko/auth.json'
@@ -25,6 +26,7 @@ import markdownKo from '@ieum/i18n/ko/markdown.json'
 import notificationsKo from '@ieum/i18n/ko/notifications.json'
 import projectsKo from '@ieum/i18n/ko/projects.json'
 import searchKo from '@ieum/i18n/ko/search.json'
+import sprintsKo from '@ieum/i18n/ko/sprints.json'
 import wikiKo from '@ieum/i18n/ko/wiki.json'
 
 export const SUPPORTED_LOCALES = ['en', 'ko'] as const
@@ -40,6 +42,7 @@ const resources = {
     projects: projectsEn,
     issues: issuesEn,
     boards: boardsEn,
+    sprints: sprintsEn,
     notifications: notificationsEn,
     wiki: wikiEn,
     markdown: markdownEn,
@@ -54,6 +57,7 @@ const resources = {
     projects: projectsKo,
     issues: issuesKo,
     boards: boardsKo,
+    sprints: sprintsKo,
     notifications: notificationsKo,
     wiki: wikiKo,
     markdown: markdownKo,

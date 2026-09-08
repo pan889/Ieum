@@ -236,6 +236,12 @@ class Issue(Entity, Archivable):
     #: 0~100. 하위 이슈가 있으면 롤업으로 계산한다.
     progress: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 어느 스프린트에 들어 있나 (M5). `NULL` 이면 백로그다.
+    #:
+    #: `SET NULL` 이다 — 스프린트를 지운다고 이슈가 사라지면 안 된다.
+    sprint_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("sprint.id", ondelete="SET NULL"), nullable=True
+    )
 
     #: 낙관적 잠금. If-Match 불일치 시 409 (conventions.md API 규약).
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -260,6 +266,8 @@ class Issue(Entity, Archivable):
         Index("ix_issue_fix_version_id", "fix_version_id"),
         Index("ix_issue_security_level_id", "security_level_id"),
         Index("ix_issue_due_date", "due_date"),
+        # 스프린트 합계·번다운·닫기가 전부 이 컬럼으로 훑는다 (M5).
+        Index("ix_issue_sprint_id", "sprint_id"),
     )
 
     def key(self, project_key: str) -> str:
@@ -436,6 +444,13 @@ class SavedFilter(Entity):
     )
 
 
+#: 보드가 스프린트를 다루는 방식.
+#:
+#: - `"all"`: 스프린트를 모른다. 컬럼 IQL 이 고른 것 전부.
+#: - `"active"`: 도는 스프린트의 이슈만. 도는 스프린트가 없으면 거르지 않는다.
+BOARD_SPRINT_MODES = ("all", "active")
+
+
 class Board(Entity):
     """칸반 보드.
 
@@ -455,9 +470,95 @@ class Board(Entity):
     swimlane_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: 보드가 다루는 이슈 범위. 컬럼 IQL 과 AND 로 묶인다.
     base_iql: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 스프린트를 아는가. `"active"` 면 도는 스프린트의 이슈만 보여 준다.
+    #:
+    #: 새로 만드는 보드의 기본값이 `"active"` 인 이유: 스프린트를 쓰기
+    #: 시작하면 보드가 "이번 주기" 를 뜻해야 한다. 스프린트가 아직 없으면
+    #: 거를 것이 없으므로 그냥 전부 보인다 — 빈 보드가 뜨지는 않는다.
+    sprint_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
+        CheckConstraint(sprint_mode.in_(BOARD_SPRINT_MODES), name="board_sprint_mode"),
         UniqueConstraint("project_id", "name", name="uq_board_project_id_name"),
         Index("ix_board_project_id", "project_id"),
     )
+
+
+#: 스프린트의 삶. **되돌아가지 않는다** — 닫은 스프린트를 다시 열면 그때 찍힌
+#: 번다운이 거짓이 된다.
+SPRINT_STATES = ("future", "active", "closed")
+
+
+class Sprint(Entity):
+    """기간이 있는 묶음 (M5).
+
+    **라벨이 아니라 행이다.** 라벨로 두면 "언제부터 언제까지" 를 담을 곳이
+    없고, 그러면 번다운을 그릴 수 없다 — 남은 일을 시간축에 놓는 것이
+    번다운이므로 시간이 먼저 있어야 한다.
+
+    한 프로젝트에 **활성 스프린트는 하나**다(부분 유니크 인덱스). 둘을
+    허용하면 보드가 "지금 무엇을 보여 주는가" 에 답할 수 없고, 그 답이
+    없으면 보드는 다시 "열려 있는 것 전부" 가 된다.
+    """
+
+    __tablename__ = "sprint"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: 이번에 무엇을 이루려 하는가. 한 줄이면 충분하고, 없으면 없는 대로 둔다.
+    goal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="future")
+
+    #: 계획한 기간. 시작 전에도 적을 수 있다 — 그래야 달력에 올린다.
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: **실제로** 시작·끝난 시각. 계획과 다를 수 있고, 번다운은 이쪽을 쓴다.
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        CheckConstraint(state.in_(SPRINT_STATES), name="sprint_state"),
+        UniqueConstraint("project_id", "name", name="uq_sprint_project_id_name"),
+        # **활성은 하나뿐.** 애플리케이션에서만 막으면 두 요청이 동시에 시작할
+        # 때 둘 다 통과한다.
+        Index(
+            "uq_sprint_one_active",
+            "project_id",
+            unique=True,
+            postgresql_where=text("state = 'active'"),
+        ),
+        Index("ix_sprint_project_id", "project_id"),
+    )
+
+
+class SprintSnapshot(Base):
+    """그날 남아 있던 양 (M5).
+
+    **되짚어 계산하지 않는다.** 지금 상태로 과거를 그리면, 어제 추가된 이슈가
+    스프린트 첫날부터 있었던 것이 되고 번다운은 실제보다 예쁘게 나온다 —
+    범위가 늘어난 사실이 그림에서 사라진다. 그래서 그날 값을 그날 적는다.
+
+    오늘 줄은 스윕이 계속 덮어쓴다(살아 있다). 날짜가 바뀌면 그 줄은 그대로
+    굳고, 새 줄이 생긴다.
+
+    날짜는 **UTC 기준**이다. 프로젝트에 타임존이 없어서인데, 한국 팀이 보면
+    하루가 오전 9시에 넘어간다 — 프로젝트 타임존이 생기면 그때 옮긴다.
+    """
+
+    __tablename__ = "sprint_snapshot"
+
+    sprint_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sprint.id", ondelete="CASCADE"), primary_key=True
+    )
+    on_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    #: 아직 done 이 아닌 이슈 수.
+    remaining_issues: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 그 이슈들의 추정 시간 합(분). 추정이 없는 이슈는 0 으로 센다.
+    remaining_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 그날 스프린트에 들어 있던 전체. **범위가 늘어난 것이 여기서 보인다.**
+    total_issues: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

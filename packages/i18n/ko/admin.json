@@ -88,6 +88,7 @@
   "permission.identity.user.view": "사용자 목록·상세 조회",
   "permission.issue.assign": "담당자 지정",
   "permission.issue.board.manage": "보드 정의 편집",
+  "permission.issue.sprint.manage": "스프린트 관리",
   "permission.issue.comment.add": "코멘트 작성",
   "permission.issue.comment.edit_any": "타인의 코멘트 수정",
   "permission.issue.comment.edit_own": "자신의 코멘트 수정",

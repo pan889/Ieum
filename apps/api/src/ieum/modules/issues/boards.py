@@ -24,7 +24,7 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.iql.parser import parse
-from ieum.modules.issues.models import Board, Issue
+from ieum.modules.issues.models import BOARD_SPRINT_MODES, Board, Issue, Sprint
 from ieum.modules.issues.search import SearchService
 from ieum.modules.issues.service import IssueService, IssueView
 from ieum.modules.org import contracts as org
@@ -42,6 +42,19 @@ SWIMLANE_FIELDS = ("assignee", "priority", "type")
 
 #: 담당자 없음 레인의 키. 빈 문자열은 "스윔레인 없음" 이라 쓸 수 없다.
 NO_ASSIGNEE = "none"
+
+
+def _escape(value: str) -> str:
+    """IQL 큰따옴표 문자열 안에 넣을 수 있게 만든다.
+
+    파서의 `_unquote` 를 거꾸로 돌린 것이다 — **역슬래시를 먼저** 늘려야
+    한다. 따옴표를 먼저 처리하면 그때 붙인 역슬래시까지 한 번 더 늘어난다.
+
+    프로젝트 키와 달리 스프린트 이름에는 형식 제한을 걸 수 없다. 사람이
+    짓는 이름이라 따옴표가 들어올 수 있고, 그대로 끼워 넣으면 질의가
+    깨지거나(운이 좋으면) 다른 조건이 된다(운이 나쁘면).
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +115,30 @@ class Swimlane:
     columns: list[ColumnResult] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class BoardSprint:
+    id: UUID
+    name: str
+
+
+@dataclass(slots=True)
+class BoardContent:
+    """보드에 실제로 실린 것 + **무엇으로 걸렀는지.**
+
+    레인만 돌려주면 부르는 쪽은 "이게 전부인가, 이번 스프린트인가" 를 알 수
+    없다. 스프린트 보드에서 그 차이는 크다 — 백로그에 쌓인 일이 안 보이는
+    것과 아예 없는 것은 다른 이야기다.
+    """
+
+    lanes: list[Swimlane]
+    #: `sprint_mode == "active"` 일 때 실제로 걸린 스프린트.
+    #:
+    #: `sprint_mode` 가 `"active"` 인데 여기가 `None` 이면 **거르지 않았다**
+    #: — 도는 스프린트가 없어서다. 화면은 그 사실을 말해야 한다: 안 그러면
+    #: 백로그까지 올라온 보드를 보고 "이번 스프린트가 이렇게 크다" 고 읽는다.
+    sprint: BoardSprint | None = None
+
+
 class BoardService:
     def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
         self._s = session
@@ -116,12 +153,14 @@ class BoardService:
         columns: list[dict[str, Any]],
         swimlane_by: str | None = None,
         base_iql: str | None = None,
+        sprint_mode: str = "active",
     ) -> Board:
         await self._perms.require(
             self._s, actor, perms.BOARD_MANAGE, scope=Scope.project(project_id)
         )
         parsed = self._validate_columns(columns)
         self._validate_swimlane(swimlane_by)
+        self._validate_sprint_mode(sprint_mode)
         if base_iql:
             parse(base_iql)
         await self._require_unique_name(project_id, name)
@@ -132,6 +171,7 @@ class BoardService:
             columns=[c.as_dict() for c in parsed],
             swimlane_by=swimlane_by,
             base_iql=base_iql,
+            sprint_mode=sprint_mode,
         )
         self._s.add(board)
         await self._s.flush()
@@ -146,6 +186,7 @@ class BoardService:
         columns: list[dict[str, Any]] | None = None,
         swimlane_by: str | None = None,
         base_iql: str | None = None,
+        sprint_mode: str | None = None,
         clear_swimlane: bool = False,
         clear_base_iql: bool = False,
     ) -> Board:
@@ -168,6 +209,9 @@ class BoardService:
         elif swimlane_by is not None:
             self._validate_swimlane(swimlane_by)
             board.swimlane_by = swimlane_by
+        if sprint_mode is not None:
+            self._validate_sprint_mode(sprint_mode)
+            board.sprint_mode = sprint_mode
         await self._s.flush()
         return board
 
@@ -192,7 +236,7 @@ class BoardService:
         )
         return list((await self._s.execute(stmt)).scalars().all())
 
-    async def load(self, actor: Actor, board_id: UUID) -> list[Swimlane]:
+    async def load(self, actor: Actor, board_id: UUID) -> BoardContent:
         """컬럼마다 IQL 을 돌려 이슈를 담고, 스윔레인이 있으면 나눈다.
 
         컬럼 수만큼 질의가 나간다. 컬럼은 12개로 제한되고 각 질의가 인덱스를
@@ -206,12 +250,36 @@ class BoardService:
         `truncated` 를 레인마다 그대로 물려준다.
         """
         board = await self.get(actor, board_id)
-        columns = await self._load_columns(actor, board)
-        if not board.swimlane_by:
-            return [Swimlane(key="", label="", columns=columns)]
-        return await self._split(columns, board.swimlane_by)
+        sprint = await self._active_sprint(board)
+        columns = await self._load_columns(actor, board, sprint)
+        lanes = (
+            [Swimlane(key="", label="", columns=columns)]
+            if not board.swimlane_by
+            else await self._split(columns, board.swimlane_by)
+        )
+        return BoardContent(lanes=lanes, sprint=sprint)
 
-    async def _load_columns(self, actor: Actor, board: Board) -> list[ColumnResult]:
+    async def _active_sprint(self, board: Board) -> BoardSprint | None:
+        """이 보드가 걸 스프린트. **없으면 안 건다.**
+
+        `sprint_mode` 가 `"active"` 인데 도는 스프린트가 없다고 빈 보드를
+        띄우면, 스프린트를 아직 안 쓰는 팀은 보드가 고장 난 줄 안다. 거를 것이
+        없으면 거르지 않는 쪽이 맞다 — 대신 그 사실을 응답에 담는다.
+        """
+        if board.sprint_mode != "active":
+            return None
+        row = (
+            await self._s.execute(
+                select(Sprint).where(
+                    Sprint.project_id == board.project_id, Sprint.state == "active"
+                )
+            )
+        ).scalar_one_or_none()
+        return None if row is None else BoardSprint(id=row.id, name=row.name)
+
+    async def _load_columns(
+        self, actor: Actor, board: Board, sprint: BoardSprint | None
+    ) -> list[ColumnResult]:
         scope_iql = await self._project_scope(board.project_id)
         search = SearchService(self._s, self._perms)
         issues = IssueService(self._s, self._perms)
@@ -221,7 +289,7 @@ class BoardService:
             column = BoardColumn.parse(raw, index)
             page = await search.search(
                 actor,
-                self._combine(scope_iql, board, column),
+                self._combine(scope_iql, board, column, sprint),
                 PageRequest(limit=COLUMN_PAGE_SIZE),
             )
             views = [await issues.to_view(issue) for issue in page.items]
@@ -312,6 +380,16 @@ class BoardService:
         return [*named, *(k for k in (NO_ASSIGNEE,) if k in keys)]
 
     @staticmethod
+    def _validate_sprint_mode(mode: str) -> None:
+        if mode in BOARD_SPRINT_MODES:
+            return
+        raise ValidationError(
+            "지원하지 않는 스프린트 모드다.",
+            code="issues.invalid_sprint_mode",
+            details={"mode": mode, "supported": list(BOARD_SPRINT_MODES)},
+        )
+
+    @staticmethod
     def _validate_swimlane(field_name: str | None) -> None:
         if field_name is None or field_name in SWIMLANE_FIELDS:
             return
@@ -380,9 +458,16 @@ class BoardService:
         # 보드는 "지금 흐르고 있는 일" 을 보는 화면이다.
         return f'project = "{project.key}" AND archived = false'
 
-    def _combine(self, scope_iql: str, board: Board, column: BoardColumn) -> str:
-        """프로젝트 범위 + 보드 범위 + 컬럼 조건을 AND 로 묶는다."""
+    def _combine(
+        self, scope_iql: str, board: Board, column: BoardColumn, sprint: BoardSprint | None
+    ) -> str:
+        """프로젝트 범위 + 스프린트 + 보드 범위 + 컬럼 조건을 AND 로 묶는다."""
         parts = [scope_iql]
+        if sprint is not None:
+            # 이름을 IQL 에 끼워 넣는다. 사용자가 지은 이름이라 따옴표·역슬래시가
+            # 들어올 수 있다 — `_SAFE_PROJECT_KEY` 같은 형식 제한을 걸 수 없는
+            # 값이므로 **이스케이프한다.**
+            parts.append(f'sprint = "{_escape(sprint.name)}"')
         if board.base_iql:
             parts.append(f"({board.base_iql})")
         if column.iql:
@@ -421,6 +506,8 @@ __all__ = [
     "DEFAULT_COLUMNS",
     "MAX_COLUMNS",
     "BoardColumn",
+    "BoardContent",
     "BoardService",
+    "BoardSprint",
     "ColumnResult",
 ]

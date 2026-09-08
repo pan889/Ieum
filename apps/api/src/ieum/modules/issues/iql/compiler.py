@@ -62,6 +62,7 @@ from ieum.modules.issues.models import (
     IssueFieldValue,
     IssueLabel,
     IssueType,
+    Sprint,
     WorkflowState,
     Worklog,
 )
@@ -78,6 +79,10 @@ _JOINS: dict[str, Any] = {
     "type": (IssueType, Issue.type_id == IssueType.id),
     "status": (WorkflowState, Issue.state_id == WorkflowState.id),
     "parent": (_PARENT, Issue.parent_id == _PARENT.id),
+    # **바깥 조인이다.** 안쪽으로 걸면 백로그 이슈가 통째로 사라지고,
+    # `sprint != "..."` 가 "다른 스프린트에 있는 것" 만 뜻하게 된다 —
+    # 사람이 기대하는 것은 "그 스프린트가 아닌 것 전부" 다.
+    "sprint": (Sprint, Issue.sprint_id == Sprint.id),
 }
 
 
@@ -91,7 +96,11 @@ class CompiledQuery:
         """조인·조건·정렬을 순서대로 얹는다."""
         for name in self.joins:
             target, onclause = _JOINS[name]
-            stmt = stmt.join(target, onclause)
+            stmt = (
+                stmt.outerjoin(target, onclause)
+                if name == "sprint"
+                else stmt.join(target, onclause)
+            )
         if self.where is not None:
             stmt = stmt.where(self.where)
         if self.order_by:
@@ -173,6 +182,12 @@ class Compiler:
             case "parent":
                 self._joins.append("parent")
                 return self._apply(_PARENT.key_seq, node, values)
+            case "sprint":
+                self._joins.append("sprint")
+                return self._sprintish(Sprint.name, node, values)
+            case "sprintstate":
+                self._joins.append("sprint")
+                return self._sprintish(Sprint.state, node, values, lower=True)
             case "archived":
                 wanted = bool(values[0])
                 return Issue.archived_at.is_not(None) if wanted else Issue.archived_at.is_(None)
@@ -275,6 +290,16 @@ class Compiler:
             present = exists(select(IssueLabel.issue_id).where(IssueLabel.issue_id == Issue.id))
             return not_(present) if node.kind is Emptiness.EMPTY else present
 
+        if spec.name in ("sprint", "sprintstate"):
+            # **컬럼을 보고 판단한다.** 조인한 `Sprint.name` 이 NULL 인지로
+            # 보면 바깥 조인 때문에 같은 답이 나오지만, 조인을 하나 더 걸어야
+            # 한다 — 백로그를 묻는 데 조인은 필요 없다.
+            return (
+                Issue.sprint_id.is_(None)
+                if node.kind is Emptiness.EMPTY
+                else Issue.sprint_id.is_not(None)
+            )
+
         column = _column(spec.name)
         return column.is_(None) if node.kind is Emptiness.EMPTY else column.is_not(None)
 
@@ -292,6 +317,27 @@ class Compiler:
                 return not_(exists(base.where(IssueLabel.label.ilike(f"%{texts[0]}%"))))
 
     # ── 값 ──────────────────────────────────────────────────────
+
+    def _sprintish(
+        self,
+        column: SQLColumnExpression[Any],
+        node: Comparison,
+        values: list[Any],
+        *,
+        lower: bool = False,
+    ) -> ColumnElement[bool]:
+        """스프린트 비교. **부정에는 백로그를 포함한다.**
+
+        바깥 조인만으로는 부족하다: SQL 의 세 값 논리에서 `NULL != 'x'` 는
+        참이 아니라 NULL 이므로, 스프린트가 없는 이슈가 통째로 빠진다. 그러면
+        `sprint != "이번 주"` 가 "다른 스프린트에 있는 것" 만 뜻하게 되는데,
+        사람이 기대하는 것은 "그게 아닌 것 전부" 다 — 백로그가 제일 먼저
+        떠오르는 답이다. 시험이 이걸 잡았다.
+        """
+        base = self._apply(column, node, values, lower=lower)
+        if node.operator in (Operator.NE, Operator.NOT_IN):
+            return or_(base, Issue.sprint_id.is_(None))
+        return base
 
     def _apply(
         self,

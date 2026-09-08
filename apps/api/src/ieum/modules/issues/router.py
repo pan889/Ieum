@@ -116,6 +116,7 @@ def _to_response(view: IssueView) -> IssueResponse:
         due_date=issue.due_date,
         estimate_minutes=issue.estimate_minutes,
         progress=issue.progress,
+        sprint_id=issue.sprint_id,
         resolved_at=issue.resolved_at,
         archived_at=issue.archived_at,
         version=issue.version,

@@ -391,6 +391,7 @@ class TestSweep:
             "sla_breaches": 0,
             "sla_escalations": 0,
             "emails": 0,
+            "sprints": 0,
         }
 
     async def test_it_leaves_a_heartbeat(
@@ -418,4 +419,5 @@ class TestSweep:
             "sla_breaches": 0,
             "sla_escalations": 0,
             "emails": 0,
+            "sprints": 0,
         }

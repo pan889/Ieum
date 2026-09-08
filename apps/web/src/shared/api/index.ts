@@ -15,6 +15,7 @@ import {
   createRolesApi,
   createSearchApi,
   createSecurityApi,
+  createSprintsApi,
   createUsersApi,
   createWikiApi,
   createWorkflowsApi,
@@ -48,3 +49,4 @@ export const groupsApi = createGroupsApi(apiClient)
 export const workflowsApi = createWorkflowsApi(apiClient)
 export const fieldsApi = createFieldsApi(apiClient)
 export const deskApi = createDeskApi(apiClient)
+export const sprintsApi = createSprintsApi(apiClient)

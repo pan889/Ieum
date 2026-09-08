@@ -436,3 +436,144 @@ class TestPatchShape:
         )
         assert r.status_code == 200, r.text
         assert r.json()["due_date"] == "2026-12-24"
+
+
+class TestSprintRoutes:
+    """스프린트 라우터 배선 (M5).
+
+    `POST /sprints/issues` 는 지금은 형제 어느 것과도 겹치지 않는다(`{sprint_id}`
+    를 쓰는 POST 는 모두 뒤에 조각이 하나 더 붙는다). 그래도 못 박아 두는 이유:
+    누군가 `POST /sprints/{sprint_id}` 를 **이 줄 위에** 더하는 날 "issues" 가
+    sprint_id 로 읽혀 422 가 된다. 선언 순서에만 달린 결함은 리팩터링 한 번에
+    조용히 생긴다.
+    """
+
+    async def _setup(
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        project = await _project(client, headers)
+        types = (
+            await client.get(
+                f"{BASE}/issues/types", params={"project_id": project["id"]}, headers=headers
+            )
+        ).json()
+        issue = (
+            await client.post(
+                f"{BASE}/issues",
+                json={
+                    "project_id": project["id"],
+                    "type_id": types[0]["id"],
+                    "summary": "sprint candidate",
+                },
+                headers=headers,
+            )
+        ).json()
+        return dict(project), dict(issue)
+
+    async def test_assign_route_takes_a_batch_and_the_issue_remembers(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await _auth(app_client)
+        project, issue = await self._setup(app_client, headers)
+
+        created = await app_client.post(
+            f"{BASE}/sprints",
+            json={"project_id": project["id"], "name": "Cycle 1", "goal": "ship it"},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        sprint = created.json()
+        assert sprint["state"] == "future"
+        assert sprint["issues"] == 0
+
+        moved = await app_client.post(
+            f"{BASE}/sprints/issues",
+            json={
+                "project_id": project["id"],
+                "sprint_id": sprint["id"],
+                "issue_ids": [issue["id"]],
+            },
+            headers=headers,
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json() == {"moved": 1}
+
+        # **이슈가 자기 스프린트를 말한다.** 화면이 "이 이슈는 이번 주기 일인가"
+        # 를 이슈만 보고 답할 수 있어야 한다.
+        again = (await app_client.get(f"{BASE}/issues/{issue['id']}", headers=headers)).json()
+        assert again["sprint_id"] == sprint["id"]
+
+        listed = (
+            await app_client.get(
+                f"{BASE}/sprints", params={"project_id": project["id"]}, headers=headers
+            )
+        ).json()
+        assert [row["issues"] for row in listed] == [1]
+
+    async def test_closing_without_a_disposition_is_refused(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """**기본값을 두지 않는다.** 요청 단계에서 거절한다 — 조용히 백로그로
+        흘려보내면 "다음에 하기로 했던 것" 이 아무도 안 보는 곳으로 간다."""
+        headers = await _auth(app_client)
+        project, _ = await self._setup(app_client, headers)
+        sprint = (
+            await app_client.post(
+                f"{BASE}/sprints",
+                json={"project_id": project["id"], "name": "Cycle 1"},
+                headers=headers,
+            )
+        ).json()
+        started = await app_client.post(f"{BASE}/sprints/{sprint['id']}/start", headers=headers)
+        assert started.status_code == 200, started.text
+
+        empty = await app_client.post(
+            f"{BASE}/sprints/{sprint['id']}/close", json={}, headers=headers
+        )
+        assert empty.status_code == 422, empty.text
+
+        both = await app_client.post(
+            f"{BASE}/sprints/{sprint['id']}/close",
+            json={"move_to": sprint["id"], "to_backlog": True},
+            headers=headers,
+        )
+        assert both.status_code == 422, both.text
+
+        ok = await app_client.post(
+            f"{BASE}/sprints/{sprint['id']}/close",
+            json={"to_backlog": True},
+            headers=headers,
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["state"] == "closed"
+
+    async def test_burndown_has_a_point_from_the_day_it_started(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        headers = await _auth(app_client)
+        project, _ = await self._setup(app_client, headers)
+        sprint = (
+            await app_client.post(
+                f"{BASE}/sprints",
+                json={"project_id": project["id"], "name": "Cycle 1"},
+                headers=headers,
+            )
+        ).json()
+
+        # 시작 전에는 빈 목록이다. 되짚어 계산하지 않으므로 만들어 낼 값이 없다.
+        before = await app_client.get(f"{BASE}/sprints/{sprint['id']}/burndown", headers=headers)
+        assert before.status_code == 200
+        assert before.json() == []
+
+        await app_client.post(f"{BASE}/sprints/{sprint['id']}/start", headers=headers)
+        after = (
+            await app_client.get(f"{BASE}/sprints/{sprint['id']}/burndown", headers=headers)
+        ).json()
+        assert len(after) == 1
+        assert set(after[0]) == {
+            "on_date",
+            "remaining_issues",
+            "remaining_minutes",
+            "total_issues",
+            "total_minutes",
+        }

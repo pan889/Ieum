@@ -1,5 +1,8 @@
 import type { ApiClient } from './client'
 
+/** 보드가 스프린트를 다루는 방식. */
+export type SprintMode = 'all' | 'active'
+
 export interface BoardColumnSpec {
   name: string
   iql: string
@@ -13,6 +16,8 @@ export interface Board {
   columns: BoardColumnSpec[]
   swimlane_by: string | null
   base_iql: string | null
+  /** 스프린트를 아는가. `'active'` 면 도는 스프린트의 이슈만 보여 준다. */
+  sprint_mode: SprintMode
   position: number
 }
 
@@ -51,9 +56,21 @@ export interface BoardSwimlane {
   columns: BoardColumnContent[]
 }
 
+/** 보드가 **실제로 걸어 준** 스프린트. */
+export interface BoardSprintRef {
+  id: string
+  name: string
+}
+
 export interface BoardContent {
   board: Board
   lanes: BoardSwimlane[]
+  /**
+   * `board.sprint_mode` 가 `'active'` 인데 여기가 `null` 이면 도는 스프린트가
+   * 없어서 **거르지 않은** 것이다. 화면은 그 사실을 말해야 한다 — 안 그러면
+   * 백로그까지 올라온 보드를 "이번 스프린트" 로 읽는다.
+   */
+  sprint: BoardSprintRef | null
 }
 
 /** 서버가 나눌 수 있는 기준. 다른 값은 요청 단계에서 거절된다. */
@@ -66,6 +83,7 @@ export interface NewBoard {
   columns: { name: string; iql: string; wip_limit?: number | null }[]
   swimlane_by?: SwimlaneField | null
   base_iql?: string | null
+  sprint_mode?: SprintMode
 }
 
 export interface BoardPatch {
@@ -73,6 +91,7 @@ export interface BoardPatch {
   columns?: { name: string; iql: string; wip_limit?: number | null }[]
   swimlane_by?: SwimlaneField | null
   base_iql?: string | null
+  sprint_mode?: SprintMode
   clear_swimlane?: boolean
   clear_base_iql?: boolean
 }
