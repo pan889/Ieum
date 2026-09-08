@@ -22,7 +22,15 @@ import { SettingsNav } from '@/features/settings/SettingsNav'
 import { idpApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { formatDateTime } from '@/features/issues/format'
-import { Alert, Button, Card, Field, Select, Textarea } from '@/shared/ui/primitives'
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Field,
+  Select,
+  Textarea,
+} from '@/shared/ui/primitives'
 
 type Kind = 'oidc' | 'saml'
 
@@ -274,29 +282,19 @@ export function SsoScreen() {
                   value={saml.sp_certificate}
                   onChange={(e) => { setSamlField('sp_certificate')(e.target.value) }}
                 />
-                <label className="flex items-center gap-2 text-sm text-fg">
-                  <input
-                    type="checkbox"
-                    checked={saml.want_encrypted}
-                    onChange={(e) => { setSamlField('want_encrypted')(e.target.checked) }}
-                  />
-                  {t('admin:sso.wantEncrypted')}
-                </label>
-                <label className="flex flex-col gap-0.5 text-sm text-fg">
-                  <span className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={saml.allow_idp_initiated}
-                      onChange={(e) => {
-                        setSamlField('allow_idp_initiated')(e.target.checked)
-                      }}
-                    />
-                    {t('admin:sso.allowIdpInitiated')}
-                  </span>
-                  <span className="ml-6 text-xs text-muted">
-                    {t('admin:sso.allowIdpInitiatedHint')}
-                  </span>
-                </label>
+                <Checkbox
+                  label={t('admin:sso.wantEncrypted')}
+                  checked={saml.want_encrypted}
+                  onChange={(e) => { setSamlField('want_encrypted')(e.target.checked) }}
+                />
+                <Checkbox
+                  label={t('admin:sso.allowIdpInitiated')}
+                  hint={t('admin:sso.allowIdpInitiatedHint')}
+                  checked={saml.allow_idp_initiated}
+                  onChange={(e) => {
+                    setSamlField('allow_idp_initiated')(e.target.checked)
+                  }}
+                />
               </>
             )}
 

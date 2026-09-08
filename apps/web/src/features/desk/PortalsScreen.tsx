@@ -25,7 +25,7 @@ import { ProjectPicker } from '@/features/settings/ProjectPicker'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { deskApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Checkbox, Field } from '@/shared/ui/primitives'
 
 import { RequestTypes } from './RequestTypes'
 
@@ -146,19 +146,12 @@ export function PortalsScreen() {
               value={form.description}
               onChange={(event) => { setForm({ ...form, description: event.target.value }) }}
             />
-            <label className="flex items-baseline gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.is_public}
-                onChange={(event) => { setForm({ ...form, is_public: event.target.checked }) }}
-              />
-              <span>
-                {t('desk:portals.isPublic')}
-                <span className="ml-2 text-xs text-muted">
-                  {t('desk:portals.isPublicHint')}
-                </span>
-              </span>
-            </label>
+            <Checkbox
+              label={t('desk:portals.isPublic')}
+              hint={t('desk:portals.isPublicHint')}
+              checked={form.is_public}
+              onChange={(event) => { setForm({ ...form, is_public: event.target.checked }) }}
+            />
             <Button type="submit" className="self-start" disabled={create.isPending}>
               {t('common:action.create')}
             </Button>

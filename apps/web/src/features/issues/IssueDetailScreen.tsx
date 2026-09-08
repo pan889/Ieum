@@ -9,7 +9,7 @@ import { deskApi, issuesApi } from '@/shared/api'
 import { describeError, fieldOfError } from '@/shared/api/errors'
 import { RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
-import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
 
 import { Attachments } from './Attachments'
 import { LinkedDocs } from './LinkedDocs'
@@ -715,14 +715,11 @@ function Comments({
             <Button type="submit" loading={add.isPending} disabled={body.trim() === ''}>
               {t('issues:comment.submit')}
             </Button>
-            <label className="flex items-center gap-1.5 text-xs text-muted">
-              <input
-                type="checkbox"
-                checked={internal}
-                onChange={(e) => { setInternal(e.target.checked); }}
-              />
-              {t('issues:comment.internal')}
-            </label>
+            <Checkbox
+              label={t('issues:comment.internal')}
+              checked={internal}
+              onChange={(e) => { setInternal(e.target.checked); }}
+            />
           </div>
         )}
       </form>

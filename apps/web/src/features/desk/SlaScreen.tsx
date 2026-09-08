@@ -702,7 +702,12 @@ function Policies({ projectId }: { projectId: string }) {
           {/* **fieldset·legend 로 묶는다.** 체크박스마다 이름은 있어도 묶음의
               이름이 없으면 "이 체크박스들이 무엇인지" 를 읽을 수 없다.
               라벨과 힌트를 한 `<label>` 에 넣으면 접근성 이름이 둘을 이어
-              붙인 문장이 된다 — 달력 폼에서 이미 겪었다. */}
+              붙인 문장이 된다 — 달력 폼에서 이미 겪었다.
+
+              여기서는 `Checkbox` 프리미티브를 쓰지 않는다. 항목마다 붙는
+              워크플로우 이름은 힌트가 아니라 **이름의 일부**이고(그래서
+              접근성 이름에 들어가야 맞다), 프리미티브의 `label` 은 문자열
+              하나라 흐리게 쓰는 둘째 단을 그릴 수 없다. */}
           <fieldset className="flex flex-col gap-1">
             <legend className="text-xs font-medium text-fg">{t('desk:sla.pauseStates')}</legend>
             <p className="text-xs text-muted">{t('desk:sla.pauseStatesHint')}</p>

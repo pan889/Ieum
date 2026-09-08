@@ -22,7 +22,7 @@ import type { FieldDefinitionAdmin } from '@ieum/api-client'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { fieldsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
 
 /** data-model.md 의 커스텀 필드 9종. 서버의 `FIELD_KINDS` 와 같은 순서다. */
 const KINDS = [
@@ -147,16 +147,13 @@ export function FieldsScreen() {
               />
             ) : null}
 
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.is_required}
-                onChange={(event) => {
-                  setForm({ ...form, is_required: event.target.checked })
-                }}
-              />
-              {t('admin:fields.required')}
-            </label>
+            <Checkbox
+              label={t('admin:fields.required')}
+              checked={form.is_required}
+              onChange={(event) => {
+                setForm({ ...form, is_required: event.target.checked })
+              }}
+            />
 
             <Button type="submit" className="self-start" loading={create.isPending}>
               {t('admin:fields.save')}
