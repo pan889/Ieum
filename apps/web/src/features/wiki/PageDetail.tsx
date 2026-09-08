@@ -20,6 +20,7 @@ import { useAuthStore } from '@/features/auth/store'
 
 import { Comments } from './Comments'
 import { Presence } from './Presence'
+import { TaskPanel } from './TaskPanel'
 import { VersionDiff } from './VersionDiff'
 import { ancestorsOf } from './tree'
 import { usePageHistory } from './hooks'
@@ -156,6 +157,10 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
       ) : null}
 
       {showHistory ? <History page={page} onRestored={onChanged} /> : null}
+
+      {/* 태스크는 코멘트보다 위에 둔다 — 문서를 열었을 때 "내가 할 것" 이
+          먼저 보여야 한다. 태스크가 없는 문서에는 아무것도 안 그려진다. */}
+      {!editing ? <TaskPanel page={page} /> : null}
 
       {!editing ? (
         <Comments

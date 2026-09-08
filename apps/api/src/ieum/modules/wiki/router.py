@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -15,9 +15,10 @@ from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown.anchors import MAX_CONTEXT, MAX_QUOTE, Anchor
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
-from ieum.modules.wiki.models import PAGE_KINDS, SPACE_KINDS
+from ieum.modules.wiki.models import PAGE_KINDS, SPACE_KINDS, PageTask
 from ieum.modules.wiki.portable import MAX_ARCHIVE_BYTES, content_disposition
 from ieum.modules.wiki.service import (
+    AssignedTask,
     CommentView,
     NewPage,
     PageCommentService,
@@ -998,3 +999,124 @@ async def copy_page(
 
 
 __all__ = ["pages_router", "spaces_router"]
+
+# ── 태스크 리스트 (B12) ─────────────────────────────────────────
+
+
+class TaskResponse(BaseModel):
+    """본문의 태스크 한 줄.
+
+    `line` 을 주는 이유: 화면이 자기 마크다운 파서로 몇 번째인지 세지 않게
+    한다. 양쪽이 각자 세면 중첩 목록에서 어긋날 수 있고, 어긋난 채로 체크하면
+    **다른 줄이 바뀐다.**
+    """
+
+    #: 원문 줄 번호(0부터). 태스크의 신원이다.
+    line: int
+    done: bool
+    #: 마커와 `due:` 를 뺀 글. 멘션은 마크다운으로 남아 있어 화면이 렌더한다.
+    text: str
+    assignee_id: UUID | None
+    due_date: date | None
+
+    @classmethod
+    def of(cls, row: PageTask) -> TaskResponse:
+        return cls(
+            line=row.line,
+            done=row.done,
+            text=row.text,
+            assignee_id=row.assignee_id,
+            due_date=row.due_date,
+        )
+
+
+class TaskToggleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    line: int = Field(ge=0)
+    done: bool
+    #: 화면이 본 글. 다르면 거절한다 — 그 사이 남이 줄을 고쳤다는 뜻이고,
+    #: 그대로 진행하면 엉뚱한 줄을 체크한다. 판 번호만으로는 부족하다:
+    #: 판이 같아도 화면이 캐시된 옛 본문을 보고 있었으면 줄이 어긋난다.
+    expect_text: str | None = Field(default=None, max_length=2000)
+
+
+class AssignedTaskResponse(BaseModel):
+    """내게 걸린 태스크. 어느 문서의 일인지 함께 준다."""
+
+    line: int
+    done: bool
+    text: str
+    due_date: date | None
+    page_id: UUID
+    page_title: str
+    space_key: str
+    #: 문서로 가는 길. 화면이 주소를 짜지 않게 서버가 준다.
+    path: str
+
+    @classmethod
+    def of(cls, item: AssignedTask) -> AssignedTaskResponse:
+        return cls(
+            line=item.task.line,
+            done=item.task.done,
+            text=item.task.text,
+            due_date=item.task.due_date,
+            page_id=item.task.page_id,
+            page_title=item.page_title,
+            space_key=item.space_key,
+            path=item.path,
+        )
+
+
+@pages_router.get("/tasks/mine", response_model=list[AssignedTaskResponse])
+async def my_tasks(
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    include_done: bool = False,
+    limit: int = 100,
+) -> list[AssignedTaskResponse]:
+    """내게 걸린 태스크를 문서 넘어 모아 본다.
+
+    **`/{page_id}` 보다 위에 선언한다.** 아래에 두면 `tasks` 가 문서 id 로
+    읽혀 UUID 파싱 오류가 난다 (conventions.md "고정 경로는 형제 전부보다
+    위에 둔다").
+    """
+    rows = await PageService(session, permissions).my_tasks(
+        actor, include_done=include_done, limit=limit
+    )
+    return [AssignedTaskResponse.of(row) for row in rows]
+
+
+@pages_router.get("/{page_id}/tasks", response_model=list[TaskResponse])
+async def list_page_tasks(
+    page_id: UUID, actor: CurrentActor, session: DbSession, permissions: PermissionDep
+) -> list[TaskResponse]:
+    rows = await PageService(session, permissions).list_tasks(actor, page_id)
+    return [TaskResponse.of(row) for row in rows]
+
+
+@pages_router.post("/{page_id}/tasks/toggle", response_model=PageResponse)
+async def toggle_page_task(
+    page_id: UUID,
+    body: TaskToggleRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    if_match: IfMatch = None,
+) -> PageResponse:
+    """태스크를 체크하거나 푼다. **판이 하나 생긴다.**
+
+    체크는 문서 내용의 변경이다. 이력에 안 남기면 "누가 언제 이걸 끝냈다고
+    했나" 를 답할 수 없고 되돌릴 수도 없다.
+    """
+    view = await PageService(session, permissions).set_task_done(
+        actor,
+        page_id,
+        line=body.line,
+        done=body.done,
+        expect_text=body.expect_text,
+        expected_version=_parse_if_match(if_match),
+    )
+    await session.commit()
+    return _page(view)

@@ -139,6 +139,7 @@ export {
 } from './sprints'
 export {
   createWikiApi,
+  type AssignedTaskItem,
   type CollabTicket,
   type CommentAnchor,
   type CommentMatch,
@@ -154,6 +155,7 @@ export {
   type PageNode,
   type PageTemplate,
   type PageRestriction,
+  type PageTaskItem,
   type PageVersionDetail,
   type PageVersionSummary,
   type Space,

@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -279,6 +281,49 @@ class PageCollab(Entity):
     #: 흔적이다 — 계정이 사라져도 스냅샷은 남아야 하므로 SET NULL 이다.
     saved_by: Mapped[UUID | None] = mapped_column(
         ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class PageTask(Entity):
+    """본문의 태스크 한 줄 — **유도 표다** (B12).
+
+    ## 여기에 쓰지 않는다
+
+    정본은 본문의 마크다운이다(ADR-0008). 이 표는 검색 색인과 같은 성질이다:
+    문서를 저장할 때 **본문에서 다시 만들어진다.** 그래서 이 표를 직접 고치면
+    다음 저장에서 조용히 사라진다 — 고치는 곳은 본문이다.
+
+    유도 표를 두는 이유는 집계뿐이다. "내 할 일" 은 문서 수백 개의 본문을
+    가로질러야 하는데, 그걸 매번 파싱하면 화면 하나가 스페이스 전체를 읽는다.
+
+    ## 담당자와 기한도 본문에서 온다
+
+    `assignee_id` 는 그 줄의 첫 멘션이고 `due_date` 는 `due:YYYY-MM-DD` 다.
+    별도 칸에 사람이 입력하게 두면 임포트·소스 편집·되돌리기에서 두 벌이
+    어긋난다.
+    """
+
+    __tablename__ = "page_task"
+
+    page_id: Mapped[UUID] = mapped_column(ForeignKey("page.id", ondelete="CASCADE"), nullable=False)
+    #: 원문 줄 번호(0부터). **태스크의 신원이다** — 몇 번째냐로 세면 중첩
+    #: 목록에서 화면과 서버가 어긋날 수 있고, 어긋난 채로 체크하면 다른 줄이
+    #: 바뀐다.
+    line: Mapped[int] = mapped_column(Integer, nullable=False)
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 그 줄의 첫 멘션. 계정이 사라져도 태스크는 남아야 하므로 SET NULL 이다.
+    assignee_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    __table_args__ = (
+        # 한 줄에 태스크는 하나다. 둘 생기면 집계가 같은 것을 두 번 센다.
+        UniqueConstraint("page_id", "line", name="uq_page_task_page_id_line"),
+        # 집계가 "내 것 중 안 끝난 것" 을 기한순으로 훑는다.
+        Index("ix_page_task_assignee_open", "assignee_id", "due_date"),
+        Index("ix_page_task_page_id", "page_id"),
     )
 
 

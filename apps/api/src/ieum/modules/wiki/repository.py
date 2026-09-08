@@ -17,6 +17,7 @@ from ieum.modules.wiki.models import (
     PageDraft,
     PageLabel,
     PageRestriction,
+    PageTask,
     PageTemplate,
     PageVersion,
     Space,
@@ -331,6 +332,67 @@ class PageCommentRepository:
             .where(PageComment.anchor.isnot(None))
         )
         return list((await self._s.execute(stmt)).scalars().all())
+
+
+class PageTaskRepository:
+    """본문에서 유도한 태스크 행. **읽고 통째로 다시 쓴다.**
+
+    한 줄씩 갱신하지 않는 이유: 본문이 바뀌면 줄 번호가 통째로 밀린다. 그때
+    "바뀐 것만" 찾아 고치려면 옛 본문과 새 본문을 맞춰 봐야 하는데, 그 계산이
+    틀리면 유령 태스크가 남는다. 문서 하나의 태스크는 많아야 200개다
+    (`markdown.tasks.MAX_TASKS`) — 지우고 다시 넣는 값이 싸다.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def for_page(self, page_id: UUID) -> list[PageTask]:
+        stmt = select(PageTask).where(PageTask.page_id == page_id).order_by(PageTask.line)
+        return list((await self._s.execute(stmt)).scalars().all())
+
+    async def replace(self, page_id: UUID, rows: Sequence[PageTask]) -> None:
+        await self._s.execute(delete(PageTask).where(PageTask.page_id == page_id))
+        for row in rows:
+            self._s.add(row)
+        await self._s.flush()
+
+    async def assigned_to(
+        self,
+        *,
+        assignee_id: UUID,
+        acl: Acl,
+        include_done: bool,
+        limit: int,
+    ) -> list[tuple[PageTask, Page, Space]]:
+        """이 사람의 태스크. **볼 수 있는 문서의 것만.**
+
+        `acl` 로 스페이스를 좁히고, 문서 단위 제한은 서비스가 한 번 더 거른다
+        (`PageRestrictionGuard` 와 같은 규칙). 여기서 다 하려면 제한 상속을
+        SQL 로 다시 구현해야 하고, 그러면 규칙이 두 벌이 된다.
+
+        기한 없는 것을 뒤로 보낸다: 기한이 있는 것이 먼저 급하다. `NULLS LAST`
+        를 안 쓰면 Postgres 는 오름차순에서 NULL 을 마지막에 두지만, 그것은
+        기본값에 기대는 것이라 정렬 방향을 바꾸면 조용히 뒤집힌다.
+        """
+        if acl.is_empty:
+            return []
+        stmt = (
+            select(PageTask, Page, Space)
+            .join(Page, Page.id == PageTask.page_id)
+            .join(Space, Space.id == Page.space_id)
+            .where(
+                PageTask.assignee_id == assignee_id,
+                Page.archived_at.is_(None),
+                Space.archived_at.is_(None),
+            )
+            .order_by(PageTask.due_date.asc().nullslast(), Page.title, PageTask.line)
+            .limit(limit)
+        )
+        if not acl.is_global:
+            stmt = stmt.where(Page.space_id.in_(acl.space_ids))
+        if not include_done:
+            stmt = stmt.where(PageTask.done.is_(False))
+        return [(row[0], row[1], row[2]) for row in (await self._s.execute(stmt)).all()]
 
 
 class PageTemplateRepository:

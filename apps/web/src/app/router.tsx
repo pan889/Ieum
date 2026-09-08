@@ -17,6 +17,7 @@ import { ReportScreen as DeskReportScreen } from '@/features/desk/ReportScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
 import { SpaceScreen } from '@/features/wiki/SpaceScreen'
+import { MyTasksScreen } from '@/features/wiki/MyTasksScreen'
 import { SpacesScreen } from '@/features/wiki/SpacesScreen'
 import { parseSearch } from '@/features/issues/urlState'
 import type { IssuesSearch } from '@/features/issues/urlState'
@@ -275,6 +276,19 @@ const searchRoute = createRoute({
   },
 })
 
+/**
+ * 내 할 일 (B12).
+ *
+ * **`/wiki/$spaceKey` 보다 위에 선언한다.** 아래에 두면 `tasks` 가 스페이스
+ * 키로 읽혀 "그런 스페이스가 없다" 가 된다 (conventions.md "고정 경로는
+ * 형제 전부보다 위에 둔다").
+ */
+const myTasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/wiki/tasks',
+  component: MyTasksScreen,
+})
+
 const wikiRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/wiki',
@@ -332,6 +346,7 @@ const routeTree = rootRoute.addChildren([
   emailChannelsRoute,
   automationRoute,
   searchRoute,
+  myTasksRoute,
   wikiRoute,
   spaceRoute,
   wikiPageRoute,

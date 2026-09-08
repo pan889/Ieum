@@ -350,7 +350,9 @@ class TestSnapshots:
         doc[collab.BODY_KEY] = Text()
         doc.apply_update(state)
         doc[collab.BODY_KEY] += " 그리고 더"
-        await collab.save_snapshot(session, page.id, doc.get_update(), saved_by=author.id)
+        await collab.save_snapshot(
+            session, page.id, lambda _stored: doc.get_update(), saved_by=author.id
+        )
 
         row = (
             await session.execute(select(PageCollab).where(PageCollab.page_id == page.id))
@@ -368,8 +370,8 @@ class TestSnapshots:
         room = collab.Room(page.id, await collab.load_or_seed(session, page.id), redis)
         saved: list[tuple[bytes, UUID | None]] = []
 
-        async def remember(state: bytes, who: UUID | None) -> None:
-            saved.append((state, who))
+        async def remember(merge: collab.Merge, who: UUID | None) -> None:
+            saved.append((merge(None), who))
 
         writer = Listener((await _user(session)).id)
         await room.start(remember)
@@ -406,8 +408,209 @@ class TestBackPressure:
             await room.stop()
 
 
-async def _noop_save(state: bytes, who: UUID | None) -> None:
+async def _noop_save(merge: collab.Merge, who: UUID | None) -> None:
     return None
+
+
+class TestSplice:
+    """앞뒤 공통부를 벗겨 낸 한 덩어리. 통째로 바꾸는 것과 다른 점이 요점이다."""
+
+    def test_a_changed_middle_touches_only_the_middle(self) -> None:
+        at, remove, insert = collab.splice("- [ ] 할 일", "- [x] 할 일")
+        assert (at, remove, insert) == (3, 1, "x")
+
+    def test_pure_insertion_removes_nothing(self) -> None:
+        at, remove, insert = collab.splice("가나", "가나다")
+        assert (at, remove, insert) == (2, 0, "다")
+
+    def test_pure_deletion_inserts_nothing(self) -> None:
+        at, remove, insert = collab.splice("가나다", "가나")
+        assert (at, remove, insert) == (2, 1, "")
+
+    def test_the_same_text_is_no_edit(self) -> None:
+        assert collab.splice("같다", "같다") == (2, 0, "")
+
+    def test_a_repeated_letter_does_not_overcount_the_common_part(self) -> None:
+        """앞뒤를 따로 세면 같은 글자를 양쪽에서 두 번 셀 수 있다.
+
+        `"aa" → "a"`: 앞으로 1글자가 같고 뒤로도 1글자가 같은데, 원본이 2글자
+        뿐이라 둘을 더하면 지울 길이가 **음수**가 된다. 그러면 `del` 이 아무
+        것도 안 지우고 글자가 그대로 남는다.
+        """
+        at, remove, insert = collab.splice("aa", "a")
+        assert remove >= 0
+        assert _spliced("aa", (at, remove, insert)) == "a"
+
+    def test_it_rebuilds_every_pair_it_is_given(self) -> None:
+        pairs = [
+            ("", "새 글"),
+            ("지운다", ""),
+            ("- [ ] 하나\n- [ ] 둘\n", "- [ ] 하나\n- [x] 둘\n"),
+            ("abcabc", "abc"),
+            ("한글도 된다", "한글도 되나"),
+        ]
+        for before, after in pairs:
+            assert _spliced(before, collab.splice(before, after)) == after, (before, after)
+
+
+def _spliced(before: str, edit: tuple[int, int, str]) -> str:
+    at, remove, insert = edit
+    return before[:at] + insert + before[at + remove :]
+
+
+class TestReconcile:
+    """**방 밖에서 본문이 바뀌면 방의 상태도 따라가야 한다.**
+
+    안 따라가면 방이 낡은 본문을 든 두 번째 사본이 된다. 다음에 편집기를 여는
+    사람은 그것을 보고, 저장하면 방금 바뀐 것이 조용히 되돌아간다 — 편집기가
+    든 판 번호는 최신이므로 낙관적 잠금도 그걸 막지 못한다.
+    """
+
+    async def test_the_room_follows_a_change_made_outside_it(self, session: AsyncSession) -> None:
+        page = await _page(session, "- [ ] 눌러 볼 일\n")
+        await collab.load_or_seed(session, page.id)
+
+        await collab.reconcile(
+            session, page.id, before="- [ ] 눌러 볼 일\n", after="- [x] 눌러 볼 일\n"
+        )
+        await session.commit()
+
+        row = (
+            await session.execute(select(PageCollab).where(PageCollab.page_id == page.id))
+        ).scalar_one()
+        assert collab.text_of(row.state) == "- [x] 눌러 볼 일\n"
+
+    async def test_it_edits_instead_of_replacing(self, session: AsyncSession) -> None:
+        """**덮어쓰지 않고 편집으로 넣는다.**
+
+        통째로 지우고 다시 넣으면 안 바뀐 부분의 CRDT 자리까지 새것이 되고,
+        같은 순간에 다른 사람이 그 부분에 찍은 편집이 사라진다. 여기서 보는
+        것은 그 성질이다: 밖의 변경 전 상태에서 갈라져 나온 편집이, 변경
+        뒤에도 살아 있다.
+        """
+        page = await _page(session, "하나\n둘\n")
+        state = await collab.load_or_seed(session, page.id)
+
+        # 옆 사람이 첫 줄을 고치고 있다 — 아직 방에만 있는 편집이다.
+        aside: Doc[Text] = Doc()
+        aside[collab.BODY_KEY] = Text()
+        aside.apply_update(state)
+        # 자리는 UTF-8 바이트다 (`reconcile` 의 주석 참조) — "하나" 뒤.
+        aside[collab.BODY_KEY].insert(len("하나".encode()), "!")
+
+        # 그 사이 서버가 둘째 줄을 고쳤다.
+        await collab.reconcile(session, page.id, before="하나\n둘\n", after="하나\n둘둘\n")
+        await session.commit()
+        row = (
+            await session.execute(select(PageCollab).where(PageCollab.page_id == page.id))
+        ).scalar_one()
+
+        assert _merged_text(row.state, aside.get_update()) == "하나!\n둘둘\n"
+
+    async def test_it_does_nothing_when_there_is_no_room(self, session: AsyncSession) -> None:
+        """방이 없으면 만들지 않는다 — 다음에 붙는 사람이 새 본문으로 심는다."""
+        page = await _page(session, "방이 없다\n")
+        await collab.reconcile(session, page.id, before="방이 없다\n", after="바뀌었다\n")
+        await session.commit()
+
+        rows = (
+            (await session.execute(select(PageCollab).where(PageCollab.page_id == page.id)))
+            .scalars()
+            .all()
+        )
+        assert rows == []
+
+    async def test_the_trailing_newline_does_not_count_as_a_draft(
+        self, session: AsyncSession
+    ) -> None:
+        """**정규화 차이는 "게시 안 한 초안" 이 아니다.**
+
+        방의 글은 사람이 친 그대로이고 게시된 본문은 정규화를 지난 것이다 —
+        끝의 빈 줄 하나가 거의 언제나 다르다. 그걸 초안으로 읽으면 위의 보호가
+        **가장 흔한 경우를 전부** 건너뛴다. 실제로 그렇게 됐다: 브라우저에서
+        체크가 방에 반영되지 않았고, 차이는 끝 줄바꿈 하나였다.
+        """
+        page = await _page(session, "- [ ] 눌러 볼 일\n")
+        await collab.load_or_seed(session, page.id)
+
+        # 게시된 본문은 끝 줄바꿈이 없다 (`normalize` 가 뗀다).
+        await collab.reconcile(
+            session, page.id, before="- [ ] 눌러 볼 일", after="- [x] 눌러 볼 일"
+        )
+        await session.commit()
+
+        row = (
+            await session.execute(select(PageCollab).where(PageCollab.page_id == page.id))
+        ).scalar_one()
+        assert collab.text_of(row.state) == "- [x] 눌러 볼 일"
+
+    async def test_it_leaves_a_draft_that_has_unpublished_changes_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """**게시 안 한 공유 초안은 안 건드린다.**
+
+        `before` 기준으로 잰 자리를 다른 글에 대면 엉뚱한 자리를 고친다. 그
+        사람들은 그 초안을 보고 있으므로, 조용히 망치는 것보다 안 건드리는
+        쪽이 낫다.
+        """
+        page = await _page(session, "처음\n")
+        state = await collab.load_or_seed(session, page.id)
+        # 방이 아직 안 게시한 글을 스냅샷에 남겼다.
+        doc: Doc[Text] = Doc()
+        doc[collab.BODY_KEY] = Text()
+        doc.apply_update(state)
+        doc[collab.BODY_KEY] += "안 게시한 줄\n"
+        drafted = doc.get_update()
+        await collab.save_snapshot(
+            session, page.id, lambda _stored: drafted, saved_by=(await _user(session)).id
+        )
+
+        await collab.reconcile(session, page.id, before="처음\n", after="바뀐 첫 줄\n")
+        await session.commit()
+
+        row = (
+            await session.execute(select(PageCollab).where(PageCollab.page_id == page.id))
+        ).scalar_one()
+        assert collab.text_of(row.state) == "처음\n안 게시한 줄\n"
+
+    async def test_a_live_room_picks_the_change_up_at_its_next_snapshot(
+        self, session: AsyncSession, redis: Redis
+    ) -> None:
+        """**스냅샷이 쓰기 전에 읽는다.**
+
+        안 읽으면 살아 있는 방이 3초 뒤에 자기 문서로 덮어써서, 밖에서 넣은
+        편집이 사라진다. 여기서는 그 순서를 손으로 밟는다: 방이 열려 있고,
+        밖에서 본문이 바뀌고, 방이 저장한다.
+        """
+        page = await _page(session, "처음\n")
+        room = collab.Room(page.id, await collab.load_or_seed(session, page.id), redis)
+        await room.start(_saver_for(session, page.id))
+        try:
+            listener = Listener((await _user(session)).id)
+            await room.join(listener.client)
+            await room.handle(listener.client, _typed("방이 쓴 줄\n"))
+
+            await collab.reconcile(session, page.id, before="처음\n", after="밖에서 바뀐 첫 줄\n")
+            await session.commit()
+
+            await room._flush()  # 3초를 기다리지 않고 그 자리를 그대로 밟는다
+
+            row = (
+                await session.execute(select(PageCollab).where(PageCollab.page_id == page.id))
+            ).scalar_one()
+            saved = collab.text_of(row.state)
+            assert "밖에서 바뀐 첫 줄" in saved, "방이 밖의 변경을 덮어썼다"
+            assert "방이 쓴 줄" in saved, "밖의 변경이 방의 편집을 덮어썼다"
+            assert room.body() == saved, "방과 저장된 상태가 갈라졌다"
+        finally:
+            await room.stop()
+
+
+def _saver_for(session: AsyncSession, page_id: UUID) -> Any:
+    async def save(merge: collab.Merge, who: UUID | None) -> None:
+        await collab.save_snapshot(session, page_id, merge, saved_by=who)
+
+    return save
 
 
 async def _swallow(message: bytes) -> None:

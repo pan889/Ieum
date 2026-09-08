@@ -33,6 +33,7 @@ from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate
 from ieum.core.markdown.diff import DiffResult, diff_lines
 from ieum.core.markdown.links import ISSUE as ISSUE_SCHEME
 from ieum.core.markdown.links import extract_links
+from ieum.core.markdown.tasks import parse_tasks, set_done
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
@@ -43,6 +44,7 @@ from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
 from ieum.modules.org import contracts as org_links
 from ieum.modules.search import contracts as search
+from ieum.modules.wiki import collab
 from ieum.modules.wiki import events as wiki_events
 from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.attachments import OWNER_PAGE
@@ -54,6 +56,7 @@ from ieum.modules.wiki.models import (
     PageComment,
     PageDraft,
     PageRestriction,
+    PageTask,
     PageTemplate,
     PageVersion,
     Space,
@@ -79,6 +82,7 @@ from ieum.modules.wiki.repository import (
     PageLabelRepository,
     PageRepository,
     PageRestrictionRepository,
+    PageTaskRepository,
     PageTemplateRepository,
     PageVersionRepository,
     SpaceRepository,
@@ -119,6 +123,21 @@ class PageView:
     @property
     def body(self) -> str:
         return self.current.body if self.current else ""
+
+
+@dataclass(frozen=True, slots=True)
+class AssignedTask:
+    """내게 걸린 태스크 한 줄 + 그 문서를 찾아갈 정보 (B12).
+
+    문서 제목과 경로를 함께 주는 이유: "내 할 일" 목록에서 항목만 보면
+    **어느 문서의 일인지 모른다.** 그러면 사람은 하나씩 눌러 확인해야 하고,
+    그건 목록을 보는 이유를 없앤다.
+    """
+
+    task: PageTask
+    page_title: str
+    space_key: str
+    path: str
 
 
 class PageRestrictionGuard:
@@ -356,6 +375,7 @@ class PageService:
         self._labels = PageLabelRepository(session)
         self._restrictions = PageRestrictionRepository(session)
         self._drafts = PageDraftRepository(session)
+        self._tasks = PageTaskRepository(session)
 
     # ── 조회 ────────────────────────────────────────────────────
 
@@ -472,7 +492,7 @@ class PageService:
             version.front_matter = payload.front_matter
 
         await self._s.flush()
-        await self._reindex(page, space=space)
+        await self._rederive(page, space=space)
         await self._relink(page)
         # 초안은 알리지 않는다. 아직 아무에게도 보이지 않는 글이다.
         # 빈 문서도 마찬가지다 — 화면의 만들기는 제목만 받고 본문은 그다음에
@@ -539,7 +559,7 @@ class PageService:
             version.front_matter = payload.front_matter
 
         await self._s.flush()
-        await self._reindex(page, space=space)
+        await self._rederive(page, space=space)
         await self._relink(page)
         if page.status == "published" and body.strip():
             publish(
@@ -581,7 +601,21 @@ class PageService:
         message: str | None = None,
         publish: bool | None = None,
         expected_version: int | None = None,
+        align_room: bool = False,
     ) -> PageView:
+        """문서를 고친다.
+
+        `align_room` 은 **이 본문이 같이 편집하는 방(B16)에서 온 것이 아닐 때**
+        켠다. 그러면 방의 CRDT 상태에도 같은 변경을 넣는다 — 안 넣으면 방이
+        낡은 본문을 든 두 번째 사본이 되고, 다음에 편집기를 여는 사람이 그것을
+        보고 저장해서 방금 바꾼 것을 조용히 되돌린다.
+
+        기본값이 꺼짐인 이유: 화면의 저장은 **방의 글을 그대로** 올린다. 그걸
+        "밖에서 생긴 변경" 으로 방에 다시 넣으면 같은 글이 두 벌이 된다
+        (`collab.reconcile` 주석에 실제로 그렇게 된 기록이 있다). 그래서 방을
+        거칠 수 있는 경로는 꺼진 채로 두고, 방을 거칠 수 없는 경로(체크,
+        복원)가 켠다.
+        """
         page = await self._require_page(page_id)
         await self._perms.require(
             self._s, actor, perms.PAGE_EDIT, scope=Scope.space(page.space_id), subject=page
@@ -637,7 +671,9 @@ class PageService:
         if changed:
             page.version += 1
             await self._s.flush()
-            await self._reindex(page)
+            if align_room:
+                await collab.reconcile(self._s, page.id, before=previous_body, after=new_body)
+            await self._rederive(page)
             await self._relink(page)
             await self._announce_change(
                 page,
@@ -723,6 +759,8 @@ class PageService:
         source = await self._versions.by_number(page.id, number)
         if source is None:
             raise NotFoundError("그 판을 찾을 수 없다.")
+        current = await self._current_version(page)
+        previous_body = current.body if current else ""
 
         version = await self._write_version(
             page,
@@ -737,7 +775,9 @@ class PageService:
             page.current_version_id = version.id
         page.version += 1
         await self._s.flush()
-        await self._reindex(page)
+        # 복원도 방을 거치지 않는다 (`update` 의 `align_room` 주석 참조).
+        await collab.reconcile(self._s, page.id, before=previous_body, after=source.body)
+        await self._rederive(page)
         await self._relink(page)
         # 복원도 편집이다. 워처에게는 본문이 바뀐 것과 다르지 않다.
         await self._announce_change(
@@ -809,7 +849,7 @@ class PageService:
         await self._s.flush()
         # 경로가 바뀌면 후손의 경로도 바뀐다. 색인의 `ref` 가 옛 경로로
         # 남으면 검색 결과에서 눌러도 없는 문서로 간다.
-        await self._reindex_subtree(page)
+        await self._rederive_subtree(page)
         log.info("wiki.page_moved", actor=str(actor.user_id), page=str(page.id), path=page.path)
         return await self.to_view(page)
 
@@ -826,8 +866,17 @@ class PageService:
                 node.archived_at = now
         page.version += 1
         await self._s.flush()
-        # 휴지통으로 간 문서는 검색에서 빠진다. 후손도 함께 갔으므로 함께.
-        await search.remove_documents(self._s, kind=search.PAGE, entity_ids=[n.id for n in subtree])
+        # 휴지통으로 간 문서는 **유도된 것 전부**에서 빠진다. 후손도 함께
+        # 갔으므로 함께.
+        #
+        # `_rederive` 를 부르지 않고 여기서 직접 지우는 이유: 가지가 클 때
+        # 문서마다 본문을 읽어 색인을 다시 만드는 것은 낭비다 — 지우기만 하면
+        # 되는 자리다. 그 대신 **둘을 나란히 둔다.** 검색만 지우고 태스크를
+        # 두었더니 접힌 문서의 할 일이 유도 표에 남았고, 그것을 시험이 잡았다.
+        ids = [n.id for n in subtree]
+        await search.remove_documents(self._s, kind=search.PAGE, entity_ids=ids)
+        for node_id in ids:
+            await self._tasks.replace(node_id, [])
         return await self.to_view(page)
 
     # ── 제한 ────────────────────────────────────────────────────
@@ -861,7 +910,7 @@ class PageService:
             )
         await self._s.flush()
         # 제한은 아래로 상속된다. 이 문서만 고치면 자식들이 계속 검색에 뜬다.
-        await self._reindex_subtree(page)
+        await self._rederive_subtree(page)
         return await self._restrictions.for_page(page.id)
 
     async def restrictions(self, actor: Actor, page_id: UUID) -> list[PageRestriction]:
@@ -1024,7 +1073,7 @@ class PageService:
             return
         current.body = normalize_markdown(rewritten)
         await self._s.flush()
-        await self._reindex(view.page)
+        await self._rederive(view.page)
         await self._relink(view.page)
 
     @staticmethod
@@ -1356,18 +1405,35 @@ class PageService:
 
     # ── 검색 색인 ───────────────────────────────────────────────
 
-    async def _reindex(self, page: Page, *, space: Space | None = None) -> None:
-        """문서 하나를 검색 색인에 반영한다. 원본과 **같은 트랜잭션**이다.
+    async def _rederive(self, page: Page, *, space: Space | None = None) -> None:
+        """이 문서에서 **유도되는 것들**을 다시 만든다. 원본과 같은 트랜잭션이다.
 
-        제한이 걸린 가지의 문서는 볼 수 있는 주체를 함께 넣는다. 스코프만
-        보면 검색이 제한을 우회하는 통로가 된다.
+        지금 둘이다: 검색 색인과 태스크 행(B12). 둘을 한 자리에 둔 이유는
+        수명이 같기 때문이다 — 본문이 바뀌면 둘 다 틀리고, 초안이 되면 둘 다
+        보이지 않아야 한다. 나눠 두면 새 저장 경로가 하나만 부르는 날이 오고,
+        그날 한쪽만 낡는다.
+
+        제한이 걸린 가지의 문서는 볼 수 있는 주체를 색인에 함께 넣는다.
+        스코프만 보면 검색이 제한을 우회하는 통로가 된다.
         """
+        version = await self._current_version(page)
+
         if page.is_archived or page.status != "published":
-            # 초안은 아직 아무에게도 보일 것이 아니다.
+            # 초안은 아직 아무에게도 보일 것이 아니다. 태스크도 마찬가지다 —
+            # 초안의 할 일이 남의 목록에 뜨면 아직 안 낸 계획이 새는 것이다.
             await search.remove_document(self._s, kind=search.PAGE, entity_id=page.id)
+            # **이 지우기는 지금 방어다.** 게시는 한 방향이고(`update` 는
+            # draft → published 만 한다) 접기는 자기 자리에서 직접 지우므로,
+            # 여기까지 와서 지울 태스크가 남아 있는 경로가 오늘은 없다. 되돌려
+            # 봐도 시험이 안 붉어진다 — 그래서 "붙잡은 보장" 이 아니다.
+            #
+            # 그래도 둔다: 게시 취소가 생기는 날 이 줄이 없으면, 게시했던 할
+            # 일이 초안으로 돌아간 뒤에도 남의 목록에 계속 뜬다. 그때 이
+            # 줄을 넣는 것보다 지금 두는 쪽이 싸다.
+            await self._tasks.replace(page.id, [])
             return
 
-        version = await self._current_version(page)
+        await self._retask(page, version)
         space = space or await self._spaces.get(page.space_id)
         labels = await self._labels.for_page(page.id)
         body = to_plaintext(version.body) if version else ""
@@ -1387,14 +1453,48 @@ class PageService:
             updated_at=page.updated_at,
         )
 
-    async def _reindex_subtree(self, page: Page) -> None:
-        """가지 전체를 다시 색인한다.
+    async def _retask(self, page: Page, version: PageVersion | None) -> None:
+        """본문의 태스크를 유도 표에 반영한다 (B12).
+
+        **정본은 본문이다.** 이 표는 집계를 위한 사본이고, 매 저장마다 통째로
+        다시 만들어진다 — 그래서 표를 직접 고친 것은 다음 저장에 사라진다.
+
+        담당자가 사라진 계정이면 `assignee_id` 를 비운다. FK 로 두었으므로
+        없는 사용자를 넣으면 저장 자체가 터지고, 그러면 **문서 저장이** 실패
+        한다. 태스크 한 줄 때문에 문서를 못 저장하게 두지 않는다.
+        """
+        parsed = parse_tasks(version.body if version else "")
+        known = await self._known_users({t.assignee for t in parsed if t.assignee is not None})
+        await self._tasks.replace(
+            page.id,
+            [
+                PageTask(
+                    page_id=page.id,
+                    line=task.line,
+                    done=task.done,
+                    text=task.text[:2000],
+                    assignee_id=task.assignee if task.assignee in known else None,
+                    due_date=task.due,
+                )
+                for task in parsed
+            ],
+        )
+
+    async def _known_users(self, ids: set[UUID]) -> set[UUID]:
+        """실제로 있는 계정만. **`identity` 의 계약으로 묻는다** — 모델을
+        직접 보면 모듈 경계가 이름만 남는다(ADR-0010)."""
+        if not ids:
+            return set()
+        return set((await identity.get_users(self._s, ids)).keys())
+
+    async def _rederive_subtree(self, page: Page) -> None:
+        """가지 전체의 유도 값을 다시 만든다.
 
         경로가 바뀌거나 제한이 바뀌면 **후손까지** 달라진다. 제한은 아래로
         상속되므로, 조상 하나만 고치고 말면 자식들이 계속 검색에 뜬다.
         """
         for node in await self._pages.subtree(page.space_id, page.path):
-            await self._reindex(node)
+            await self._rederive(node)
 
     async def _effective_viewers(self, page: Page) -> list[UUID] | None:
         """이 문서를 볼 수 있는 주체. 제한이 없으면 None.
@@ -1465,6 +1565,97 @@ class PageService:
                 details={"max": MAX_DEPTH},
             )
         return parent
+
+    # ── 태스크 리스트 (B12) ─────────────────────────────────────
+
+    async def list_tasks(self, actor: Actor, page_id: UUID) -> list[PageTask]:
+        """이 문서의 태스크. 줄 번호와 함께 준다.
+
+        화면이 자기 마크다운 파서로 줄을 세지 않게 **서버가 준다.** 양쪽이
+        각자 세면 중첩 목록에서 어긋날 수 있고, 어긋난 채로 체크하면 다른
+        줄이 바뀐다.
+        """
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
+        )
+        return await self._tasks.for_page(page_id)
+
+    async def set_task_done(
+        self,
+        actor: Actor,
+        page_id: UUID,
+        *,
+        line: int,
+        done: bool,
+        expect_text: str | None = None,
+        expected_version: int | None = None,
+    ) -> PageView:
+        """태스크 한 줄을 체크하거나 푼다. **판을 하나 만든다.**
+
+        판을 만드는 이유: 체크는 문서 내용의 변경이다. 이력에 안 남기면
+        "누가 언제 이걸 끝냈다고 했나" 를 답할 수 없고, 되돌릴 수도 없다.
+
+        `expect_text` 는 화면이 본 글자다. 다르면 거절한다 — 그 사이 남이
+        줄을 고쳤거나 지운 것이고, 그대로 진행하면 **엉뚱한 줄을 체크한다.**
+        낙관적 잠금(`expected_version`)만으로는 부족하다: 판이 같아도 화면이
+        캐시된 옛 본문을 보고 있었으면 줄 번호가 어긋난다.
+        """
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_EDIT, scope=Scope.space(page.space_id), subject=page
+        )
+        version = await self._current_version(page)
+        if version is None:
+            raise ValidationError("게시된 판이 없는 문서다.", code="wiki.task_no_version")
+
+        current = [task for task in parse_tasks(version.body) if task.line == line]
+        if not current:
+            raise ConflictError("그 줄은 더 이상 태스크가 아니다.", code="wiki.task_line_moved")
+        if expect_text is not None and current[0].text != expect_text:
+            raise ConflictError("그 줄의 글이 바뀌었다.", code="wiki.task_text_changed")
+        if current[0].done == done:
+            # 이미 그 상태다. 판을 하나 더 만들지 않는다 — 두 사람이 같은
+            # 것을 체크했을 때 이력이 같은 내용으로 두 줄 쌓이는 것을 막는다.
+            return await self.to_view(page)
+
+        return await self.update(
+            actor,
+            page_id,
+            body=set_done(version.body, line, done),
+            message=None,
+            expected_version=expected_version,
+            # 체크는 방을 거치지 않는다. 방을 안 맞추면 다음에 편집기를 여는
+            # 사람이 체크 안 된 본문을 보고, 저장하면 체크가 되돌아간다.
+            align_room=True,
+        )
+
+    async def my_tasks(
+        self, actor: Actor, *, include_done: bool = False, limit: int = 100
+    ) -> list[AssignedTask]:
+        """내게 걸린 태스크를 문서 넘어 모아 본다.
+
+        **볼 수 있는 문서의 것만 준다.** 스페이스는 ACL 로 좁히고, 문서 단위
+        제한은 한 번 더 거른다 — 제한 상속 규칙을 SQL 로 다시 구현하면 두
+        벌이 되고, 두 벌 중 느슨한 쪽으로 문서 내용이 샌다.
+        """
+        acl = await self._perms.acl_for(self._s, actor, perms.PAGE_VIEW)
+        rows = await self._tasks.assigned_to(
+            assignee_id=actor.user_id,
+            acl=acl,
+            include_done=include_done,
+            limit=min(max(limit, 1), 200),
+        )
+        found: list[AssignedTask] = []
+        for task, page, space in rows:
+            if not await self._perms.has(
+                self._s, actor, perms.PAGE_VIEW, scope=Scope.space(page.space_id), subject=page
+            ):
+                continue
+            found.append(
+                AssignedTask(task=task, page_title=page.title, space_key=space.key, path=page.path)
+            )
+        return found
 
     async def page_for_edit(self, actor: Actor, page_id: UUID) -> Page:
         """고칠 권한이 있는지 보고 문서를 돌려준다.

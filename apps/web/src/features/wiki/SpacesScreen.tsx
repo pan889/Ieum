@@ -29,6 +29,11 @@ export function SpacesScreen() {
     <section className="mx-auto flex max-w-3xl flex-col gap-4">
       <header className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t('wiki:spaces.title')}</h1>
+        {/* 내 할 일로 가는 길. 위키의 첫 화면에 둔다 — 태스크는 문서에서
+            오므로 문서를 여는 자리에서 이어지는 것이 자연스럽다. */}
+        <Link to="/wiki/tasks" className="ml-auto text-sm text-accent hover:underline">
+          {t('wiki:tasks.mineTitle')}
+        </Link>
         <Button onClick={() => { setCreating((v) => !v) }}>{t('wiki:spaces.create')}</Button>
       </header>
 

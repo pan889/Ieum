@@ -23,7 +23,7 @@ from redis.asyncio import from_url as redis_from_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ieum.db.session import get_session_factory
-from ieum.modules.wiki.collab import Room, load_or_seed, save_snapshot
+from ieum.modules.wiki.collab import Merge, Room, load_or_seed, save_snapshot
 
 #: 세션을 어디서 얻는가. 기본값은 앱이 세운 전역 팩토리다.
 #:
@@ -99,12 +99,16 @@ class RoomRegistry:
 
 def _saver(
     page_id: UUID, sessions: SessionSource
-) -> Callable[[bytes, UUID | None], Awaitable[None]]:
-    """방이 부를 저장 함수. 요청 밖에서 도므로 세션을 새로 뜬다."""
+) -> Callable[[Merge, UUID | None], Awaitable[None]]:
+    """방이 부를 저장 함수. 요청 밖에서 도므로 세션을 새로 뜬다.
 
-    async def save(state: bytes, saved_by: UUID | None) -> None:
+    상태 대신 **합치는 함수**를 받는다: 스냅샷은 읽기-합치기-쓰기이고, 읽은
+    것을 문서에 합치는 일은 방만 할 수 있다 (`collab.Merge` 주석 참조).
+    """
+
+    async def save(merge: Merge, saved_by: UUID | None) -> None:
         async with sessions()() as session:
-            await save_snapshot(session, page_id, state, saved_by=saved_by)
+            await save_snapshot(session, page_id, merge, saved_by=saved_by)
 
     return save
 

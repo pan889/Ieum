@@ -317,6 +317,45 @@ export function createWikiApi(client: ApiClient) {
         remove: (commentId: string) => client.delete<void>(`${PAGES}/comments/${commentId}`),
       },
 
+      // ── 태스크 리스트 (B12) ───────────────────────────────
+      /**
+       * 이 문서의 태스크. **줄 번호는 서버가 준다.**
+       *
+       * 화면이 자기 마크다운 파서로 몇 번째인지 세지 않는 이유: 양쪽이 각자
+       * 세면 중첩 목록에서 어긋날 수 있고, 어긋난 채로 체크하면 다른 줄이
+       * 바뀐다.
+       */
+      tasks: (id: string) => client.get<PageTaskItem[]>(`${PAGES}/${id}/tasks`),
+
+      /**
+       * 체크하거나 푼다. **판이 하나 생긴다** — 체크는 내용의 변경이고,
+       * 이력에 안 남기면 누가 언제 끝냈다고 했는지 답할 수 없다.
+       *
+       * `expect_text` 는 화면이 본 글이다. 서버가 다르면 거절한다 — 그 사이
+       * 남이 줄을 고쳤다는 뜻이고, 그대로 진행하면 엉뚱한 줄이 체크된다.
+       */
+      toggleTask: (
+        id: string,
+        body: { line: number; done: boolean; expect_text?: string },
+        version?: number,
+      ) => {
+        const headers = ifMatch(version)
+        return client.post<WikiPage>(
+          `${PAGES}/${id}/tasks/toggle`,
+          body,
+          headers ? { headers } : {},
+        )
+      },
+
+      /** 내게 걸린 태스크를 문서 넘어 모아 본다. */
+      myTasks: (params: { include_done?: boolean; limit?: number } = {}) => {
+        const query = new URLSearchParams()
+        if (params.include_done) query.set('include_done', 'true')
+        if (params.limit !== undefined) query.set('limit', String(params.limit))
+        const suffix = query.size > 0 ? `?${query.toString()}` : ''
+        return client.get<AssignedTaskItem[]>(`${PAGES}/tasks/mine${suffix}`)
+      },
+
       /**
        * 동시 편집 세션에 붙을 표를 한 장 받는다 (B16).
        *
@@ -337,6 +376,28 @@ export function createWikiApi(client: ApiClient) {
       ) => client.put<PageRestriction[]>(`${PAGES}/${id}/restrictions`, body),
     },
   }
+}
+
+export interface PageTaskItem {
+  /** 원문 줄 번호(0부터). **태스크의 신원이다.** */
+  line: number
+  done: boolean
+  /** 마커와 `due:` 를 뺀 글. 멘션은 마크다운으로 남아 있다. */
+  text: string
+  assignee_id: string | null
+  due_date: string | null
+}
+
+export interface AssignedTaskItem {
+  line: number
+  done: boolean
+  text: string
+  due_date: string | null
+  page_id: string
+  page_title: string
+  space_key: string
+  /** 문서로 가는 길. 화면이 주소를 짜지 않게 서버가 준다. */
+  path: string
 }
 
 export interface CollabTicket {
