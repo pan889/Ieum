@@ -222,6 +222,7 @@
   "issues.workflow_has_no_initial_state": "워크플로우에 시작 상태가 없습니다. 관리자에게 문의하세요.",
   "issues.worklog_future_date": "미래 날짜에는 작업을 기록할 수 없습니다.",
   "issues.worklog_too_long": "한 번에 기록할 수 있는 시간을 넘었습니다.",
+  "markdown.directive_needs_group": "`::{directive}` 에는 group 이 필요합니다 (예: group=status).",
   "markdown.directive_needs_page": "`::{directive}` 에는 page 가 필요합니다 (예: page=\"ENG/deploy\").",
   "markdown.directive_needs_query": "`::{directive}` 에는 query 가 필요하다.",
   "markdown.invalid_directive_depth": "`::{directive}` 의 depth 는 1 이상 {max} 이하여야 한다.",

@@ -20,6 +20,30 @@ describe('slashItems', () => {
     for (const name of [...LEAF_NAMES, ...CONTAINER_NAMES]) expect(ids).toContain(name)
   })
 
+  it('없으면 저장이 안 되는 인자를 조각이 들고 온다', () => {
+    /**
+     * `::issues`·`::excerpt`·`::chart` 는 인자 없이는 서버가 저장을 거절한다
+     * (`directives.py`). 이름만 끼워 넣으면 사람은 목록에서 고른 것을 그대로
+     * 저장했다가 거절을 받는데, 무엇을 더 적어야 하는지는 화면에 없다.
+     */
+    expect(byId('issues').insert).toBe('::issues{query=""}')
+    expect(byId('excerpt').insert).toBe('::excerpt{page=""}')
+    expect(byId('chart').insert).toBe('::chart{query="" group=status}')
+  })
+
+  it('채울 자리에 커서를 놓는다', () => {
+    // 틀만 넣고 커서를 끝에 두면 사람이 따옴표 안으로 손수 옮겨야 한다.
+    for (const id of ['issues', 'excerpt', 'chart']) {
+      const entry = byId(id)
+      expect(entry.insert.slice(entry.caret - 1, entry.caret + 1), id).toBe('""')
+    }
+  })
+
+  it('인자가 필요 없는 리프는 이름만 넣는다', () => {
+    expect(byId('toc').insert).toBe('::toc\n\n')
+    expect(byId('children').insert).toBe('::children\n\n')
+  })
+
   it('모든 항목에 두 언어의 이름이 있다', () => {
     // 번역이 없으면 목록에 `slash.info` 같은 키가 그대로 보인다.
     for (const entry of slashItems()) {

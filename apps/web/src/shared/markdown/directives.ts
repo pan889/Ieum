@@ -11,7 +11,7 @@
  */
 
 /** 데이터가 필요해 컴포넌트로 그리는 리프 디렉티브. */
-export const LEAF_NAMES = ['toc', 'children', 'issues', 'excerpt'] as const
+export const LEAF_NAMES = ['toc', 'children', 'issues', 'excerpt', 'chart'] as const
 /** 강조 상자. 이름이 곧 톤이다. */
 export const CONTAINER_NAMES = ['info', 'note', 'tip', 'warning', 'danger'] as const
 

@@ -59,11 +59,27 @@ const BLOCKS: SlashItem[] = [
   item('divider', `---\n\n${CARET}`, ['hr', '구분선']),
 ]
 
+/**
+ * **없으면 저장이 안 되는 인자는 조각이 들고 온다.**
+ *
+ * `::issues`·`::excerpt`·`::chart` 는 인자 없이는 저장이 거절된다
+ * (`directives.py`). 이름만 끼워 넣으면 사람은 목록에서 고른 것을 그대로
+ * 저장했다가 거절을 받는다 — 무엇을 더 적어야 하는지는 화면에 없다. 그래서
+ * 틀을 넣고 **커서를 채울 자리에 놓는다.**
+ *
+ * 여기 없는 이름은 인자 없이도 뜻이 되는 것들이다(`::toc`, `::children`).
+ */
+const LEAF_TEMPLATES: Record<string, string> = {
+  issues: `::issues{query="${CARET}"}`,
+  excerpt: `::excerpt{page="${CARET}"}`,
+  chart: `::chart{query="${CARET}" group=status}`,
+}
+
 /** 디렉티브. 이름은 `directives.ts` 가 들고 있다 — 여기서 다시 적지 않는다. */
 function directiveItems(): SlashItem[] {
   const leaves = LEAF_NAMES.map((name) =>
-    // 리프는 인자 없이도 뜻이 되므로 커서를 뒤에 놓는다.
-    item(name, `::${name}\n\n${CARET}`, ['directive', '디렉티브']), // i18n-exempt: 검색어
+    // 인자가 필요 없는 리프는 커서를 뒤에 놓는다 — 이어 쓸 자리는 다음 줄이다.
+    item(name, LEAF_TEMPLATES[name] ?? `::${name}\n\n${CARET}`, ['directive', '디렉티브']), // i18n-exempt: 검색어
   )
   const containers = CONTAINER_NAMES.map((name) =>
     item(name, `:::${name}\n${CARET}\n:::`, ['directive', 'callout', '디렉티브', '상자']), // i18n-exempt: 검색어

@@ -18,5 +18,6 @@
   "none": "None",
   "multiValued": "An issue can fall into several buckets, so the buckets add up to more than the total.",
   "truncated": "Too many buckets to show. Narrow the query.",
+  "moreBuckets": "{count, plural, one {# more group not shown} other {# more groups not shown}}",
   "share": "Open this count as a list"
 }

@@ -124,6 +124,14 @@ class TestValidate:
             ('::issues{query="x" limit=0}', "markdown.invalid_directive_limit"),
             ('::issues{query="x" limit=101}', "markdown.invalid_directive_limit"),
             ('::issues{query="x" order="key"}', "markdown.unknown_directive_arg"),
+            ("::chart", "markdown.directive_needs_query"),
+            ("::chart{group=status}", "markdown.directive_needs_query"),
+            ('::chart{query="x"}', "markdown.directive_needs_group"),
+            ('::chart{query="x" group=""}', "markdown.directive_needs_group"),
+            ('::chart{query="x" group=status limit=0}', "markdown.invalid_directive_limit"),
+            ('::chart{query="x" group=status limit=51}', "markdown.invalid_directive_limit"),
+            ('::chart{query="x" group=status limit=x}', "markdown.invalid_directive_limit"),
+            ('::chart{query="x" group=status kind=pie}', "markdown.unknown_directive_arg"),
         ],
     )
     def test_rejects_bad_arguments(self, source: str, code: str) -> None:
@@ -135,6 +143,27 @@ class TestValidate:
         with pytest.raises(ValidationError) as exc:
             validate_source("::toc{depth=9}")
         assert exc.value.details["directive"] == "toc"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            '::chart{query="project = OPS" group=status}',
+            '::chart{query="project = OPS" group=assignee limit=5}',
+            '::chart{query="project = OPS" group=labels limit=50}',
+        ],
+    )
+    def test_accepts_valid_chart(self, source: str) -> None:
+        validate_source(source)
+
+    def test_it_does_not_judge_the_group_name(self) -> None:
+        """**셀 수 있는 기준은 커널이 모른다** (모듈 경계).
+
+        `reports.GROUPS` 는 이슈 모듈 것이고 여기는 커널이다. `::issues` 의
+        IQL 과 같은 처지라 같게 다룬다: 저장은 통과하고, 이름이 틀린 것은
+        보는 시점에 리포트 API 가 말한다. 여기서 목록을 베껴 두면 두 벌이
+        되고, 기준이 하나 늘 때 문서 저장만 조용히 막힌다.
+        """
+        validate_source('::chart{query="x" group=nope}')
 
     def test_containers_take_only_a_title(self) -> None:
         validate(Directive(name="info", attrs={"title": "읽어 주세요"}, body=""))
@@ -171,6 +200,10 @@ class TestNormalizeKeepsDirectives:
         ],
     )
     def test_leaf_survives(self, source: str) -> None:
+        assert normalize(source) == source
+
+    def test_chart_survives(self) -> None:
+        source = '::chart{query="project = OPS" group=status limit=5}'
         assert normalize(source) == source
 
     def test_container_survives_with_a_list_inside(self) -> None:

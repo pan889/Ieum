@@ -8,6 +8,7 @@ import type { CountReport, ReportBucket } from '@ieum/api-client'
 import { useUserNames } from '@/features/issues/hooks'
 import { reportsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { CountBars } from '@/shared/ui/CountBars'
 import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
 /** 기준 목록은 **서버가 준다**. 손으로 들면 새 기준이 늘 때 화면만 모른다. */
@@ -72,8 +73,6 @@ function Result({ report, iql }: { report: CountReport; iql: string }) {
       ? report.buckets.map((b) => b.key)
       : [],
   )
-  const biggest = Math.max(1, ...report.buckets.map((b) => b.count))
-
   const label = (bucket: ReportBucket): string => {
     if (bucket.key === null) return t('reports:none')
     if (report.group_by === 'assignee' || report.group_by === 'reporter') {
@@ -84,42 +83,12 @@ function Result({ report, iql }: { report: CountReport; iql: string }) {
 
   return (
     <Card className="flex flex-col gap-3">
-      <p className="text-sm font-medium">{t('reports:total', { count: report.total })}</p>
-
       {/*
-        **합이 총계를 넘는 이유를 적는다.** 안 적으면 사람은 숫자가 안 맞는
-        것을 버그로 보고, 그다음부터 리포트를 안 믿는다.
+        그리는 규칙(이름·수를 글자로, 합이 안 맞는 이유를 적는다)은 문서 안의
+        `::chart` 와 **같은 컴포넌트**가 갖고 있다. 각자 그리면 규칙 하나가
+        한쪽에서만 지켜지는 날이 온다.
       */}
-      {report.multi_valued ? (
-        <p className="text-xs text-muted">{t('reports:multiValued')}</p>
-      ) : null}
-      {report.truncated ? <Alert>{t('reports:truncated')}</Alert> : null}
-
-      {report.buckets.length === 0 ? (
-        <p className="text-sm text-muted">{t('reports:empty')}</p>
-      ) : (
-        <table className="w-full text-sm">
-          <tbody>
-            {report.buckets.map((bucket) => (
-              <tr key={bucket.key ?? '∅'}>
-                <th scope="row" className="w-40 py-1 pr-3 text-left font-normal">
-                  {label(bucket)}
-                </th>
-                <td className="py-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-3 rounded bg-accent/40"
-                      style={{ width: `${String((bucket.count / biggest) * 100)}%` }}
-                      aria-hidden
-                    />
-                    <span className="tabular-nums text-xs text-muted">{bucket.count}</span>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <CountBars report={report} label={label} />
 
       {/*
         **숫자에서 목록으로 갈 수 있어야 한다.** "40건" 을 보고 "어떤 40건

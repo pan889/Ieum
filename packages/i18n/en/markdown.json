@@ -23,5 +23,10 @@
   "excerpt.needsPage": "This excerpt needs a page, like page=\"ENG/deploy\".",
   "excerpt.loading": "Loading the excerpt…",
   "excerpt.missing": "That page doesn't exist, or you can't see it.",
-  "excerpt.empty": "That page has no text yet."
+  "excerpt.empty": "That page has no text yet.",
+  "chart.needsQuery": "This chart needs a query, like query=\"project = OPS\".",
+  "chart.needsGroup": "This chart needs a group, like group=status.",
+  "chart.loading": "Counting…",
+  "chart.none": "Not set",
+  "chart.open": "Open these issues"
 }

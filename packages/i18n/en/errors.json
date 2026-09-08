@@ -222,6 +222,7 @@
   "issues.workflow_has_no_initial_state": "This workflow has no starting state. Ask an administrator to fix it.",
   "issues.worklog_future_date": "You can't log work in the future.",
   "issues.worklog_too_long": "That's more than one entry can hold.",
+  "markdown.directive_needs_group": "`::{directive}` needs a group (for example group=status).",
   "markdown.directive_needs_page": "`::{directive}` needs a page (for example page=\"ENG/deploy\").",
   "markdown.directive_needs_query": "`::{directive}` needs a query.",
   "markdown.invalid_directive_depth": "`::{directive}` needs a depth between 1 and {max}.",

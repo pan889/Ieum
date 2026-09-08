@@ -15,8 +15,9 @@ import { createContext, useContext, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { PageNode } from '@ieum/api-client'
-import { searchApi, usersApi, wikiApi } from '@/shared/api'
+import { reportsApi, searchApi, usersApi, wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { CountBars } from '@/shared/ui/CountBars'
 
 import { MarkdownHtml } from './Markdown'
 import { renderMarkdown } from './dialect'
@@ -93,6 +94,7 @@ function Part({ part, source }: { part: Rendered; source: string }) {
   if (segment.name === 'toc') return <Toc source={source} depth={depthOf(segment.attrs, 3)} />
   if (segment.name === 'children') return <Children depth={depthOf(segment.attrs, 1)} />
   if (segment.name === 'excerpt') return <Excerpt path={segment.attrs['page'] ?? ''} />
+  if (segment.name === 'chart') return <Chart attrs={segment.attrs} />
   return <Issues attrs={segment.attrs} />
 }
 
@@ -206,8 +208,7 @@ function Issues({ attrs }: { attrs: Record<string, string> }) {
     staleTime: 30_000,
   })
 
-  // 담당자 이름은 한 번에 받는다. 행마다 부르면 20행에 20번 나간다.
-  const names = useAssigneeNames(result.data?.items ?? [])
+  const names = useNames((result.data?.items ?? []).map((issue) => issue.assignee_id))
 
   if (iql === '') return <DirectiveNote>{t('markdown:issues.needsQuery')}</DirectiveNote>
   if (result.isPending) return <DirectiveNote>{t('markdown:issues.loading')}</DirectiveNote>
@@ -297,8 +298,14 @@ interface IssueRow {
 
 const NO_NAMES: ReadonlyMap<string, string> = new Map()
 
-function useAssigneeNames(rows: { assignee_id: string | null }[]): ReadonlyMap<string, string> {
-  const ids = [...new Set(rows.map((r) => r.assignee_id).filter((id): id is string => id !== null))]
+/**
+ * UUID 를 사람 이름으로. **한 번에 받는다** — 행마다 부르면 20행에 20번 나간다.
+ *
+ * `null` 을 받아 주는 이유: 담당자 없는 이슈와 "담당자 없음" 칸이 둘 다 그
+ * 모양으로 온다. 부르는 쪽이 걸러 내게 하면 두 자리에서 같은 걸러내기를 쓴다.
+ */
+function useNames(raw: (string | null)[]): ReadonlyMap<string, string> {
+  const ids = [...new Set(raw.filter((id): id is string => id !== null))]
   ids.sort()
   const result = useQuery<Map<string, string>>({
     queryKey: ['users', 'names', ids],
@@ -311,6 +318,82 @@ function useAssigneeNames(rows: { assignee_id: string | null }[]): ReadonlyMap<s
     placeholderData: (previous) => previous,
   })
   return result.data ?? NO_NAMES
+}
+
+/** `::chart` 가 그릴 막대 수. 서버(`directives.py`)와 같은 값이어야 한다. */
+const MAX_BARS = 50
+const DEFAULT_BARS = 10
+
+/** 키가 UUID 로 오는 기준. 이름을 붙여 줘야 읽을 수 있다. */
+const USER_GROUPS = ['assignee', 'reporter']
+
+/**
+ * `::chart{query=… group=… limit=…}` — 문서 안의 IQL 집계 (B9b).
+ *
+ * **세는 것은 리포트와 같은 자리다** (`POST /reports/count`, A29). 문서용으로
+ * 따로 세면 같은 질의가 두 화면에서 다른 수를 말하는 날이 온다. 권한도 그쪽이
+ * 거른다 — 볼 수 없는 이슈는 애초에 세어지지 않는다.
+ *
+ * 기준(`group`) 이름이 옳은지는 **서버가 판정한다.** 셀 수 있는 기준 목록은
+ * 이슈 모듈 것이고, 여기서 베껴 두면 기준이 하나 늘 때 화면만 모른다. 틀린
+ * 이름은 서버가 이유를 주고 그것을 그대로 그린다.
+ */
+function Chart({ attrs }: { attrs: Record<string, string> }) {
+  const { t } = useTranslation(['markdown'])
+  const iql = (attrs['query'] ?? '').trim()
+  const group = (attrs['group'] ?? '').trim().toLowerCase()
+  const bars = clampBars(attrs['limit'])
+
+  const result = useQuery({
+    queryKey: ['markdown', 'chart', iql, group],
+    queryFn: () => reportsApi.count({ iql, group_by: group }),
+    enabled: iql !== '' && group !== '',
+    staleTime: 30_000,
+  })
+
+  const report = result.data
+  const names = useNames(
+    report !== undefined && USER_GROUPS.includes(report.group_by)
+      ? report.buckets.map((bucket) => bucket.key)
+      : [],
+  )
+
+  if (iql === '') return <DirectiveNote>{t('markdown:chart.needsQuery')}</DirectiveNote>
+  if (group === '') return <DirectiveNote>{t('markdown:chart.needsGroup')}</DirectiveNote>
+  if (result.isPending) return <DirectiveNote>{t('markdown:chart.loading')}</DirectiveNote>
+  // 질의 문법도 기준 이름도 서버가 판정한다. 그 이유를 그대로 보여 준다.
+  if (result.isError) return <DirectiveNote tone="error">{describeError(result.error)}</DirectiveNote>
+
+  return (
+    <div className="ieum-directive my-3">
+      <CountBars
+        report={result.data}
+        bars={bars}
+        label={(bucket) => {
+          if (bucket.key === null) return t('markdown:chart.none')
+          return USER_GROUPS.includes(result.data.group_by)
+            ? (names.get(bucket.key) ?? bucket.key)
+            : bucket.key
+        }}
+      />
+      {/*
+        **숫자에서 목록으로 갈 수 있어야 한다.** "40건" 을 보고 "어떤 40건
+        인가" 를 물을 수 없으면 문서에 박힌 그림은 막다른 길이다.
+      */}
+      <Link
+        to="/issues"
+        search={{ iql }}
+        className="text-xs text-accent hover:underline"
+      >
+        {t('markdown:chart.open')}
+      </Link>
+    </div>
+  )
+}
+
+function clampBars(raw: string | undefined): number {
+  const value = raw ? Number(raw) : NaN
+  return Number.isInteger(value) && value >= 1 && value <= MAX_BARS ? value : DEFAULT_BARS
 }
 
 /**

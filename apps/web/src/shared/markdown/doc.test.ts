@@ -55,6 +55,13 @@ describe('모르는 것은 원문을 지킨다', () => {
     expect(cycle(source)).toBe(source)
   })
 
+  it('따옴표 안에 공백이 있는 인자도 그대로 둔다', () => {
+    // `::chart`·`::issues` 의 질의는 공백을 담는다. 왕복에서 따옴표가
+    // 벗겨지면 저장할 때 인자가 셋으로 쪼개져 저장이 거절된다.
+    const source = '::chart{query="project = OPS" group=status limit=5}'
+    expect(cycle(source)).toBe(source)
+  })
+
   it('각주 정의를 잃지 않는다', () => {
     const source = '본문[^1]\n\n[^1]: 각주 내용'
     expect(cycle(source)).toContain('[^1]: 각주 내용')

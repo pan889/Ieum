@@ -209,3 +209,79 @@ test('page 없는 ::excerpt 는 저장을 막는다', async ({ page, consoleErro
   // 저장이 막힌 것은 의도한 422 다.
   expect(consoleErrors.filter((e) => !e.startsWith('422'))).toEqual([])
 })
+
+test('::chart 는 IQL 집계를 막대로 그린다', async ({ page, consoleErrors }) => {
+  /**
+   * 세는 것은 리포트와 **같은 자리**다(A29). 브라우저로 보는 것은 사슬이
+   * 이어졌는가와, 그림이 **글자로도 읽히는가**다 — 색과 길이만으로 뜻을
+   * 전하면 화면 낭독기에는 아무것도 안 남는다(ux-principles 5절).
+   */
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  await createIssue(page, key, '첫 일')
+  await createIssue(page, key, '둘째 일')
+
+  const space = spaceKey()
+  await createSpace(page, space)
+  await page.goto(`/wiki/${space}`)
+  await writePage(page, 'Chart', `::chart{query="project = ${key}" group=status}`)
+
+  const chart = page.locator('.ieum-directive')
+  await expect(chart).toBeVisible()
+  // 이름과 수가 글자로 있어야 한다. 막대는 보조다. 시드 워크플로우의 첫
+  // 상태가 `Open` 이므로 두 이슈가 그 한 칸에 모인다.
+  await expect(chart.getByRole('rowheader', { name: 'Open' })).toBeVisible()
+  await expect(chart.getByRole('cell', { name: '2' })).toBeVisible()
+  // 숫자에서 목록으로 갈 수 있어야 한다.
+  const open = chart.getByRole('link')
+  await expect(open).toHaveAttribute('href', new RegExp(`iql=.*${key}`))
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('::chart 는 그리지 않은 칸이 몇 개인지 말한다', async ({ page, consoleErrors }) => {
+  // 조용히 자르면 문서가 "이게 전부" 라고 거짓말을 한다.
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+  // **칸이 둘이어야 자를 것이 생긴다.** 우선순위를 다르게 준다.
+  await createIssue(page, key, '급한 일', { priority: '1' })
+  await createIssue(page, key, '느긋한 일', { priority: '4' })
+
+  const space = spaceKey()
+  await createSpace(page, space)
+  await page.goto(`/wiki/${space}`)
+  await writePage(page, 'Cut', `::chart{query="project = ${key}" group=priority limit=1}`)
+
+  const chart = page.locator('.ieum-directive')
+  await expect(chart).toBeVisible()
+  await expect(chart.getByRole('rowheader')).toHaveCount(1)
+  // 총계는 두 건이고 그린 막대는 하나다. 그 차이를 말해야 한다.
+  await expect(chart).toContainText('2 issues in total')
+  await expect(chart).toContainText(/1 more group not shown/i)
+
+  expect(consoleErrors).toEqual([])
+})
+
+test('::chart 의 기준 이름이 틀리면 이유를 말한다', async ({ page, consoleErrors }) => {
+  /**
+   * 셀 수 있는 기준은 서버가 들고 있다. 화면이 목록을 베껴 두면 기준이 하나
+   * 늘 때 화면만 모르므로, 판정은 서버에 맡기고 **그 이유를 그린다.**
+   * 저장은 통과해야 한다 — 커널은 기준 목록을 모른다.
+   */
+  const key = projectKey()
+  await signIn(page)
+  await createProject(page, key)
+
+  const space = spaceKey()
+  await createSpace(page, space)
+  await page.goto(`/wiki/${space}`)
+  await writePage(page, 'Bad group', `::chart{query="project = ${key}" group=summary}`)
+
+  // 저장이 됐고(제목이 보인다), 그 자리에 이유가 그려진다.
+  await expect(page.getByRole('heading', { name: 'Bad group' })).toBeVisible()
+  await expect(page.locator('.ieum-directive')).toContainText(/count|기준/i)
+
+  expect(consoleErrors).toEqual([])
+})

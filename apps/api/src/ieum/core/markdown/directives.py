@@ -49,8 +49,10 @@ CHILDREN = "children"
 ISSUES = "issues"
 #: 다른 문서의 앞부분. 권한은 서버가 거른다 — 못 보는 문서는 존재도 모른다.
 EXCERPT = "excerpt"
+#: IQL 집계를 막대로. 세는 것은 리포트와 **같은 자리**다 (A29).
+CHART = "chart"
 
-LEAF_NAMES = (TOC, CHILDREN, ISSUES, EXCERPT)
+LEAF_NAMES = (TOC, CHILDREN, ISSUES, EXCERPT, CHART)
 
 #: 강조 상자. 이름이 곧 톤이다.
 CONTAINER_NAMES = ("info", "note", "tip", "warning", "danger")
@@ -64,6 +66,14 @@ MAX_TOC_DEPTH = 6
 MAX_CHILDREN_DEPTH = 6
 MAX_ISSUE_ROWS = 100
 DEFAULT_ISSUE_ROWS = 20
+
+#: `::chart` 가 그릴 막대 수의 상한.
+#:
+#: 리포트 화면은 칸을 다 그리지만 문서는 다르다: 담당자로 묶으면 사람 수만큼
+#: 막대가 나오고, 그게 문서 한가운데를 몇 화면 밀어낸다. 상한에서 잘리면
+#: **몇 칸이 안 그려졌는지 말한다** — 조용히 자르면 문서가 거짓말을 한다.
+MAX_CHART_BARS = 50
+DEFAULT_CHART_BARS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +133,9 @@ def validate(directive: Directive) -> None:
     elif name == EXCERPT:
         _reject_unknown_keys(directive, {"page"})
         _excerpt(directive)
+    elif name == CHART:
+        _reject_unknown_keys(directive, {"query", "group", "limit"})
+        _chart(directive)
 
 
 def _fail(directive: Directive, message: str, *, code: str, **details: Any) -> ValidationError:
@@ -218,6 +231,43 @@ def _issues(directive: Directive) -> None:
         )
 
 
+def _chart(directive: Directive) -> None:
+    """`::chart{query=… group=… limit=…}`.
+
+    **`group` 의 이름이 옳은지는 여기서 못 본다.** 셀 수 있는 기준은 이슈
+    모듈이 들고 있고(`reports.GROUPS`) 여기는 커널이라 그것을 모른다 — 모듈
+    경계다. `::issues{query}` 의 IQL 과 같은 처지고, 같게 다룬다: 여기서는
+    "비어 있지 않은가" 까지 보고, 이름은 보는 시점에 리포트 API 가 판정해
+    화면이 그 이유를 그린다.
+
+    비어 있는 것은 여기서 잡는다. 기본값을 두지 않는 이유는 `::issues` 와
+    같다: 무엇을 세는지 안 적혀 있으면 그릴 것이 정해지지 않고, "전부" 를
+    기본으로 두면 실수로 설치 전체를 세는 그림이 문서에 박힌다.
+    """
+    if not directive.attrs.get("query", "").strip():
+        raise _fail(
+            directive,
+            "`::chart` 에는 query 가 필요하다.",
+            code="markdown.directive_needs_query",
+        )
+    if not directive.attrs.get("group", "").strip():
+        raise _fail(
+            directive,
+            "`::chart` 에는 group 이 필요하다.",
+            code="markdown.directive_needs_group",
+        )
+
+    limit = directive.attrs.get("limit", "").strip()
+    if limit and (not limit.isdigit() or not 1 <= int(limit) <= MAX_CHART_BARS):
+        raise _fail(
+            directive,
+            f"limit 은 1 이상 {MAX_CHART_BARS} 이하의 정수여야 한다.",
+            code="markdown.invalid_directive_limit",
+            value=limit,
+            max=MAX_CHART_BARS,
+        )
+
+
 def _split_columns(raw: str) -> list[str]:
     return [part.strip().lower() for part in raw.split(",") if part.strip()]
 
@@ -254,14 +304,18 @@ def validate_source(text: str) -> None:
 
 
 __all__ = [
+    "CHART",
     "CHILDREN",
     "CONTAINER_NAMES",
     "CONTAINER_OPEN_RE",
+    "DEFAULT_CHART_BARS",
     "DEFAULT_ISSUE_ROWS",
+    "EXCERPT",
     "ISSUES",
     "ISSUE_COLUMNS",
     "LEAF_NAMES",
     "LEAF_RE",
+    "MAX_CHART_BARS",
     "MAX_CHILDREN_DEPTH",
     "MAX_ISSUE_ROWS",
     "MAX_TOC_DEPTH",

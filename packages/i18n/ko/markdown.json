@@ -23,5 +23,10 @@
   "excerpt.needsPage": "인용할 문서를 적어야 합니다. 예: page=\"ENG/deploy\"",
   "excerpt.loading": "인용을 가져오는 중…",
   "excerpt.missing": "그런 문서가 없거나 볼 수 없습니다.",
-  "excerpt.empty": "그 문서에는 아직 본문이 없습니다."
+  "excerpt.empty": "그 문서에는 아직 본문이 없습니다.",
+  "chart.needsQuery": "이 차트에는 query 가 필요합니다 — 예: query=\"project = OPS\".",
+  "chart.needsGroup": "이 차트에는 group 이 필요합니다 — 예: group=status.",
+  "chart.loading": "세는 중…",
+  "chart.none": "값 없음",
+  "chart.open": "이 이슈들 보기"
 }
