@@ -39,6 +39,12 @@ class RoomRegistry:
     def __init__(self, *, sessions: SessionSource = get_session_factory) -> None:
         self._rooms: dict[UUID, Room] = {}
         self._holders: dict[UUID, int] = {}
+        #: 닫히는 중인 방의 닫기 태스크. **다음 `acquire` 가 이것을 기다린다.**
+        #:
+        #: 닫기는 마지막 저장을 포함한다. 기다리지 않으면 새로고침이 저장 전의
+        #: 상태를 읽고 방금 친 글이 없는 문서가 뜬다 — 오류 하나 없이. 새로고침은
+        #: "닫고 곧바로 연다" 라서 이 창에 정확히 들어간다.
+        self._closing: dict[UUID, asyncio.Task[None]] = {}
         self._redis: Redis | None = None
         self._lock = asyncio.Lock()
         self._sessions = sessions
@@ -56,6 +62,18 @@ class RoomRegistry:
 
     async def acquire(self, page_id: UUID, redis_url: str) -> Room:
         async with self._lock:
+            # 이 문서가 닫히는 중이면 **저장이 끝나기를 기다린다.** 안 기다리면
+            # 저장 전의 상태를 심고, 닫히던 방이 들고 있던 글이 사라진다.
+            # 꺼내지 않고 **본다.** 기다리는 중에 이 붙기가 취소되면(소켓이
+            # 핸드셰이크 도중에 끊기면) 꺼내 둔 것은 아무도 안 기다리게 되고,
+            # 그 다음 붙기가 저장 전의 상태를 심는다. 치우는 것은 닫기가
+            # 끝날 때 콜백이 한다.
+            closing = self._closing.get(page_id)
+            if closing is not None:
+                # `shield` 로 감싼다: 이 붙기가 취소돼도 **닫기는 끝까지 간다.**
+                # 중간에 끊긴 닫기는 마지막 저장을 안 남긴다.
+                await asyncio.shield(closing)
+
             self._holders[page_id] = self._holders.get(page_id, 0) + 1
             room = self._rooms.get(page_id)
             if room is not None:
@@ -77,10 +95,20 @@ class RoomRegistry:
                 return
             self._holders.pop(page_id, None)
             room = self._rooms.pop(page_id, None)
-        if room is not None:
-            # 잠금 밖에서 닫는다. 닫기는 저장을 기다리므로, 안에서 하면 그
-            # 문서에 새로 붙는 사람이 저장이 끝날 때까지 막힌다.
-            await room.stop()
+            if room is None:
+                return
+            # 닫기는 마지막 저장을 기다리므로 여기서 기다리지 않는다 — 소켓이
+            # 끊기는 자리라 붙잡아 둘 이유가 없다. 대신 **그 태스크를
+            # 기억한다**: 다음 `acquire` 가 그것을 기다려야 저장 전의 상태를
+            # 심지 않는다.
+            task = asyncio.create_task(room.stop())
+            self._closing[page_id] = task
+            task.add_done_callback(lambda done: self._forget(page_id, done))
+
+    def _forget(self, page_id: UUID, task: asyncio.Task[None]) -> None:
+        # 그 사이 새 닫기가 등록됐으면 그것을 지우지 않는다.
+        if self._closing.get(page_id) is task:
+            del self._closing[page_id]
 
     def _client(self, redis_url: str) -> Redis:
         if self._redis is None:
@@ -88,10 +116,18 @@ class RoomRegistry:
         return self._redis
 
     async def aclose(self) -> None:
-        """앱이 내려갈 때. 방을 다 닫고 **저장까지 기다린다.**"""
+        """앱이 내려갈 때. 방을 다 닫고 **저장까지 기다린다.**
+
+        `release` 는 닫기를 태스크로 띄우므로 여기서 그 태스크들을 모아
+        기다린다. 안 기다리면 프로세스가 내려가면서 마지막 몇 초의 편집이
+        사라진다.
+        """
         for page_id in list(self._rooms):
             self._holders[page_id] = 1
             await self.release(page_id)
+        pending = list(self._closing.values())
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None

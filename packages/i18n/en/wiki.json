@@ -93,6 +93,8 @@
   "diff.same": "No text changes.",
   "diff.truncated": "Long document — showing the first part only.",
   "draft.restored": "Restored your unsaved edit from {when}.",
+  "draft.sharedUnsaved": "This page has a shared edit nobody has published yet.",
+  "draft.sharedSaved": "Draft saved — shared with everyone editing",
   "draft.discard": "Discard it",
   "draft.saving": "Saving…",
   "draft.savedAt": "Draft saved {when}",

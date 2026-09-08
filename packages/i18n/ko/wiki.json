@@ -93,6 +93,8 @@
   "diff.same": "본문이 같다.",
   "diff.truncated": "문서가 길어 앞부분만 보여 준다.",
   "draft.restored": "{when} 에 저장해 둔 편집을 불러왔다.",
+  "draft.sharedUnsaved": "이 문서에 아직 아무도 게시하지 않은 공유 편집이 있다.",
+  "draft.sharedSaved": "초안 저장 — 같이 편집하는 사람 모두에게",
   "draft.discard": "버리기",
   "draft.saving": "저장 중…",
   "draft.savedAt": "초안 저장 {when}",

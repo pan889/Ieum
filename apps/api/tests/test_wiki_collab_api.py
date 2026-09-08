@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from pycrdt import Doc, Text, create_update_message
 from redis.asyncio import Redis
 from redis.asyncio import from_url as redis_from_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,6 +32,7 @@ from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, Scope, set_permission_service
 from ieum.modules.identity.models import User
 from ieum.modules.org.repository import OrgPermissionResolver
+from ieum.modules.wiki import collab
 from ieum.modules.wiki import permissions as wiki_perms
 from ieum.modules.wiki.collab_router import (
     TICKET_TTL_SECONDS,
@@ -327,5 +330,58 @@ class TestTheRegistry:
         finally:
             await rooms.aclose()
 
+    async def test_reopening_while_it_closes_waits_for_the_save(
+        self, app_client: httpx.AsyncClient, engine: object
+    ) -> None:
+        """**새로고침이 저장 전의 상태를 심지 않는다.**
+
+        새로고침은 "닫고 곧바로 연다" 다. 닫기는 마지막 저장을 포함하는데 그
+        저장을 기다리지 않고 새 방을 심으면, 방금 친 글이 없는 문서가 뜬다 —
+        오류 하나 없이. 스냅샷 주기(3초)가 지나지 않은 편집이 정확히 이
+        창으로 사라진다.
+
+        여기서는 그 창을 손으로 만든다: 닫기를 태스크로 띄워 방을 등록에서
+        빼게만 하고(`sleep(0)`), 곧바로 다시 잡는다.
+        """
+        headers = await _auth(app_client)
+        page = await _page_over_api(app_client, headers)
+        page_id = UUID(page["id"])
+
+        rooms = RoomRegistry(sessions=_sessions(engine))  # type: ignore[arg-type]
+        try:
+            room = await rooms.acquire(page_id, REDIS_URL)
+            # 스냅샷은 `saved_by` 를 남기므로 **실제 계정**이어야 한다.
+            me = await app_client.get(f"{BASE}/auth/me", headers=headers)
+            assert me.status_code == 200, me.text
+            typist = collab.Client(user_id=UUID(me.json()["id"]), send=_swallow)
+            await room.join(typist)
+            await room.handle(typist, _typed("스냅샷 전에 친 글"))
+            typed = room.body()
+            assert "스냅샷 전에 친 글" in typed
+
+            leaving = asyncio.create_task(rooms.release(page_id))
+            await asyncio.sleep(0)  # 등록에서 빠질 틈만 준다
+            reopened = await rooms.acquire(page_id, REDIS_URL)
+            await leaving
+
+            assert reopened is not room, "닫히던 방을 그대로 돌려줬다"
+            # 새 방은 닫히던 방이 들고 있던 것을 그대로 들고 있어야 한다.
+            assert reopened.body() == typed, "저장 전의 상태를 심었다"
+        finally:
+            await rooms.aclose()
+
     async def test_it_counts_nobody_for_a_room_that_is_not_open(self) -> None:
         assert RoomRegistry().editors(uuid4()) == 0
+
+
+async def _swallow(_message: bytes) -> None:
+    return None
+
+
+def _typed(text: str) -> bytes:
+    """그 글자를 넣는 SYNC_UPDATE 한 통. 클라이언트가 보내는 것과 같은 모양."""
+    doc: Doc[Text] = Doc()
+    doc[collab.BODY_KEY] = Text()
+    before = doc.get_state()
+    doc[collab.BODY_KEY] += text
+    return create_update_message(doc.get_update(before))

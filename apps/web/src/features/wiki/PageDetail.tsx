@@ -263,6 +263,18 @@ function PageEditorForm({
   )
   const shared = collab.text !== null
   const text = shared ? (collab.text ?? '') : body
+  /**
+   * **공유 문서가 곧 초안이다.**
+   *
+   * 붙어 있으면 개인 초안을 안 쓴다(아래). 그런데 화면의 "초안 저장됨" 과
+   * "버리기" 는 개인 초안만 알고 있었으므로, 붙은 뒤에는 저장 안 한 편집이
+   * 남는데도 그렇게 말해 주는 것이 하나도 없고 버리기는 눌러도 아무 일이
+   * 없었다 — 브라우저 시험 둘이 그 자리에서 붉었다.
+   *
+   * 지금은 공유 문서를 초안으로 본다: 게시된 본문과 다르면 "저장 안 한
+   * 편집이 있다" 이고, 버리면 그 문서를 게시된 본문으로 되돌린다.
+   */
+  const sharedDirty = shared && text !== page.body
   const setText = (next: string) => {
     if (shared) collab.write(next)
     else setBody(next)
@@ -314,7 +326,14 @@ function PageEditorForm({
   })
 
   const discard = useMutation({
-    mutationFn: () => wikiApi.pages.draft.discard(page.id),
+    mutationFn: async () => {
+      // **공유 문서를 먼저 되돌린다.** 개인 초안만 지우면 화면은 그대로
+      // 공유 문서를 보여 주므로 버리기가 아무 일도 안 한 것처럼 보인다.
+      // 되돌리기도 편집이므로 같이 보고 있는 사람의 화면에서도 그렇게 된다 —
+      // 그게 맞다: 버린 편집을 남이 계속 보고 있을 이유가 없다.
+      if (shared) collab.write(page.body)
+      await wikiApi.pages.draft.discard(page.id)
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['wiki', 'draft', page.id] })
       setTitle(page.title)
@@ -330,9 +349,11 @@ function PageEditorForm({
         onSubmit={(event) => { event.preventDefault(); save.mutate() }}
       >
         {save.isError ? <Alert>{describeError(save.error)}</Alert> : null}
-        {restored ? (
+        {restored || sharedDirty ? (
           <p className="flex items-baseline gap-2 text-xs text-muted">
-            {t('wiki:draft.restored', { when: formatDateTime(draft.updated_at) })}
+            {restored
+              ? t('wiki:draft.restored', { when: formatDateTime(draft.updated_at) })
+              : t('wiki:draft.sharedUnsaved')}
             <Button
               variant="ghost"
               className="text-xs"
@@ -379,12 +400,19 @@ function PageEditorForm({
           </Button>
           {/* 자동 저장은 조용해야 한다. 다만 저장됐다는 사실은 보여야
               사람이 창을 닫을 수 있다. */}
+          {/*
+            공유 문서일 때도 저장됐다는 말을 한다. 방이 몇 초마다, 그리고
+            **닫을 때 반드시** 남기므로(`rooms.py`) 창을 닫아도 남는다 —
+            그것이 사람이 이 줄을 보고 판단하는 것이다.
+          */}
           <span className="text-xs text-muted">
             {autosave.isPending
               ? t('wiki:draft.saving')
-              : savedAt
-                ? t('wiki:draft.savedAt', { when: formatDateTime(savedAt) })
-                : ''}
+              : sharedDirty
+                ? t('wiki:draft.sharedSaved')
+                : savedAt
+                  ? t('wiki:draft.savedAt', { when: formatDateTime(savedAt) })
+                  : ''}
           </span>
         </div>
       </form>

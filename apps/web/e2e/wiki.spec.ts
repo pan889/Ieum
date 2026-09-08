@@ -169,6 +169,14 @@ test('판 사이 차이를 줄 단위로 본다', async ({ page, consoleErrors }
 })
 
 test('저장하지 않고 떠나도 편집이 남는다', async ({ page, consoleErrors }) => {
+  /**
+   * 지키는 약속은 **"저장 안 한 편집이 남는다"** 다. 그것을 들고 있는 것이
+   * 개인 초안(`page_draft`)이 아니라 공유 문서(`page_collab`)로 바뀌었다
+   * (B16) — 같이 편집하는 자리에서는 "내 초안" 이라는 것이 없으므로.
+   *
+   * 그래서 여기서 보는 것은 기계가 아니라 약속이다: 친 글이 남아 있는가,
+   * 화면이 그렇다고 말하는가, 게시한 뒤에는 그 말이 사라지는가.
+   */
   const key = spaceKey()
   await signIn(page)
   await createSpace(page, key)
@@ -177,20 +185,22 @@ test('저장하지 않고 떠나도 편집이 남는다', async ({ page, console
 
   await page.getByRole('button', { name: /^edit$/i }).click()
   await writeBody(page, '한참 쓰다 만 글이다.')
-  // 손을 멈추면 저장한다.
   await expect(page.getByText(/draft saved/i)).toBeVisible()
 
   // 창을 닫았다 다시 연 셈이다.
   await page.reload()
   await page.getByRole('button', { name: /^edit$/i }).click()
-  await expect(page.getByText(/restored your unsaved edit/i)).toBeVisible()
+  // **아직 아무도 게시하지 않은 편집이 있다고 말한다.** 안 말하면 사람은
+  // 지금 보는 글이 게시된 본문인 줄 안다.
+  await expect(page.getByText(/nobody has published/i)).toBeVisible()
   await expect(await bodyField(page)).toHaveValue('한참 쓰다 만 글이다.')
 
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByText('한참 쓰다 만 글이다.')).toBeVisible()
 
-  // 저장했으면 초안은 할 일을 다했다. 남기면 다음에 열 때 거짓말을 한다.
+  // 게시했으면 "안 게시한 편집" 은 없다. 남기면 다음에 열 때 거짓말이 된다.
   await page.getByRole('button', { name: /^edit$/i }).click()
+  await expect(page.getByText(/nobody has published/i)).toHaveCount(0)
   await expect(page.getByText(/restored your unsaved edit/i)).toHaveCount(0)
 
   expect(consoleErrors).toEqual([])
@@ -212,9 +222,13 @@ test('초안을 버리면 저장된 본문으로 돌아간다', async ({ page, c
   await expect(page.getByText(/draft saved/i)).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: /^edit$/i }).click()
+  await expect(await bodyField(page)).toHaveValue('버릴 편집')
   await page.getByRole('button', { name: /discard it/i }).click()
 
+  // **버리기는 공유 문서까지 되돌린다.** 개인 초안만 지우면 화면은 그대로
+  // 공유 문서를 보여 주므로 눌러도 아무 일이 없는 것처럼 보인다.
   await expect(await bodyField(page)).toHaveValue('저장된 본문')
+  await expect(page.getByText(/nobody has published/i)).toHaveCount(0)
 
   expect(consoleErrors).toEqual([])
 })
