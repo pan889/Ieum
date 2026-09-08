@@ -310,10 +310,22 @@ export async function stepUpToken(page: Page): Promise<string> {
   const token = ((await signedIn.json()) as { access_token: string }).access_token
 
   // 로그인만으로는 "미완료" 세션이다. 여기서 증명해야 step-up 이 열린다.
-  const verified = await page.request.post(`${API}/api/v1/auth/mfa/verify`, {
+  //
+  // **거절당하면 다음 스텝으로 한 번 더 시도한다.** `signInWithMfa` 와 같은
+  // 이유다: 서버는 "맞은 코드의 스텝 이하" 를 거절하고 맞는 스텝을 ±1 에서
+  // 찾으므로, 앞 시험이 방금 통과한 직후에는 새 코드도 이전 스텝으로
+  // 맞춰질 수 있다. 한 스펙에서 두 경로를 다 쓰면 실제로 그렇게 붉어진다.
+  let verified = await page.request.post(`${API}/api/v1/auth/mfa/verify`, {
     headers: { Authorization: `Bearer ${token}` },
     data: { code: await freshCode(page) },
   })
+  for (let attempt = 0; attempt < 2 && !verified.ok(); attempt += 1) {
+    verified = await page.request.post(`${API}/api/v1/auth/mfa/verify`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { code: await freshCode(page) },
+    })
+  }
+  // 세 번 다 거절이면 스텝 문제가 아니다 — 비밀이 어긋난 것이다.
   expect(verified.ok(), await verified.text()).toBe(true)
   cached = { token, at: Date.now() }
   return token

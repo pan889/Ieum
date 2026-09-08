@@ -55,11 +55,16 @@ test.describe('SCIM 프로비저닝', () => {
     const row = page.locator('li').filter({ hasText: name })
     await expect(row).toBeVisible()
 
-    // 아직 한 번도 안 왔다고 말한다. 안 보이면 프로비저닝이 도는지 확인할
-    // 방법이 없다.
-    await expect(row.getByText(/nothing has arrived yet/i)).toBeVisible()
+    if (existing === undefined) {
+      // 아직 한 번도 안 왔다고 말한다. 안 보이면 프로비저닝이 도는지 확인할
+      // 방법이 없다. **처음 만든 때만 본다** — 같은 DB 로 두 번 돌려도
+      // 통과해야 하고, 두 번째에는 앞 실행이 남긴 "마지막 요청" 이 있다.
+      await expect(row.getByText(/nothing has arrived yet/i)).toBeVisible()
+    }
 
-    await row.getByRole('button', { name: /^issue token$/i }).click()
+    // 처음이면 "Issue token", 이미 있으면 "Reissue token" 이다. 어느 쪽이든
+    // 새 토큰을 받고 옛 것은 죽는다.
+    await row.getByRole('button', { name: /^(re)?issue token$/i }).click()
     await expect(row.getByText(/shown once/i)).toBeVisible()
     const issued = (await row.locator('code').innerText()).trim()
     expect(issued.length).toBeGreaterThan(20)

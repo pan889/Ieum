@@ -186,6 +186,21 @@ class ObjectStore:
 
         await asyncio.to_thread(_delete)
 
+    async def reachable(self) -> bool:
+        """버킷에 닿는가. **준비 상태 확인용**이라 아무것도 안 바꾼다.
+
+        `head_bucket` 은 목록을 안 읽으므로 버킷이 아무리 커도 싸다.
+        """
+
+        def _probe() -> bool:
+            try:
+                self._client.head_bucket(Bucket=self._bucket)
+            except Exception:
+                return False
+            return True
+
+        return await asyncio.to_thread(_probe)
+
     async def ensure_bucket(self) -> None:
         """개발·테스트 편의. 운영에서는 인프라가 미리 만든다."""
 

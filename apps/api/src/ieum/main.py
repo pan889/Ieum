@@ -9,10 +9,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from redis.asyncio import Redis
+from redis.asyncio import from_url as redis_from_url
 from sqlalchemy import text
 from starlette.responses import Response
 
@@ -21,9 +23,20 @@ import ieum.event_catalog  # noqa: F401
 from ieum.config import Settings, get_settings
 from ieum.core.attachment_router import attachments_router
 from ieum.core.errors import install_exception_handlers
+from ieum.core.heartbeat import all_beats
 from ieum.core.logging import configure_logging, get_logger
+from ieum.core.metrics import (
+    OUTBOX_OLDEST_AGE,
+    OUTBOX_PENDING,
+    WORKER_FAILING,
+    WORKER_LAST_DURATION,
+    WORKER_LAST_RUN,
+)
 from ieum.core.middleware import TraceMiddleware
+from ieum.core.outbox import outbox_backlog
 from ieum.core.permissions import PermissionService, set_permission_service
+from ieum.core.storage import ObjectStore
+from ieum.core.time import utcnow
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
 from ieum.modules.desk.router import (
     automation_router,
@@ -71,34 +84,96 @@ log = get_logger(__name__)
 API_PREFIX = "/api/v1"
 
 
-def _build_ops_router() -> APIRouter:
+def _build_ops_router(settings: Settings) -> APIRouter:
     """운영 엔드포인트. API 버전 접두사를 붙이지 않는다."""
     router = APIRouter(include_in_schema=False)
 
     @router.get("/healthz")
     async def healthz() -> dict[str, str]:
-        """liveness. 의존 서비스를 확인하지 않는다."""
+        """liveness. 의존 서비스를 확인하지 않는다.
+
+        여기서 DB 를 보면 **DB 가 흔들릴 때 앱이 재시작된다** — 오케스트레이터는
+        liveness 실패를 "프로세스가 망가졌다" 로 읽고 죽인다. 살아 있음과
+        일할 수 있음은 다른 질문이고, 뒤쪽이 `/readyz` 다.
+        """
         return {"status": "ok"}
 
     @router.get("/readyz")
-    async def readyz() -> dict[str, Any]:
-        """readiness. DB 를 실제로 찔러본다."""
-        checks: dict[str, str] = {}
-        try:
-            async with get_session_factory()() as session:
-                await session.execute(text("SELECT 1"))
-            checks["database"] = "ok"
-        except Exception as exc:
-            checks["database"] = f"error: {type(exc).__name__}"
+    async def readyz(response: Response) -> dict[str, Any]:
+        """readiness. 의존 서비스를 **실제로 찔러본다.**
 
-        ready = all(v == "ok" for v in checks.values())
+        **몸이 아니라 상태 코드로 말한다.** 로드밸런서는 본문을 안 읽는다 —
+        200 에 `"degraded"` 를 담으면 죽은 인스턴스로 트래픽이 계속 온다.
+        한동안 그렇게 되어 있었다.
+
+        DB 만 보지 않는다. Redis 가 죽으면 워커가 아무것도 못 하고, S3 가
+        죽으면 첨부가 통째로 안 된다 — 둘 다 "일할 수 있다" 가 아니다.
+        """
+        checks = await _probe(settings)
+        ready = all(value == "ok" for value in checks.values())
+        if not ready:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "ready" if ready else "degraded", "checks": checks}
 
     @router.get("/metrics")
     async def metrics() -> Response:
+        # 긁을 때 채우는 값들. 카운터는 요청마다 늘지만, "지금 몇 개 밀려
+        # 있나" 는 물어봐야 안다.
+        await _sample_gauges()
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return router
+
+
+async def _probe(settings: Settings) -> dict[str, str]:
+    """의존 서비스 셋을 찔러본다. 하나가 죽어도 나머지를 마저 본다 —
+    운영자는 "무엇이" 죽었는지를 알아야 한다."""
+    checks: dict[str, str] = {}
+
+    try:
+        async with get_session_factory()() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {type(exc).__name__}"
+
+    try:
+        # `redis.asyncio.from_url` 에는 타입이 없다. 여기서만 좁혀 쓴다.
+        client: Redis = redis_from_url(settings.redis_url)  # type: ignore[no-untyped-call]
+        try:
+            await client.ping()
+            checks["redis"] = "ok"
+        finally:
+            await client.aclose()
+    except Exception as exc:
+        checks["redis"] = f"error: {type(exc).__name__}"
+
+    try:
+        checks["storage"] = "ok" if await ObjectStore(settings).reachable() else "error: bucket"
+    except Exception as exc:
+        checks["storage"] = f"error: {type(exc).__name__}"
+
+    return checks
+
+
+async def _sample_gauges() -> None:
+    """긁는 순간의 값들. **실패해도 응답은 준다** — 지표를 못 읽는 것과
+    앱이 죽는 것은 다르다."""
+    try:
+        async with get_session_factory()() as session:
+            pending, oldest = await outbox_backlog(session)
+            OUTBOX_PENDING.set(pending)
+            OUTBOX_OLDEST_AGE.set(oldest)
+            now = utcnow()
+            for row in await all_beats(session):
+                WORKER_LAST_RUN.labels(row.task).set(row.finished_at.timestamp())
+                WORKER_LAST_DURATION.labels(row.task).set(row.duration_seconds)
+                WORKER_FAILING.labels(row.task).set(1 if row.last_error else 0)
+                # 나이는 프로메테우스가 계산한다(`time() - last_run`). 여기서
+                # 미리 빼 두면 긁는 간격만큼 어긋난다.
+                del now
+    except Exception as exc:
+        log.warning("metrics.sample_failed", error=f"{type(exc).__name__}: {exc}")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -136,7 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     install_exception_handlers(app)
-    app.include_router(_build_ops_router())
+    app.include_router(_build_ops_router(settings))
 
     # 권한 리졸버 배선. core 는 org 를 import 하지 않으므로 여기서 꽂아 넣는다.
     permissions = PermissionService(

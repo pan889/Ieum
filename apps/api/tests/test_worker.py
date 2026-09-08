@@ -393,6 +393,23 @@ class TestSweep:
             "emails": 0,
         }
 
+    async def test_it_leaves_a_heartbeat(
+        self, worker_env: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """**워커가 죽으면 아무 일도 안 일어나는데 화면은 멀쩡하다.**
+
+        밖에서 그것을 알 수 있는 유일한 방법이 이 한 줄이다 — 없으면 로그를
+        읽는 사람만 알 수 있고, 아무도 안 읽는다.
+        """
+        from ieum.core.heartbeat import all_beats
+
+        await sweep()
+        async with worker_env() as session:
+            rows = await all_beats(session)
+        assert [row.task for row in rows] == ["sweep"]
+        assert rows[0].last_error is None
+        assert rows[0].duration_seconds >= 0
+
     async def test_idle_sweep_is_cheap(self, worker_env: async_sessionmaker[AsyncSession]) -> None:
         assert await sweep() == {
             "outbox": 0,

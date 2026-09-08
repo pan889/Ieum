@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, select, text
+from sqlalchemy import DateTime, Index, Integer, String, Text, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -53,6 +53,29 @@ class OutboxEvent(Entity):
         ),
         Index("ix_outbox_event_aggregate", "aggregate_type", "aggregate_id"),
     )
+
+
+async def outbox_backlog(session: AsyncSession) -> tuple[int, float]:
+    """아직 안 나간 이벤트 수와, 그중 가장 오래된 것의 나이(초).
+
+    **개수보다 나이가 말해 준다.** 백 건이 방금 들어온 것은 정상이고, 한
+    건이 열 분째 남아 있는 것은 워커가 죽었거나 그 한 건이 계속 실패하는
+    것이다. 둘을 개수로만 보면 구별되지 않는다.
+
+    재시도 상한을 넘긴 행도 센다. 그것들은 영원히 안 나가므로, 안 세면
+    "밀린 것 없음" 인 채로 조용히 쌓인다.
+    """
+    row = (
+        await session.execute(
+            select(
+                func.count(OutboxEvent.id),
+                func.min(OutboxEvent.created_at),
+            ).where(OutboxEvent.published_at.is_(None))
+        )
+    ).one()
+    pending = int(row[0] or 0)
+    oldest: datetime | None = row[1]
+    return pending, (utcnow() - oldest).total_seconds() if oldest is not None else 0.0
 
 
 def publish(session: AsyncSession, event: DomainEvent) -> OutboxEvent:

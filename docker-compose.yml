@@ -134,6 +134,7 @@ services:
       - ./deploy/compose/fake-idp:/app/fake-idp:ro
 
   api:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -144,6 +145,10 @@ services:
     volumes:
       - ./apps/api/src:/app/src
       - ./packages/i18n:/app/packages/i18n:ro
+      # **가상환경을 컨테이너 밖에 둔다.** 이미지 레이어에 두면 컨테이너를
+      # 다시 만들 때(`up -d` 가 그렇게 한다) 그 안에 넣어 둔 것이 사라지고,
+      # 앱은 "모듈이 없다" 로 죽는다 — 코드는 그대로인데.
+      - ieum_api_venv:/app/.venv
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -154,6 +159,10 @@ services:
       retries: 10
 
   worker:
+    # **죽으면 되살아난다.** 워커는 Redis 가 잠깐 끊기면 arq 가 그대로
+    # 빠져나간다 — 그러면 아웃박스가 조용히 쌓인다(알림·메일·웹훅·SLA
+    # 가 전부 멈추는데 화면은 멀쩡하다). 실제로 그렇게 멈췄다.
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -163,6 +172,9 @@ services:
     volumes:
       - ./apps/api/src:/app/src
       - ./packages/i18n:/app/packages/i18n:ro
+      # api 와 **같은 볼륨**이다. 같은 이미지를 쓰므로 두 벌 둘 이유가 없고,
+      # 두 벌이면 한쪽만 고쳐지는 날이 온다.
+      - ieum_api_venv:/app/.venv
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -187,6 +199,7 @@ services:
       - ieum_pnpm_store:/pnpm
 
 volumes:
+  ieum_api_venv:
   ieum_pgdata:
   ieum_redisdata:
   ieum_miniodata:

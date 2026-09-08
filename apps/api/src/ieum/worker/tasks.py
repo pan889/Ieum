@@ -13,6 +13,7 @@ DB 트랜잭션을 붙잡고 있으면 락이 쌓인다.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ieum.config import get_settings
 from ieum.core.attachments import AttachmentService
 from ieum.core.crypto import SecretBox
+from ieum.core.heartbeat import beat
 from ieum.core.logging import get_logger
 from ieum.core.outbox import dispatch, fetch_unpublished, publish
 from ieum.core.permissions import get_permission_service
@@ -405,8 +407,21 @@ async def _note_poll(session: AsyncSession, channel_id: Any, *, error: str | Non
 
 
 async def sweep() -> dict[str, int]:
-    """주기 실행 진입점. 파이프라인을 한 번씩 돌린다."""
+    """주기 실행 진입점. 파이프라인을 한 번씩 돌린다.
+
+    **끝나면 심장박동을 남긴다.** 워커가 죽으면 아무 일도 안 일어나는데
+    화면은 멀쩡하다 — 밖에서 그것을 알 수 있는 유일한 방법이다.
+    실패해도 남긴다: "돌다가 터졌다" 와 "아예 안 돈다" 는 다른 고장이다.
+    """
     started = utcnow()
+    try:
+        return await _sweep_once(started)
+    except Exception as exc:
+        await _beat("sweep", started, error=f"{type(exc).__name__}: {exc}")
+        raise
+
+
+async def _sweep_once(started: datetime) -> dict[str, int]:
     processed = await drain_outbox()
     delivered = await deliver_webhooks()
     attachments = await sweep_attachments()
@@ -434,6 +449,7 @@ async def sweep() -> dict[str, int]:
             emails=emails,
             duration_s=round(elapsed, 2),
         )
+    await _beat("sweep", started)
     return {
         "outbox": processed,
         "webhooks": delivered,
@@ -442,6 +458,24 @@ async def sweep() -> dict[str, int]:
         "sla_escalations": sla_escalations,
         "emails": emails,
     }
+
+
+async def _beat(task: str, started: datetime, *, error: str | None = None) -> None:
+    """심장박동 한 줄. **자기 실패로 스윕을 죽이지 않는다.**
+
+    지표를 못 남기는 것과 일을 못 하는 것은 다르다 — 여기서 예외가 새면
+    DB 가 잠깐 흔들린 순간에 스윕 전체가 실패로 기록된다.
+    """
+    try:
+        async with session_scope() as session:
+            await beat(
+                session,
+                task,
+                duration_seconds=(utcnow() - started).total_seconds(),
+                error=error,
+            )
+    except Exception as exc:
+        log.warning("worker.heartbeat_failed", task=task, error=f"{type(exc).__name__}: {exc}")
 
 
 # ── arq 진입점 ──────────────────────────────────────────────────
