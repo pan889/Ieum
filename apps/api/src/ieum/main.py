@@ -38,6 +38,7 @@ from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
+from ieum.modules.desk.report_router import desk_reports_router
 from ieum.modules.desk.router import (
     automation_router,
     calendars_router,
@@ -249,6 +250,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         calendar_router,
         gantt_router,
         reports_router,
+        desk_reports_router,
         attachments_router,
         search_router,
         filters_router,

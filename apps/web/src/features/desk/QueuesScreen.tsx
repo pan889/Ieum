@@ -92,6 +92,10 @@ export function QueuesScreen() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">{t('desk:queues.title')}</h1>
         <p className="text-sm text-muted">{t('desk:queues.description')}</p>
+        {/* 리포트는 상담원이 여는 자리라 설정이 아니라 여기서 잇는다. */}
+        <Link to="/desk/reports" className="text-sm text-accent hover:underline">
+          {t('desk:report.title')}
+        </Link>
       </header>
 
       <ProjectPicker label={t('desk:queues.project')} chosen={project} onPick={setPicked} />

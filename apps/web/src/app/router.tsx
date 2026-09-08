@@ -13,6 +13,7 @@ import { QueuesScreen } from '@/features/desk/QueuesScreen'
 import { AutomationScreen } from '@/features/desk/AutomationScreen'
 import { EmailChannelsScreen } from '@/features/desk/EmailChannelsScreen'
 import { SlaScreen } from '@/features/desk/SlaScreen'
+import { ReportScreen as DeskReportScreen } from '@/features/desk/ReportScreen'
 import { IssueDetailScreen } from '@/features/issues/IssueDetailScreen'
 import { IssuesScreen } from '@/features/issues/IssuesScreen'
 import { SpaceScreen } from '@/features/wiki/SpaceScreen'
@@ -209,6 +210,17 @@ const deskRoute = createRoute({
 })
 
 /**
+ * 데스크 리포트 (C14). 설정이 아니라 **작업 화면**이라 `/desk` 아래다 —
+ * 관리자가 정책을 고치는 자리가 아니라, 상담원과 팀장이 이번 주가 어땠는지
+ * 보는 자리다.
+ */
+const deskReportRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/desk/reports',
+  component: DeskReportScreen,
+})
+
+/**
  * SLA 는 **설정**이다 — 상담원이 매일 여는 자리가 아니라 관리자가 드물게
  * 고치는 자리다. 그래서 `/settings/` 아래에 둔다(큐는 작업 화면이라 최상위).
  */
@@ -315,6 +327,7 @@ const routeTree = rootRoute.addChildren([
   portalsRoute,
   customerOrgsRoute,
   deskRoute,
+  deskReportRoute,
   slaRoute,
   emailChannelsRoute,
   automationRoute,

@@ -106,6 +106,8 @@
   "desk.queue_name_empty": "A queue needs a name.",
   "desk.queue_name_taken": "A queue with that name already exists in this project.",
   "desk.queue_name_too_long": "That name is too long.",
+  "desk.report_window_invalid": "The end of the range comes before its start.",
+  "desk.report_window_too_wide": "A report can cover at most {max_days} days at a time.",
   "desk.request_type_name_taken": "This portal already has a request type with that name.",
   "desk.required_field_missing_from_form": "A required custom field is missing from the form. Submissions would always fail.",
   "desk.reserved_key_mapped": "Summary and details go into the ticket itself, so they are not mapped to a custom field.",

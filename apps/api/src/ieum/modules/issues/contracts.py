@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
@@ -482,6 +482,94 @@ async def run_iql(
         next_cursor=page.next_cursor,
         total=page.total,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class WindowAgentFact:
+    """창 안 이슈를 담당자별로 센 한 줄.
+
+    다른 모듈(데스크 리포트)이 이슈 컬럼을 못 보므로, **세는 것까지 이쪽에서
+    한다.** 행을 통째로 내주면 상한이 필요해지고, 상한이 걸린 평균은 어떤
+    부분집합의 평균인지 말할 수 없다.
+    """
+
+    assignee_id: UUID | None
+    #: 창 안에 만들어진 것.
+    total: int
+    #: 그중 끝난 것(`resolved_at` 이 있는 것).
+    resolved: int
+    #: 끝난 것들의 **벽시계** 평균(초). 하나도 없으면 `None`.
+    #:
+    #: 업무 시간이 아니다 — SLA 와 같은 축으로 읽으면 안 된다. 0 이 아니라
+    #: `None` 인 이유: 0 은 "즉시 해결" 로 읽힌다.
+    average_wallclock_seconds: int | None
+
+
+def window_issue_ids(
+    *,
+    project_id: UUID,
+    starts_at: datetime,
+    ends_at: datetime,
+    extra_where: Any = None,
+) -> Any:
+    """창 안에 **만들어진** 이슈 id 의 서브질의.
+
+    다른 모듈이 자기 테이블(`sla_clock` 등)을 이 창으로 좁힐 때 쓴다. 컬럼을
+    여럿 내주는 대신 서브질의 하나를 내주는 이유: 컬럼 다섯 개를 넘기면 사실상
+    모델을 넘긴 것이고, 그러면 경계가 이름만 남는다.
+    """
+    stmt = select(Issue.id).where(
+        Issue.project_id == project_id,
+        Issue.created_at >= starts_at,
+        Issue.created_at <= ends_at,
+        Issue.archived_at.is_(None),
+    )
+    if extra_where is not None:
+        stmt = stmt.where(extra_where)
+    return stmt
+
+
+async def window_agent_facts(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    starts_at: datetime,
+    ends_at: datetime,
+    extra_where: Any = None,
+) -> list[WindowAgentFact]:
+    """창 안 이슈를 담당자별로 센다. **담당자 없음도 한 줄이다.**
+
+    `extra_where` 는 부르는 쪽의 조건이다 — 데스크가 "티켓인 이슈만" 을
+    여기로 넘긴다(큐가 `run_iql` 에 넘기는 것과 같은 방식).
+    """
+    elapsed = func.extract("epoch", Issue.resolved_at - Issue.created_at)
+    stmt = (
+        select(
+            Issue.assignee_id,
+            func.count(Issue.id).label("total"),
+            func.count(Issue.resolved_at).label("resolved"),
+            func.avg(elapsed).label("wallclock"),
+        )
+        .where(
+            Issue.project_id == project_id,
+            Issue.created_at >= starts_at,
+            Issue.created_at <= ends_at,
+            Issue.archived_at.is_(None),
+        )
+        .group_by(Issue.assignee_id)
+        .order_by(func.count(Issue.id).desc(), Issue.assignee_id)
+    )
+    if extra_where is not None:
+        stmt = stmt.where(extra_where)
+    return [
+        WindowAgentFact(
+            assignee_id=row.assignee_id,
+            total=int(row.total),
+            resolved=int(row.resolved),
+            average_wallclock_seconds=None if row.wallclock is None else int(row.wallclock),
+        )
+        for row in (await session.execute(stmt)).all()
+    ]
 
 
 def issue_id_column() -> Any:

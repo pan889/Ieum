@@ -625,6 +625,7 @@ const EMAIL = '/api/v1/email-channels'
 const AUTOMATION = '/api/v1/automation-rules'
 /** 고객 표면. 이 접두사만 고객 격리를 통과한다 (auth.md 5절). */
 const PORTAL = '/api/v1/portal'
+const DESK_REPORTS = '/api/v1/desk-reports'
 
 export function createDeskApi(client: ApiClient) {
   return {
@@ -831,7 +832,70 @@ export function createDeskApi(client: ApiClient) {
     updateAutomationRule: (id: string, body: AutomationRulePatch) =>
       client.patch<AutomationRule>(`${AUTOMATION}/${id}`, body),
     deleteAutomationRule: (id: string) => client.delete<void>(`${AUTOMATION}/${id}`),
+
+    // 리포트 (C14)
+    /**
+     * 창 안에 **만들어진** 티켓을 기준으로 센다.
+     *
+     * "끝난 것" 기준이 아닌 이유: 끝난 것만 세면 아직 안 끝난 티켓이
+     * 리포트에서 사라지고, 그게 위반이 숨는 방식이다.
+     */
+    report: (params: { project_id: string; starts_at: string; ends_at: string }) =>
+      client.get<DeskReport>(`${DESK_REPORTS}?${new URLSearchParams(params).toString()}`),
   }
+}
+
+// ── 리포트 (C14) ────────────────────────────────────────────────
+
+/** 정책 하나의 성적. **네 갈래는 겹치지 않고 빈틈도 없다.** */
+export interface SlaOutcome {
+  policy_id: string
+  /** 관리자가 입력한 이름이다 — 번역하지 않는다. */
+  policy_name: string
+  metric: string
+  /** 끝났고 목표 안. */
+  met: number
+  /** 끝났지만 늦었다. */
+  missed: number
+  /**
+   * **아직 안 끝났는데 이미 목표를 지났다.** 지금 터지고 있다.
+   *
+   * `missed` 와 따로 주는 이유: `missed` 는 이미 벌어진 일이고 이 값은
+   * **지금 손쓸 수 있는 일**이다.
+   */
+  overdue: number
+  /** 아직 안 끝났고 목표도 안 지났다. */
+  running: number
+  /** 위반 전부 = `missed + overdue`. 화면이 더하지 않게 서버가 준다. */
+  breached: number
+  /** 네 갈래의 합. 화면이 검산할 수 있게 준다. */
+  total: number
+}
+
+export interface AgentRow {
+  /**
+   * `null` 이면 **담당자 없는 티켓들**이다 — 빈 칸이 아니라 하나의 칸이고,
+   * 보통 가장 봐야 할 무리다.
+   */
+  assignee_id: string | null
+  tickets: number
+  resolved: number
+  /**
+   * 끝난 것들의 **벽시계** 평균(초). 하나도 없으면 `null`.
+   *
+   * SLA 는 업무 달력으로 재고 이건 실제 경과 시간이다 — **다른 축이다.**
+   * `0` 이 아니라 `null` 인 이유: `0` 은 "즉시 해결" 로 읽힌다.
+   */
+  average_wallclock_seconds: number | null
+}
+
+export interface DeskReport {
+  starts_at: string
+  ends_at: string
+  /** 창 안에 **만들어진** 티켓 수. 아래 셈들의 검산 근거다. */
+  tickets: number
+  sla: SlaOutcome[]
+  agents: AgentRow[]
 }
 
 export type DeskApi = ReturnType<typeof createDeskApi>

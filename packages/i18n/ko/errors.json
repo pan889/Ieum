@@ -106,6 +106,8 @@
   "desk.queue_name_empty": "큐에는 이름이 필요합니다.",
   "desk.queue_name_taken": "이 프로젝트에 같은 이름의 큐가 있습니다.",
   "desk.queue_name_too_long": "이름이 너무 깁니다.",
+  "desk.report_window_invalid": "끝나는 날이 시작보다 앞섭니다.",
+  "desk.report_window_too_wide": "한 번에 볼 수 있는 기간은 {max_days}일까지입니다.",
   "desk.request_type_name_taken": "이 포털에 같은 이름의 요청 유형이 있습니다.",
   "desk.required_field_missing_from_form": "필수 커스텀 필드가 폼에 없습니다. 이대로면 제출이 항상 실패합니다.",
   "desk.reserved_key_mapped": "요약과 내용은 티켓 자신의 칸으로 가므로 커스텀 필드에 매핑하지 않습니다.",
