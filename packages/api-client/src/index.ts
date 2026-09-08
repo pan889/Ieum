@@ -109,6 +109,13 @@ export {
   SWIMLANE_FIELDS,
 } from './boards'
 export {
+  createCalendarApi,
+  type CalendarApi,
+  type CalendarEntry,
+  type CalendarSprint,
+  type CalendarWindow,
+} from './calendar'
+export {
   createSprintsApi,
   type BurndownPoint,
   type NewSprint,

@@ -17,7 +17,7 @@ import { CustomField } from './CustomField'
 import { changedFields, type FieldValue } from './customFields'
 import { Relations } from './Relations'
 import { TimeTracking } from './TimeTracking'
-import { categoryTone, formatDate, formatDateTime, priorityLabel } from './format'
+import { categoryTone, formatDateTime, priorityLabel } from './format'
 import { useFieldDefinitions, useUserNames, useUserSearch } from './hooks'
 
 export function IssueDetailScreen() {
@@ -238,6 +238,12 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
     onSuccess: onSaved,
   })
 
+  const setDates = useMutation({
+    mutationFn: (changes: { start_date?: string | null; due_date?: string | null }) =>
+      issuesApi.change(issue.id, changes, issue.version),
+    onSuccess: onSaved,
+  })
+
   /**
    * 이 프로젝트의 스프린트. **이름을 여기서 맞춘다.**
    *
@@ -357,8 +363,29 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
         </Row>
       )}
 
+      {/*
+        **날짜는 고칠 수 있어야 한다.** 만들 때만 적을 수 있으면 달력은
+        대부분 비어 있고, 잘못 적은 날은 영영 잘못 적힌 채로 남는다.
+        `date` 입력은 빈 값을 빈 문자열로 주므로 그때는 `null` 을 보낸다 —
+        여기서는 그게 "지워라" 다(PATCH 의 `changes` 안이라 뜻이 갈리지 않는다).
+      */}
+      <Row label={t('issues:detail.start')}>
+        <input
+          type="date"
+          aria-label={t('issues:detail.start')}
+          className="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg"
+          value={issue.start_date ?? ''}
+          onChange={(e) => { setDates.mutate({ start_date: e.target.value || null }) }}
+        />
+      </Row>
       <Row label={t('issues:detail.due')}>
-        {formatDate(issue.due_date) || t('issues:detail.none')}
+        <input
+          type="date"
+          aria-label={t('issues:detail.due')}
+          className="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg"
+          value={issue.due_date ?? ''}
+          onChange={(e) => { setDates.mutate({ due_date: e.target.value || null }) }}
+        />
       </Row>
       <Row label={t('issues:detail.progress')}>{`${String(issue.progress)}%`}</Row>
       <Row label={t('issues:detail.labels')}>
@@ -372,6 +399,7 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
       {assign.isError ? <Alert>{describeError(assign.error)}</Alert> : null}
       {setPriority.isError ? <Alert>{describeError(setPriority.error)}</Alert> : null}
       {moveSprint.isError ? <Alert>{describeError(moveSprint.error)}</Alert> : null}
+      {setDates.isError ? <Alert>{describeError(setDates.error)}</Alert> : null}
 
       {!issue.archived_at ? (
         <Button

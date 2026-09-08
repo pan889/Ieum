@@ -159,6 +159,8 @@
   "issues.bulk_empty": "Select at least one issue.",
   "issues.bulk_no_changes": "Nothing to change.",
   "issues.bulk_too_many": "You can change up to {max} issues at once.",
+  "issues.calendar_window_invalid": "The end date is before the start date.",
+  "issues.calendar_window_too_wide": "You can view up to {max_days} days at a time.",
   "issues.comment_empty": "A comment can't be empty.",
   "issues.export_needs_filter": "Narrow the query before exporting — at least pick a project.",
   "issues.field_key_taken": "That field key is already in use.",

@@ -35,6 +35,7 @@ import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
 import { SprintsScreen } from '@/features/sprints/SprintsScreen'
+import { CalendarScreen } from '@/features/calendar/CalendarScreen'
 
 import { AppShell } from './AppShell'
 
@@ -97,6 +98,12 @@ const sprintsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sprints',
   component: SprintsScreen,
+})
+
+const calendarRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/calendar',
+  component: CalendarScreen,
 })
 
 const tokensRoute = createRoute({
@@ -277,6 +284,7 @@ const routeTree = rootRoute.addChildren([
   boardsRoute,
   boardRoute,
   sprintsRoute,
+  calendarRoute,
   tokensRoute,
   sessionsRoute,
   auditRoute,

@@ -59,6 +59,7 @@
   "detail.reporter": "Reporter",
   "detail.type": "Type",
   "detail.priority": "Priority",
+  "detail.start": "Start",
   "detail.due": "Due",
   "detail.progress": "Progress",
   "detail.labels": "Labels",

@@ -159,6 +159,8 @@
   "issues.bulk_empty": "이슈를 하나 이상 고르세요.",
   "issues.bulk_no_changes": "바꿀 내용이 없습니다.",
   "issues.bulk_too_many": "한 번에 {max}건까지 바꿀 수 있습니다.",
+  "issues.calendar_window_invalid": "끝나는 날이 시작하는 날보다 앞섭니다.",
+  "issues.calendar_window_too_wide": "한 번에 볼 수 있는 기간은 {max_days}일까지입니다.",
   "issues.comment_empty": "코멘트를 비울 수 없습니다.",
   "issues.export_needs_filter": "내보내기 전에 범위를 좁히세요. 최소한 프로젝트는 지정해야 합니다.",
   "issues.field_key_taken": "이미 쓰는 필드 키입니다.",

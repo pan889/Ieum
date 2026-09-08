@@ -5,6 +5,7 @@ import { initReactI18next } from 'react-i18next'
 import adminEn from '@ieum/i18n/en/admin.json'
 import authEn from '@ieum/i18n/en/auth.json'
 import boardsEn from '@ieum/i18n/en/boards.json'
+import calendarEn from '@ieum/i18n/en/calendar.json'
 import commonEn from '@ieum/i18n/en/common.json'
 import deskEn from '@ieum/i18n/en/desk.json'
 import errorsEn from '@ieum/i18n/en/errors.json'
@@ -18,6 +19,7 @@ import wikiEn from '@ieum/i18n/en/wiki.json'
 import adminKo from '@ieum/i18n/ko/admin.json'
 import authKo from '@ieum/i18n/ko/auth.json'
 import boardsKo from '@ieum/i18n/ko/boards.json'
+import calendarKo from '@ieum/i18n/ko/calendar.json'
 import commonKo from '@ieum/i18n/ko/common.json'
 import deskKo from '@ieum/i18n/ko/desk.json'
 import errorsKo from '@ieum/i18n/ko/errors.json'
@@ -43,6 +45,7 @@ const resources = {
     issues: issuesEn,
     boards: boardsEn,
     sprints: sprintsEn,
+    calendar: calendarEn,
     notifications: notificationsEn,
     wiki: wikiEn,
     markdown: markdownEn,
@@ -58,6 +61,7 @@ const resources = {
     issues: issuesKo,
     boards: boardsKo,
     sprints: sprintsKo,
+    calendar: calendarKo,
     notifications: notificationsKo,
     wiki: wikiKo,
     markdown: markdownKo,

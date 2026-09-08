@@ -14,7 +14,12 @@ from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
-from ieum.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
+from ieum.core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService
 from ieum.modules.identity import contracts as identity
@@ -161,6 +166,46 @@ class SearchService:
 
         rows = list((await self._s.execute(stmt)).scalars().all())
         return Page.from_rows(rows, request, lambda i: {"id": str(i.id)})
+
+    async def scan(
+        self,
+        actor: Actor,
+        iql: str,
+        *,
+        limit: int,
+        extra_where: ColumnElement[bool] | None = None,
+    ) -> tuple[list[Issue], bool]:
+        """한 번에 긁는다. `(행, 잘렸나)` 를 준다.
+
+        `search` 와 달리 커서를 쓰지 않는다. 커서는 `id` 기준이라 IQL 에
+        `ORDER BY` 가 붙으면 이어보기가 어긋나는데(그 문제는 아직 남아 있다),
+        달력·간트처럼 **창 안의 것을 전부** 원하는 화면은 순서가 필요 없다.
+        페이지를 돌려 가며 모으면 그 어긋남을 그대로 물려받는다.
+
+        대신 상한이 있고, **넘었다는 사실을 숨기지 않는다** — 부르는 쪽이
+        화면에 적을 수 있어야 한다. 잘린 달력을 다 그린 달력으로 읽으면 없는
+        여유를 있다고 계획한다.
+        """
+        if limit < 1 or limit > MAX_RESULTS:
+            raise ValidationError(
+                f"limit 은 1 이상 {MAX_RESULTS} 이하여야 한다.",
+                code="common.invalid_limit",
+                details={"max": MAX_RESULTS},
+            )
+        acl = await self._perms.acl_for(self._s, actor, perms.ISSUE_VIEW)
+        query = parse(iql)
+        compiled = compile_query(
+            query,
+            acl=acl,
+            ctx=self._context(actor),
+            project_ids=await self._resolve_projects(query),
+        )
+        stmt: Select[Any] = compiled.apply(select(Issue))
+        if extra_where is not None:
+            stmt = stmt.where(extra_where)
+        # 하나 더 읽어서 "더 있다" 를 안다. 세는 질의를 따로 내면 두 번 훑는다.
+        rows = list((await self._s.execute(stmt.limit(limit + 1))).scalars().all())
+        return rows[:limit], len(rows) > limit
 
     # ── 자동완성 ────────────────────────────────────────────────
 

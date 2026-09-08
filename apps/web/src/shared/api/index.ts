@@ -5,6 +5,7 @@ import {
   createAuditApi,
   createAuthApi,
   createBoardsApi,
+  createCalendarApi,
   createDeskApi,
   createFieldsApi,
   createGroupsApi,
@@ -50,3 +51,4 @@ export const workflowsApi = createWorkflowsApi(apiClient)
 export const fieldsApi = createFieldsApi(apiClient)
 export const deskApi = createDeskApi(apiClient)
 export const sprintsApi = createSprintsApi(apiClient)
+export const calendarApi = createCalendarApi(apiClient)

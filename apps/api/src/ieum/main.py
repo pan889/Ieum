@@ -62,6 +62,7 @@ from ieum.modules.identity.scim import ScimError
 from ieum.modules.identity.scim_router import scim_router
 from ieum.modules.issues import attachments as issue_attachments
 from ieum.modules.issues.board_router import boards_router
+from ieum.modules.issues.calendar_router import calendar_router
 from ieum.modules.issues.contracts import issue_model
 from ieum.modules.issues.router import fields_router, issues_router, workflows_router
 from ieum.modules.issues.search_router import filters_router, search_router
@@ -243,6 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         fields_router,
         boards_router,
         sprints_router,
+        calendar_router,
         attachments_router,
         search_router,
         filters_router,

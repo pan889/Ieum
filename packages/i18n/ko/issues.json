@@ -59,6 +59,7 @@
   "detail.reporter": "보고자",
   "detail.type": "유형",
   "detail.priority": "우선순위",
+  "detail.start": "시작",
   "detail.due": "마감",
   "detail.progress": "진행률",
   "detail.labels": "라벨",
