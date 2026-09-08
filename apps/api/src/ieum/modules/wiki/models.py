@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -244,6 +245,40 @@ class PageDraft(Entity):
     __table_args__ = (
         UniqueConstraint("page_id", "author_id", name="uq_page_draft_page_id_author_id"),
         Index("ix_page_draft_page_id", "page_id"),
+    )
+
+
+class PageCollab(Entity):
+    """동시 편집의 **공유 초안** 하나. 문서마다 하나다 (B16).
+
+    `page_draft` 와 나란히 두는 이유는 임자가 다르기 때문이다: 초안은
+    사람마다 하나(`(page_id, author_id)` 유일)이고, 이건 문서마다 하나다.
+    같이 편집하는 자리에서는 "내 초안" 이라는 것이 없다.
+
+    `state` 는 **CRDT 문서 전체 상태**다(`Doc.get_update()`). 텍스트만 담지
+    않는 이유: 텍스트는 CRDT 상태에서 뽑을 수 있지만 거꾸로는 못 한다. 텍스트만
+    저장하고 다시 CRDT 로 올리면 모든 편집 이력이 한 번에 지워지고, 그 순간
+    다른 창에 남아 있던 클라이언트의 편집은 **없던 일**이 된다.
+
+    마크다운을 함께 저장하지 않는 것도 같은 판단이다 — 두 벌은 어긋난다.
+    본문이 필요하면 상태에서 뽑는다(`collab.text_of`).
+
+    Redis 는 **전달**만 한다(프로세스 사이 팬아웃). 여기가 durable 이다:
+    Redis 가 비면 방은 이 행에서 다시 선다. 반대로 이 행이 없으면 방은 지금
+    게시된 판의 본문에서 시작한다.
+    """
+
+    __tablename__ = "page_collab"
+
+    #: 문서 하나에 방 하나. 두 개가 생기면 어느 쪽이 진짜인지 말할 수 없다.
+    page_id: Mapped[UUID] = mapped_column(
+        ForeignKey("page.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    state: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    #: 마지막으로 스냅샷을 남긴 사람. 통계가 아니라 **누가 편집 중이었나** 의
+    #: 흔적이다 — 계정이 사라져도 스냅샷은 남아야 하므로 SET NULL 이다.
+    saved_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
 
 

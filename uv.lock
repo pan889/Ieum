@@ -659,6 +659,7 @@ dependencies = [
     { name = "mdformat-gfm" },
     { name = "mdit-py-plugins" },
     { name = "prometheus-client" },
+    { name = "pycrdt" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -713,6 +714,7 @@ requires-dist = [
     { name = "moto", extras = ["s3", "server"], marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.18" },
     { name = "prometheus-client", specifier = ">=0.24" },
+    { name = "pycrdt", specifier = ">=0.14.4" },
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "pydantic-settings", specifier = ">=2.11,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
@@ -1294,6 +1296,30 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz", hash = "sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29", size = 103492, upload-time = "2026-01-21T14:26:51.89Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl", hash = "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992", size = 48172, upload-time = "2026-01-21T14:26:50.693Z" },
+]
+
+[[package]]
+name = "pycrdt"
+version = "0.14.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/37/67/52a5030447cb539b01913478510ed27f22bacd557aded25b74e16ea4bd35/pycrdt-0.14.4.tar.gz", hash = "sha256:508d1d1a573faec11236cdb69f793682591845b0b0184fbfe9c49147e9625044", size = 95901, upload-time = "2026-08-23T09:47:48.447Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/97/ce381fdc9dfc139193cbae6c43b4f1bf0878abd8d5e52680eb531a097aed/pycrdt-0.14.4-cp312-cp312-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:55c77a0abc684ef2c866d90f98efbcf1b4076b497e1e7c7c6cc8345617abc73f", size = 1905316, upload-time = "2026-08-23T09:46:21.116Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/c8/a886f6afbcd358b9aaaa2933dbe608bd8c905d5dd7871b0295b231e638fc/pycrdt-0.14.4-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6fdcfd06b982f16c081fab95d6275b3618b462091ce21732c067678e6807849b", size = 1046621, upload-time = "2026-08-23T09:46:22.885Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/c3/529329bd545d9f3457073fea10c78891d7aae4f3739cf586c6dc6bb5d808/pycrdt-0.14.4-cp312-cp312-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:f9700efb283a312b6b5bfbb0ca091a8597281aa8748e94d3367d5cd498fb9808", size = 1067744, upload-time = "2026-08-23T09:46:24.725Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/d0/f4e17e14a4f01da525f37346f420a5c57ae7d3b63b500182853ced2e72ba/pycrdt-0.14.4-cp312-cp312-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:1d34e39d29b201875ebea62948a3a799f0ba12643ecc6db46fc0ecda6853866e", size = 1263835, upload-time = "2026-08-23T09:46:26.306Z" },
+    { url = "https://files.pythonhosted.org/packages/98/20/6a1b285ca853c81ffc9bc37ccd221c9e6ea845c5f573ff8c976ed17fa497/pycrdt-0.14.4-cp312-cp312-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:e6bcbded353aaca1d934166df42a68b0e93d460c4c7fae6ff4f0c0d874ee626d", size = 1104424, upload-time = "2026-08-23T09:46:27.865Z" },
+    { url = "https://files.pythonhosted.org/packages/95/93/6aa1ca8f13e6918192a02d2bccc9f339aeb47896cee6ca64e80ee950362e/pycrdt-0.14.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:88509cd6c60f74ebc5f8105f6551c57dbe3bf4db9eb36819be088dfb41387dc6", size = 1059325, upload-time = "2026-08-23T09:46:29.607Z" },
+    { url = "https://files.pythonhosted.org/packages/67/36/f46d38fc7a8330a0f9ebd4b4a994366faf4f7c5ee8ca3d74c0e1a1d2a171/pycrdt-0.14.4-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:0b12e774e84fcde56c53bca074f108671c274890d316f0db918f61b27b1dba8e", size = 1177230, upload-time = "2026-08-23T09:46:31.349Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/47/95629bc0d41294a272231be2e40058281efdb91cbd2340cef5e47b14a80d/pycrdt-0.14.4-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:9918d4cd681e12cbd6bff4df0b00775672034b3e167071acb92796c1e2e7bb4d", size = 1223744, upload-time = "2026-08-23T09:46:33.168Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/17/dc8b703cf3688e81ef3a4ff0c1f529e9c1621433493d0c3eb9c32b187e10/pycrdt-0.14.4-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:c98016b1cc0ef6517a2d8f1bae7c7114d997013109850d1ff64e56ab035f5fb2", size = 1343685, upload-time = "2026-08-23T09:46:34.947Z" },
+    { url = "https://files.pythonhosted.org/packages/91/39/638d2daf560989ab89aa843fb261d8d88c6139dbe1c514bb9fd5fdb80fa9/pycrdt-0.14.4-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:9232131d031486aab37067c594e032b8a9ad3c48295e1371e2dcd6b20282d20c", size = 1344682, upload-time = "2026-08-23T09:46:36.801Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/af/63ab2e145e47375ad044fc3946959dd78adc8ba5979163f8c20d1f436cf5/pycrdt-0.14.4-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:752cdb828ba3b649ed67fd629def728054432f991aa7d46c8b3c914a123840f3", size = 1281952, upload-time = "2026-08-23T09:46:38.537Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/cf/9f7b8128266910d9624b2c978583d90ce420b3c2bec830f71e130286c72a/pycrdt-0.14.4-cp312-cp312-win32.whl", hash = "sha256:655be2ae95523ca916a226deb40b1d0df5f32ecdde921ed03972f7cdb937306b", size = 812820, upload-time = "2026-08-23T09:46:40.198Z" },
+    { url = "https://files.pythonhosted.org/packages/01/8a/495c0c7e4cfe1da1a2455fa3cdbeea252ecc6330b25c808287e4e4d273b3/pycrdt-0.14.4-cp312-cp312-win_amd64.whl", hash = "sha256:d11709b484fa95167093f4674e1d7d4174864b5be189b2da8358407dd4e5a422", size = 859570, upload-time = "2026-08-23T09:46:42.013Z" },
 ]
 
 [[package]]

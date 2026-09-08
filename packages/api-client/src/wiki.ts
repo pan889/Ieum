@@ -317,6 +317,19 @@ export function createWikiApi(client: ApiClient) {
         remove: (commentId: string) => client.delete<void>(`${PAGES}/comments/${commentId}`),
       },
 
+      /**
+       * 동시 편집 세션에 붙을 표를 한 장 받는다 (B16).
+       *
+       * **표는 한 번만 쓴다.** 소켓이 끊겼다 붙을 때는 새로 받아야 한다 —
+       * 액세스 토큰을 URL 에 싣지 않으려고 고른 모양이고, 재사용되면 URL 이
+       * 새는 순간 남의 편집 세션에 붙을 수 있다.
+       *
+       * `url` 은 서버가 만들어 준다. 화면이 경로를 짜면 한쪽만 바뀌는 날이
+       * 온다.
+       */
+      collabTicket: (id: string) =>
+        client.post<CollabTicket>(`${PAGES}/${id}/collab-ticket`),
+
       restrictions: (id: string) => client.get<PageRestriction[]>(`${PAGES}/${id}/restrictions`),
       setRestrictions: (
         id: string,
@@ -324,6 +337,18 @@ export function createWikiApi(client: ApiClient) {
       ) => client.put<PageRestriction[]>(`${PAGES}/${id}/restrictions`, body),
     },
   }
+}
+
+export interface CollabTicket {
+  /** 소켓 URL 에 실을 표. **한 번만 쓸 수 있다.** */
+  ticket: string
+  /** 붙을 곳(표까지 포함된 경로). 스킴만 `ws:`/`wss:` 로 바꿔 쓴다. */
+  url: string
+  /** 이 프로세스에서 지금 붙어 있는 사람 수. 설치 전체의 수가 아니다 —
+   *  정확한 수는 붙은 뒤 프레즌스가 알려 준다. */
+  editors: number
+  /** 한 문서에 붙을 수 있는 상한. 거절 이유를 화면이 말할 수 있게. */
+  max_editors: number
 }
 
 export type WikiApi = ReturnType<typeof createWikiApi>

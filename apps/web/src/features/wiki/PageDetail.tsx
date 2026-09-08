@@ -16,10 +16,14 @@ import { DocumentPlaceProvider, RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
 
+import { useAuthStore } from '@/features/auth/store'
+
 import { Comments } from './Comments'
+import { Presence } from './Presence'
 import { VersionDiff } from './VersionDiff'
 import { ancestorsOf } from './tree'
 import { usePageHistory } from './hooks'
+import { useCollab } from './useCollab'
 
 /** 손을 멈추고 이만큼 지나면 저장한다. */
 const AUTOSAVE_DELAY_MS = 2000
@@ -239,6 +243,26 @@ function PageEditorForm({
   const [labels, setLabels] = useState(page.labels.join(', '))
   const [savedAt, setSavedAt] = useState<string | null>(restored ? draft.updated_at : null)
 
+  /**
+   * 같이 편집한다 (B16).
+   *
+   * 붙기 전에는 내 상태(`body`)를 쓰고, 붙은 뒤에는 **공유 문서가 본문의
+   * 임자**다. 둘을 동시에 진짜로 두지 않는 것이 요점이다 — 두 벌이면 남의
+   * 편집을 내 상태가 덮는다.
+   */
+  const me = useAuthStore((s) => s.user)
+  const collab = useCollab(
+    page.id,
+    me === null ? null : { userId: me.id, name: me.display_name },
+    true,
+  )
+  const shared = collab.text !== null
+  const text = shared ? (collab.text ?? '') : body
+  const setText = (next: string) => {
+    if (shared) collab.write(next)
+    else setBody(next)
+  }
+
   const autosave = useMutation({
     mutationFn: () =>
       wikiApi.pages.draft.save(page.id, {
@@ -251,14 +275,16 @@ function PageEditorForm({
 
   // 손을 멈추면 저장한다. 매 글자마다 보내면 요청이 폭주하고, 시간 간격만
   // 두면 마지막 몇 글자를 잃는다.
-  const dirty = title !== page.title || body !== page.body
+  const dirty = title !== page.title || text !== page.body
   useEffect(() => {
-    if (!dirty) return
+    // **공유 문서가 있으면 개인 초안을 쓰지 않는다.** 두 초안이 같은 문서를
+    // 두고 다투면, 다음에 문서를 열 때 어느 쪽이 뜨는지 아무도 모른다.
+    if (!dirty || shared) return
     const timer = setTimeout(() => { autosave.mutate() }, AUTOSAVE_DELAY_MS)
     return () => { clearTimeout(timer) }
     // autosave 는 매 렌더 새 객체다. 의존에 넣으면 타이머가 끝없이 다시 선다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, body, dirty])
+  }, [title, text, dirty, shared])
 
   const save = useMutation({
     mutationFn: () =>
@@ -266,7 +292,9 @@ function PageEditorForm({
         page.id,
         {
           title,
-          body,
+          // 게시는 **지금 보이는 본문**으로 한다. 공유 문서가 있으면 그쪽이
+          // 본문이고, 없으면 내 상태다.
+          body: text,
           labels: labels.split(',').map((l) => l.trim()).filter(Boolean),
           ...(message.trim() ? { message: message.trim() } : {}),
           // 초안을 고쳐 저장하면 게시한다. 안 그러면 고쳤는데 아무도 못 본다.
@@ -316,12 +344,14 @@ function PageEditorForm({
           value={title}
           onChange={(e) => { setTitle(e.target.value) }}
         />
+        <Presence status={collab.status} peers={collab.peers} />
         <MarkdownEditor
           label={t('wiki:page.body')}
-          value={body}
-          onChange={setBody}
+          value={text}
+          onChange={setText}
           rows={18}
           attachTo={{ ownerType: 'page', ownerId: page.id }}
+          sourceRef={collab.bindSource}
         />
         <Field
           label={t('wiki:page.labels')}

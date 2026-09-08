@@ -1466,6 +1466,19 @@ class PageService:
             )
         return parent
 
+    async def page_for_edit(self, actor: Actor, page_id: UUID) -> Page:
+        """고칠 권한이 있는지 보고 문서를 돌려준다.
+
+        동시 편집(B16)이 쓴다. 소켓이 자기 권한 검사를 따로 구현하지 않도록
+        **여기 하나로 모은다** — 두 벌이 되면 한쪽이 느슨해지고, 느슨해진 쪽이
+        문서를 고칠 수 있는 쪽이다.
+        """
+        page = await self._require_page(page_id)
+        await self._perms.require(
+            self._s, actor, perms.PAGE_EDIT, scope=Scope.space(page.space_id), subject=page
+        )
+        return page
+
     async def _require_page(self, page_id: UUID) -> Page:
         page = await self._pages.get(page_id)
         if page is None:

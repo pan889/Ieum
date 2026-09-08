@@ -1,4 +1,9 @@
 {
+  "collab.status.connecting": "Connecting",
+  "collab.status.live": "Editing together",
+  "collab.status.offline": "Disconnected — retrying",
+  "collab.alone": "You are the only one here right now.",
+  "collab.withMe": "{count, plural, one {# other person here} other {# other people here}}",
   "spaces.title": "Spaces",
   "spaces.create": "New space",
   "spaces.search": "Find a space",

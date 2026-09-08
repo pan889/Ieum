@@ -1,4 +1,9 @@
 {
+  "collab.status.connecting": "잇는 중",
+  "collab.status.live": "같이 편집 중",
+  "collab.status.offline": "끊김 — 다시 잇는 중",
+  "collab.alone": "지금은 혼자 보고 있습니다.",
+  "collab.withMe": "{count, plural, other {함께 보는 사람 #명}}",
   "spaces.title": "스페이스",
   "spaces.create": "새 스페이스",
   "spaces.search": "스페이스 찾기",

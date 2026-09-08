@@ -71,6 +71,7 @@ export function MarkdownEditor({
   placeholder,
   rows = 8,
   attachTo,
+  sourceRef,
 }: {
   label: string
   value: string
@@ -79,6 +80,14 @@ export function MarkdownEditor({
   rows?: number
   /** 붙여넣은 이미지를 매달 곳. 아직 저장 전인 화면에는 없다. */
   attachTo?: AttachTo | undefined
+  /**
+   * 소스 모드의 textarea. **동시 편집이 캐럿을 되돌려 놓는 데 쓴다** (B16).
+   *
+   * 값만 controlled 로 두면 남의 편집이 들어올 때마다 브라우저가 캐럿을 끝으로
+   * 보낸다 — 같이 쓰는 자리에서 가장 빨리 포기하게 되는 증상이다. 그것을
+   * 고치려면 밖에서 선택 구간을 읽고 다시 놓아야 한다.
+   */
+  sourceRef?: ((element: HTMLTextAreaElement | null) => void) | undefined
 }) {
   const { t } = useTranslation(['common'])
   const [tab, setTab] = useState<Mode>('rich')
@@ -208,7 +217,10 @@ export function MarkdownEditor({
         ) : tab === 'write' ? (
           <div className="relative">
             <textarea
-              ref={textarea}
+              ref={(element) => {
+                textarea.current = element
+                sourceRef?.(element)
+              }}
               id={id}
               rows={rows}
               placeholder={placeholder}

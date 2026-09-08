@@ -80,6 +80,7 @@ from ieum.modules.org.repository import OrgPermissionResolver
 from ieum.modules.org.router import projects_router, roles_router, security_router
 from ieum.modules.search.router import router as unified_search_router
 from ieum.modules.wiki import attachments as wiki_attachments
+from ieum.modules.wiki.collab_router import collab_router
 from ieum.modules.wiki.contracts import page_model as wiki_page_model
 from ieum.modules.wiki.router import pages_router, spaces_router
 from ieum.modules.wiki.service import PageRestrictionGuard
@@ -256,6 +257,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         filters_router,
         spaces_router,
         pages_router,
+        # 동시 편집 (B16). `pages_router` 와 같은 접두사를 쓰지만 표 하나와
+        # 소켓 하나뿐이라 파일을 따로 둔다 — WebSocket 은 인증이 다른 길이다.
+        collab_router,
         unified_search_router,
         notifications_router,
         watches_router,

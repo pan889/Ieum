@@ -34,6 +34,11 @@ NO_WRITE = {
     "export_issues",
     # 리포트도 같은 이유다 — 세기만 하고 아무것도 남기지 않는다 (A29).
     "count_issues",
+    # 동시 편집의 표는 **Redis 에** 30초 살다 사라진다 (B16). Postgres 에
+    # 남길 것이 없다: 표는 소켓 하나를 열 자격이고, 편집 결과는 방이
+    # `page_collab` 에 스냅샷으로 저장한다. POST 인 것은 부를 때마다 새 표가
+    # 나오기 때문이다 — 조회가 아니다.
+    "mint_collab_ticket",
 }
 
 

@@ -139,6 +139,7 @@ export {
 } from './sprints'
 export {
   createWikiApi,
+  type CollabTicket,
   type CommentAnchor,
   type CommentMatch,
   type DiffLine,
