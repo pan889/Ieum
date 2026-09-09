@@ -76,6 +76,7 @@ from ieum.modules.notify.router import (
     webhooks_router,
 )
 from ieum.modules.org.router import projects_router, roles_router, security_router
+from ieum.modules.plugins.router import apps_router
 from ieum.modules.search.router import router as unified_search_router
 from ieum.modules.vcs.router import repositories_router
 from ieum.modules.vcs.webhook_router import vcs_webhooks_router
@@ -266,6 +267,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         portal_router,
         approvals_router,
         assets_router,
+        # 앱 등록과 확장 지점 (M6). 앱이 코드를 보내지 않고 **글을 보낸다**
+        apps_router,
         repositories_router,
         # 코드 호스트가 두드리는 문 (A22). **인증이 없다** — 액세스 토큰
         # 대신 서명으로 확인한다. 그래서 파일도 라우터도 따로다

@@ -131,6 +131,20 @@ export {
   type RecurrencesApi,
 } from './recurrences'
 export {
+  createPluginsApi,
+  type App,
+  type AppPatch,
+  type AppSlot,
+  type AppStream,
+  type Contribution,
+  type IssuedApp,
+  type NewApp,
+  type NewSlot,
+  type PluginsApi,
+  type SlotCatalogEntry,
+  type SlotKind,
+} from './plugins'
+export {
   createAssetsApi,
   type Asset,
   type AssetPage,

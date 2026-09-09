@@ -248,6 +248,30 @@ class WebhookService:
         await self._perms.require(self._s, actor, perms.WEBHOOK_VIEW, scope=scope)
         return row
 
+    async def update(
+        self,
+        actor: Actor,
+        webhook_id: UUID,
+        *,
+        url: str | None = None,
+        events: list[str] | None = None,
+    ) -> Webhook:
+        """받는 주소·이벤트 목록을 고친다. `None` 은 "안 건드린다" 다.
+
+        검사가 `create` 와 같은 자리에 있어야 한다 — 고칠 때만 통과하는
+        주소가 생기면 검사가 있는 뜻이 없다.
+        """
+        row = await self.get(actor, webhook_id)
+        scope = Scope.project(row.scope_id) if row.scope_id else Scope.global_()
+        await self._perms.require(self._s, actor, perms.WEBHOOK_MANAGE, scope=scope)
+        if url is not None:
+            self._validate_url(url)
+            row.url = url
+        if events is not None:
+            self._validate_events(events)
+            row.events = sorted(set(events))
+        return row
+
     async def set_enabled(self, actor: Actor, webhook_id: UUID, enabled: bool) -> Webhook:
         row = await self.get(actor, webhook_id)
         scope = Scope.project(row.scope_id) if row.scope_id else Scope.global_()

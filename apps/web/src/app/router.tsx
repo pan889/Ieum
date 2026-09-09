@@ -28,6 +28,7 @@ import { SecurityScreen } from '@/features/settings/SecurityScreen'
 import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
 import { GroupsScreen } from '@/features/settings/GroupsScreen'
 import { FieldsScreen } from '@/features/settings/FieldsScreen'
+import { AppsScreen } from '@/features/settings/AppsScreen'
 import { AssetsScreen } from '@/features/settings/AssetsScreen'
 import { RepositoriesScreen } from '@/features/settings/RepositoriesScreen'
 import { RolesScreen } from '@/features/settings/RolesScreen'
@@ -195,6 +196,12 @@ const fieldsRoute = createRoute({
   component: FieldsScreen,
 })
 
+const appsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/apps',
+  component: AppsScreen,
+})
+
 const assetsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/assets',
@@ -360,6 +367,7 @@ const routeTree = rootRoute.addChildren([
   fieldsRoute,
   repositoriesRoute,
   assetsRoute,
+  appsRoute,
   portalsRoute,
   customerOrgsRoute,
   deskRoute,

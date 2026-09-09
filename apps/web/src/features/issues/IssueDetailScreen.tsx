@@ -12,6 +12,7 @@ import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
 
 import { Approvals } from './Approvals'
+import { AppSlots } from './AppSlots'
 import { Assets } from './Assets'
 import { Attachments } from './Attachments'
 import { Development } from './Development'
@@ -96,6 +97,9 @@ export function IssueDetailScreen() {
           <Attachments ownerType="issue" ownerId={data.id} />
           <LinkedDocs issueId={data.id} />
           <Development issueId={data.id} />
+          {/* 앱이 놓은 것은 개발 정보 다음이다 — 둘 다 "이 건이 밖에서
+              어떻게 되고 있나" 를 말한다 (M6). */}
+          <AppSlots issueId={data.id} />
           <Comments issueId={data.id} projectId={data.project_id} isTicket={desk !== null} />
           <History issueId={data.id} />
         </div>

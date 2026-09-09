@@ -72,6 +72,8 @@
   "people.noMatches": "해당하는 사람이 없습니다.",
   "people.searchHint": "이름이나 이메일 주소를 입력하세요.",
   "permission.desk.email.manage": "메일 채널 관리",
+  "permission.plugins.app.view": "등록된 앱 목록 조회",
+  "permission.plugins.app.manage": "앱 등록·자리 지정·삭제",
   "permission.desk.approval.manage": "기다리는 승인 취소",
   "permission.desk.asset.manage": "자산·자산 종류 등록·수정",
   "permission.desk.asset.view": "자산 목록 조회",

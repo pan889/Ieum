@@ -28,6 +28,7 @@ from ieum.modules.org import permissions as org_perms
 from ieum.modules.org.models import Role
 from ieum.modules.org.repository import RoleRepository
 from ieum.modules.org.service import WorkspaceService
+from ieum.modules.plugins import permissions as plugin_perms
 from ieum.modules.vcs import permissions as vcs_perms
 from ieum.modules.wiki import permissions as wiki_perms
 
@@ -48,6 +49,9 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             # `test_seed_grants.py` 가 이제 그 종류를 붙잡는다.
             *notify_perms.ALL,
             *vcs_perms.ALL,
+            # 앱 등록 (M6). 전역이고, 자리를 정하는 쪽은 step-up 이다 —
+            # 화면 안에 남의 글을 놓는 자리를 내주는 일이라서 그렇다.
+            *plugin_perms.ALL,
         ),
     ),
     "Member": (

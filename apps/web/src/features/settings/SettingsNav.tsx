@@ -30,6 +30,7 @@ const ORG = [
   { to: '/settings/fields', labelKey: 'admin:fields.title' },
   { to: '/settings/repositories', labelKey: 'vcs:title' },
   { to: '/settings/assets', labelKey: 'desk:asset.title' },
+  { to: '/settings/apps', labelKey: 'plugins:title' },
   { to: '/settings/portals', labelKey: 'desk:portals.title' },
   { to: '/settings/customers', labelKey: 'desk:customers.title' },
   { to: '/settings/sla', labelKey: 'desk:sla.policies' },

@@ -19,6 +19,7 @@ import recurrencesEn from '@ieum/i18n/en/recurrences.json'
 import reportsEn from '@ieum/i18n/en/reports.json'
 import searchEn from '@ieum/i18n/en/search.json'
 import sprintsEn from '@ieum/i18n/en/sprints.json'
+import pluginsEn from '@ieum/i18n/en/plugins.json'
 import vcsEn from '@ieum/i18n/en/vcs.json'
 import wikiEn from '@ieum/i18n/en/wiki.json'
 import adminKo from '@ieum/i18n/ko/admin.json'
@@ -38,6 +39,7 @@ import recurrencesKo from '@ieum/i18n/ko/recurrences.json'
 import reportsKo from '@ieum/i18n/ko/reports.json'
 import searchKo from '@ieum/i18n/ko/search.json'
 import sprintsKo from '@ieum/i18n/ko/sprints.json'
+import pluginsKo from '@ieum/i18n/ko/plugins.json'
 import vcsKo from '@ieum/i18n/ko/vcs.json'
 import wikiKo from '@ieum/i18n/ko/wiki.json'
 
@@ -60,6 +62,7 @@ const resources = {
     calendar: calendarEn,
     gantt: ganttEn,
     reports: reportsEn,
+    plugins: pluginsEn,
     vcs: vcsEn,
     notifications: notificationsEn,
     wiki: wikiEn,
@@ -81,6 +84,7 @@ const resources = {
     calendar: calendarKo,
     gantt: ganttKo,
     reports: reportsKo,
+    plugins: pluginsKo,
     vcs: vcsKo,
     notifications: notificationsKo,
     wiki: wikiKo,

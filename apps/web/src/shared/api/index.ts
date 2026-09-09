@@ -3,6 +3,7 @@ import {
   createApiTokensApi,
   createApprovalsApi,
   createAssetsApi,
+  createPluginsApi,
   createAttachmentsApi,
   createAuditApi,
   createAuthApi,
@@ -64,3 +65,4 @@ export const recurrencesApi = createRecurrencesApi(apiClient)
 export const repositoriesApi = createRepositoriesApi(apiClient)
 export const approvalsApi = createApprovalsApi(apiClient)
 export const assetsApi = createAssetsApi(apiClient)
+export const pluginsApi = createPluginsApi(apiClient)

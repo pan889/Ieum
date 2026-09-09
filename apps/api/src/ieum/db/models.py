@@ -68,6 +68,7 @@ from ieum.modules.org.models import (
     RoleAssignment,
     Workspace,
 )
+from ieum.modules.plugins.models import App, AppPanel, AppSlot
 from ieum.modules.search.models import SearchDocument
 from ieum.modules.vcs.models import ChangeLink, Repository
 from ieum.modules.wiki.models import (
@@ -83,6 +84,9 @@ from ieum.modules.wiki.models import (
 
 __all__ = [
     "ApiToken",
+    "App",
+    "AppPanel",
+    "AppSlot",
     "Approval",
     "ApprovalVote",
     "Asset",
