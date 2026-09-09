@@ -178,5 +178,9 @@
   "list.group.priority": "Priority",
   "list.group.project": "Project",
   "linkedDocs.title": "Mentioned in docs",
+  "development.title": "Development",
+  "development.kind.commit": "Commit",
+  "development.kind.pull_request": "Pull request",
+  "development.closes": "Says it closes this",
   "create.projectFirst": "Pick a project first."
 }

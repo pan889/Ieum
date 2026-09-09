@@ -16,6 +16,7 @@ import {
   createProjectsApi,
   createRecurrencesApi,
   createReportsApi,
+  createRepositoriesApi,
   createRolesApi,
   createSearchApi,
   createSecurityApi,
@@ -58,3 +59,4 @@ export const calendarApi = createCalendarApi(apiClient)
 export const ganttApi = createGanttApi(apiClient)
 export const reportsApi = createReportsApi(apiClient)
 export const recurrencesApi = createRecurrencesApi(apiClient)
+export const repositoriesApi = createRepositoriesApi(apiClient)

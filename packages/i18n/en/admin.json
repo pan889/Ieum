@@ -115,6 +115,8 @@
   "permission.org.role.assign": "Assign roles",
   "permission.org.role.manage": "Change role and permission definitions",
   "permission.org.security.manage": "Change security policy",
+  "permission.vcs.repository.manage": "Connect and remove code repositories",
+  "permission.vcs.repository.view": "View connected code repositories",
   "permission.wiki.comment.add": "Add page comments",
   "permission.wiki.comment.edit_any": "Edit anyone's page comments",
   "permission.wiki.comment.edit_own": "Edit your own page comments",

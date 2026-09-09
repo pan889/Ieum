@@ -115,6 +115,8 @@
   "permission.org.role.assign": "역할 할당",
   "permission.org.role.manage": "역할·권한 정의 변경",
   "permission.org.security.manage": "보안 정책 변경",
+  "permission.vcs.repository.manage": "코드 저장소 연동·삭제",
+  "permission.vcs.repository.view": "연동한 코드 저장소 조회",
   "permission.wiki.comment.add": "문서 코멘트 작성",
   "permission.wiki.comment.edit_any": "타인의 문서 코멘트 수정",
   "permission.wiki.comment.edit_own": "자신의 문서 코멘트 수정",

@@ -75,6 +75,8 @@ from ieum.modules.notify.router import (
 )
 from ieum.modules.org.router import projects_router, roles_router, security_router
 from ieum.modules.search.router import router as unified_search_router
+from ieum.modules.vcs.router import repositories_router
+from ieum.modules.vcs.webhook_router import vcs_webhooks_router
 from ieum.modules.wiki.collab_router import collab_router
 from ieum.modules.wiki.router import pages_router, spaces_router
 from ieum.wiring import install_permissions
@@ -260,6 +262,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         email_router,
         automation_router,
         portal_router,
+        repositories_router,
+        # 코드 호스트가 두드리는 문 (A22). **인증이 없다** — 액세스 토큰
+        # 대신 서명으로 확인한다. 그래서 파일도 라우터도 따로다
+        # (`vcs/webhook_router.py`).
+        vcs_webhooks_router,
     ):
         app.include_router(router, prefix=API_PREFIX)
 

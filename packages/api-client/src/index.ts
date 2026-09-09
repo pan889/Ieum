@@ -131,6 +131,15 @@ export {
   type RecurrencesApi,
 } from './recurrences'
 export {
+  createRepositoriesApi,
+  type ChangeLink,
+  type IssuedRepository,
+  type RepositoriesApi,
+  type Repository,
+  type RepositoryInput,
+  type VcsProvider,
+} from './vcs'
+export {
   createReportsApi,
   type CountReport,
   type ReportBucket,

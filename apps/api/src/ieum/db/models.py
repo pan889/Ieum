@@ -64,6 +64,7 @@ from ieum.modules.org.models import (
     Workspace,
 )
 from ieum.modules.search.models import SearchDocument
+from ieum.modules.vcs.models import ChangeLink, Repository
 from ieum.modules.wiki.models import (
     Page,
     PageComment,
@@ -81,6 +82,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "Board",
+    "ChangeLink",
     "CustomerMembership",
     "CustomerOrganization",
     "EntityLink",
@@ -110,6 +112,7 @@ __all__ = [
     "PermissionGrant",
     "Portal",
     "Project",
+    "Repository",
     "RequestType",
     "Role",
     "RoleAssignment",

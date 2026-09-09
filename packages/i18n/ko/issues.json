@@ -178,5 +178,9 @@
   "list.group.priority": "우선순위",
   "list.group.project": "프로젝트",
   "linkedDocs.title": "이 이슈를 언급한 문서",
+  "development.title": "개발",
+  "development.kind.commit": "커밋",
+  "development.kind.pull_request": "PR",
+  "development.closes": "닫는다고 적었습니다",
   "create.projectFirst": "먼저 프로젝트를 고르세요."
 }

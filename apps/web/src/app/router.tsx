@@ -28,6 +28,7 @@ import { SecurityScreen } from '@/features/settings/SecurityScreen'
 import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
 import { GroupsScreen } from '@/features/settings/GroupsScreen'
 import { FieldsScreen } from '@/features/settings/FieldsScreen'
+import { RepositoriesScreen } from '@/features/settings/RepositoriesScreen'
 import { RolesScreen } from '@/features/settings/RolesScreen'
 import { SsoScreen } from '@/features/settings/SsoScreen'
 import { UsersScreen } from '@/features/settings/UsersScreen'
@@ -193,6 +194,12 @@ const fieldsRoute = createRoute({
   component: FieldsScreen,
 })
 
+const repositoriesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/repositories',
+  component: RepositoriesScreen,
+})
+
 const portalsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/portals',
@@ -344,6 +351,7 @@ const routeTree = rootRoute.addChildren([
   rolesRoute,
   workflowsRoute,
   fieldsRoute,
+  repositoriesRoute,
   portalsRoute,
   customerOrgsRoute,
   deskRoute,

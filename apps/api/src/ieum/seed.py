@@ -28,6 +28,7 @@ from ieum.modules.org import permissions as org_perms
 from ieum.modules.org.models import Role
 from ieum.modules.org.repository import RoleRepository
 from ieum.modules.org.service import WorkspaceService
+from ieum.modules.vcs import permissions as vcs_perms
 from ieum.modules.wiki import permissions as wiki_perms
 
 log = get_logger(__name__)
@@ -46,6 +47,7 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             # 가진 내장 역할이 없어서, 관리자가 그 화면에서 403 을 봤다.
             # `test_seed_grants.py` 가 이제 그 종류를 붙잡는다.
             *notify_perms.ALL,
+            *vcs_perms.ALL,
         ),
     ),
     "Member": (
@@ -86,6 +88,11 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             # 여기 넣지 않았다: 그건 고객이 보는 화면이고, 누가 고쳐야 하는지는
             # 따로 정할 문제다.
             desk_perms.QUEUE_MANAGE,
+            # 저장소 연동은 웹훅과 같은 결이다 — 자기 프로젝트의 코드가
+            # 어디에 있는지는 프로젝트를 굴리는 사람이 안다. 등록이
+            # step-up 대상인 이유는 `vcs/permissions.py` 에 적어 뒀다.
+            vcs_perms.REPO_VIEW,
+            vcs_perms.REPO_MANAGE,
         ),
     ),
     "Project Member": (
