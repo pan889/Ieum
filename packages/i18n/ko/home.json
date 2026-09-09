@@ -1,0 +1,16 @@
+{
+  "calm": "지난 기한도, 오늘까지 할 일도 없습니다.",
+  "endsAt": "끝: {when}",
+  "myIssues": "내게 배정된 이슈",
+  "mySprints": "내 일이 든 스프린트",
+  "myTasks": "내 할 일",
+  "noIssues": "배정된 이슈가 없습니다.",
+  "noNotifications": "안 읽은 알림이 없습니다.",
+  "noSprints": "내 일이 들어 있는 스프린트가 없습니다.",
+  "noTasks": "문서에 적힌 내 할 일이 없습니다.",
+  "remaining": "남은 {remaining}/{total}",
+  "seeAll": "전체 보기",
+  "summary": "기한 지난 {overdue}건, 오늘까지 {today}건.",
+  "title": "오늘",
+  "unread": "안 읽은 알림"
+}

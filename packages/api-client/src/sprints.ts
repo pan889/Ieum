@@ -28,6 +28,18 @@ export interface Sprint {
   remaining_minutes: number
 }
 
+/**
+ * 도는 스프린트 + **어느 프로젝트의 것인가.**
+ *
+ * 첫 화면은 여러 프로젝트를 섞어 보여 준다. "Sprint 3" 만 있으면 그게 누구의
+ * Sprint 3 인지 알 수 없으므로 서버가 프로젝트를 함께 준다 — 화면이 행마다
+ * 물어보면 목록 길이만큼 왕복이 늘어난다.
+ */
+export interface ActiveSprint extends Sprint {
+  project_key: string
+  project_name: string
+}
+
 /** 그날 찍힌 점. **되짚어 계산한 값이 아니다.** */
 export interface BurndownPoint {
   on_date: string
@@ -67,6 +79,16 @@ const BASE = '/api/v1/sprints'
 export function createSprintsApi(client: ApiClient) {
   return {
     list: (projectId: string) => client.get<Sprint[]>(`${BASE}?project_id=${projectId}`),
+    /**
+     * 지금 도는 스프린트 중 **내 일이 들어 있는 것.** 첫 화면이 쓴다.
+     *
+     * "도는 것 전부" 가 아니다 — 팀이 열이면 도는 스프린트도 열이고, 그중
+     * 몇을 골라 보여 주는 것은 "내 일" 이 아니라 임의의 목록이다.
+     */
+    mine: (limit?: number) =>
+      client.get<ActiveSprint[]>(
+        limit === undefined ? `${BASE}/mine` : `${BASE}/mine?limit=${String(limit)}`,
+      ),
     create: (body: NewSprint) => client.post<Sprint>(BASE, body),
     update: (id: string, body: SprintPatch) => client.patch<Sprint>(`${BASE}/${id}`, body),
     remove: (id: string) => client.delete<void>(`${BASE}/${id}`),

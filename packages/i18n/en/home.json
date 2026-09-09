@@ -1,0 +1,16 @@
+{
+  "calm": "Nothing overdue and nothing due today.",
+  "endsAt": "Ends {when}",
+  "myIssues": "Assigned to me",
+  "mySprints": "Sprints with my work",
+  "myTasks": "My tasks",
+  "noIssues": "No issues assigned to you.",
+  "noNotifications": "No unread notifications.",
+  "noSprints": "None of the running sprints hold your work.",
+  "noTasks": "No tasks in documents are yours.",
+  "remaining": "{remaining} of {total} left",
+  "seeAll": "See all",
+  "summary": "{overdue} overdue, {today} due today.",
+  "title": "Today",
+  "unread": "Unread"
+}

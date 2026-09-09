@@ -47,6 +47,7 @@
   "state.loading": "Loading…",
   "state.empty": "Nothing here yet",
   "state.error": "Something went wrong",
+  "nav.home": "Home",
   "nav.projects": "Projects",
   "nav.issues": "Issues",
   "nav.boards": "Boards",

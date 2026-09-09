@@ -371,10 +371,25 @@ export async function signIn(
   await page.getByLabel(/password|비밀번호/i).fill(who.password)
   await page.getByRole('button', { name: /^(sign in|로그인)$/i }).click()
   // 주소가 아니라 **앱 셸**이 뜰 때까지 기다린다. 나갔다 들어오는 경우 주소는
-  // 이미 `/projects` 라서, 주소만 보면 로그인 요청이 아직 날아가는 중인데도
+  // 이미 첫 화면이라서, 주소만 보면 로그인 요청이 아직 날아가는 중인데도
   // 다음 줄로 넘어간다.
   await expect(out).toBeVisible()
-  await page.waitForURL(/\/projects/)
+  // 그리고 **첫 화면이 다 그려질 때까지** 기다린다. 로그아웃 버튼은 셸의
+  // 것이라 라우트가 아직 안 그려졌을 때도 보인다.
+  await expect(page.getByRole('heading', { name: /^(today|오늘)$/i, level: 1 })).toBeVisible()
+  // 제목만 보고 넘어가면 **첫 화면의 네 왕복이 아직 날아가는 중**이다. 다음
+  // 줄의 `goto` 가 화면을 갈아치우면서 그 요청들이 취소되고, 브라우저는 그
+  // 사이 네 칸을 그리느라 일하고 있다 — 시험의 첫 입력이 그 일과 겹친다.
+  //
+  // 그게 값싼 문제가 아니었다: 전체 스위트를 두 번 돌렸더니 손대지 않은
+  // 스펙 넷이 번번이 **다른 자리에서** 붉어졌다(3초 타임아웃, 아직 안 들어간
+  // 타이핑). 로그인이 화면 하나를 더 그리게 된 값이다.
+  //
+  // 그래서 조용해질 때까지 기다린다. 칸은 왕복이 끝나면 **줄이든 빈 문구든**
+  // 하나를 그리므로 그 둘 중 하나를 본다 — 데이터에 기대지 않는 신호다.
+  const rows = page.getByTestId('home-issues').locator('li').first()
+  const empty = page.getByText(/no issues assigned to you|배정된 이슈가 없습니다/i)
+  await expect(rows.or(empty).first()).toBeVisible()
 }
 
 /**
@@ -387,7 +402,7 @@ export async function signIn(
  */
 /**
  * 고객으로 들어간다. `signIn` 을 못 쓴다 — 그쪽은 앱 셸(로그아웃 버튼)과
- * `/projects` 를 기다리는데, 고객은 그 화면에 **절대 도착하지 않는다.**
+ * **첫 화면**을 기다리는데, 고객은 그 화면에 **절대 도착하지 않는다.**
  * 대신 자기 창구로 넘겨진다.
  *
  * 넘겨지는 자리가 이 헬퍼의 요점이다: 이 브라우저가 포털을 한 번도 열지

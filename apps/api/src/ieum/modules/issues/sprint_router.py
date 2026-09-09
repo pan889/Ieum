@@ -5,11 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
-from ieum.modules.issues.sprints import BurndownPoint, SprintService, SprintView
+from ieum.modules.issues.sprints import (
+    MAX_ACTIVE,
+    ActiveSprint,
+    BurndownPoint,
+    SprintService,
+    SprintView,
+)
 
 sprints_router = APIRouter(prefix="/sprints", tags=["sprints"])
 
@@ -50,6 +56,27 @@ class SprintResponse(BaseModel):
             minutes=view.totals.minutes,
             remaining_issues=view.totals.remaining_issues,
             remaining_minutes=view.totals.remaining_minutes,
+        )
+
+
+class ActiveSprintResponse(SprintResponse):
+    """도는 스프린트 + 어느 프로젝트의 것인가.
+
+    첫 화면이 여러 프로젝트를 섞어 보여 주므로 프로젝트 키와 이름이 함께
+    나가야 한다 — 화면이 행마다 프로젝트를 물어보면 목록 길이만큼 왕복이
+    늘어난다.
+    """
+
+    project_key: str
+    project_name: str
+
+    @classmethod
+    def of_active(cls, found: ActiveSprint) -> ActiveSprintResponse:
+        base = SprintResponse.of(found.view)
+        return cls(
+            **base.model_dump(),
+            project_key=found.project.key,
+            project_name=found.project.name,
         )
 
 
@@ -135,6 +162,21 @@ async def list_sprints(
 ) -> list[SprintResponse]:
     rows = await SprintService(session, permissions).list_for(actor, project_id)
     return [SprintResponse.of(row) for row in rows]
+
+
+#: **`/{sprint_id}` 형제 전부보다 위에 있어야 한다.** FastAPI 는 먼저 선언된
+#: 라우트를 쓰므로, 아래로 내려가면 `mine` 이 스프린트 id 로 잡혀 UUID 파싱
+#: 오류가 난다 (conventions "고정 경로는 형제 전부보다 위에 둔다").
+@sprints_router.get("/mine", response_model=list[ActiveSprintResponse])
+async def list_my_sprints(
+    session: DbSession,
+    permissions: PermissionDep,
+    actor: CurrentActor,
+    limit: int = Query(default=MAX_ACTIVE, ge=1, le=MAX_ACTIVE),
+) -> list[ActiveSprintResponse]:
+    """지금 도는 스프린트 중 **내 일이 들어 있는 것.** 첫 화면이 쓴다."""
+    rows = await SprintService(session, permissions).list_mine(actor, limit=limit)
+    return [ActiveSprintResponse.of_active(row) for row in rows]
 
 
 @sprints_router.post("", response_model=SprintResponse, status_code=status.HTTP_201_CREATED)

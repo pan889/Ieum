@@ -11,6 +11,7 @@ import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/shared/i18n'
 import { Button } from '@/shared/ui/primitives'
 
 const NAV = [
+  { to: '/', labelKey: 'common:nav.home' },
   { to: '/projects', labelKey: 'common:nav.projects' },
   { to: '/issues', labelKey: 'common:nav.issues' },
   { to: '/boards', labelKey: 'common:nav.boards' },
@@ -75,7 +76,10 @@ export function AppShell() {
         aria-label={t('common:nav.projects')}
         className="flex w-56 shrink-0 flex-col border-r border-border bg-surface"
       >
-        <div className="px-4 py-4 text-lg font-semibold tracking-tight">Ieum</div>
+        {/* 상호는 첫 화면으로 가는 길이다 — 사람이 거기를 누른다. */}
+        <Link to="/" className="px-4 py-4 text-lg font-semibold tracking-tight hover:text-accent">
+          Ieum
+        </Link>
 
         {/* 어디서든 한 상자로 찾는다. 검색어는 URL 이 소유하므로 결과를
             그대로 링크로 넘길 수 있다. */}

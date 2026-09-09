@@ -10,6 +10,7 @@ import commonEn from '@ieum/i18n/en/common.json'
 import deskEn from '@ieum/i18n/en/desk.json'
 import errorsEn from '@ieum/i18n/en/errors.json'
 import ganttEn from '@ieum/i18n/en/gantt.json'
+import homeEn from '@ieum/i18n/en/home.json'
 import issuesEn from '@ieum/i18n/en/issues.json'
 import markdownEn from '@ieum/i18n/en/markdown.json'
 import notificationsEn from '@ieum/i18n/en/notifications.json'
@@ -27,6 +28,7 @@ import commonKo from '@ieum/i18n/ko/common.json'
 import deskKo from '@ieum/i18n/ko/desk.json'
 import errorsKo from '@ieum/i18n/ko/errors.json'
 import ganttKo from '@ieum/i18n/ko/gantt.json'
+import homeKo from '@ieum/i18n/ko/home.json'
 import issuesKo from '@ieum/i18n/ko/issues.json'
 import markdownKo from '@ieum/i18n/ko/markdown.json'
 import notificationsKo from '@ieum/i18n/ko/notifications.json'
@@ -43,6 +45,7 @@ export type Locale = (typeof SUPPORTED_LOCALES)[number]
 const resources = {
   en: {
     common: commonEn,
+    home: homeEn,
     auth: authEn,
     admin: adminEn,
     desk: deskEn,
@@ -62,6 +65,7 @@ const resources = {
   },
   ko: {
     common: commonKo,
+    home: homeKo,
     auth: authKo,
     admin: adminKo,
     desk: deskKo,

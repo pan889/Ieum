@@ -47,6 +47,7 @@
   "state.loading": "불러오는 중…",
   "state.empty": "아직 아무것도 없습니다",
   "state.error": "문제가 발생했습니다",
+  "nav.home": "홈",
   "nav.projects": "프로젝트",
   "nav.issues": "이슈",
   "nav.boards": "보드",

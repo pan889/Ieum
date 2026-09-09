@@ -48,9 +48,14 @@ from ieum.modules.issues.models import (
 )
 from ieum.modules.issues.search import SearchService
 from ieum.modules.issues.service import IssueService, NewIssue, SecurityLevelGuard
-from ieum.modules.issues.sprints import SprintService, snapshot_sprints, totals_of
+from ieum.modules.issues.sprints import (
+    SprintService,
+    snapshot_sprints,
+    totals_for,
+    totals_of,
+)
 from ieum.modules.issues.workflow import DEFAULT_TRANSITIONS, DEFAULT_WORKFLOW_STATES
-from ieum.modules.org.models import Project, Role
+from ieum.modules.org.models import Project, Role, RoleAssignment
 from ieum.modules.org.repository import OrgPermissionResolver, RoleRepository
 
 
@@ -929,3 +934,335 @@ class TestListOrder:
 
         names = [view.sprint.name for view in await service.list_for(actor, project.id)]
         assert names == [running.name, planned.name, done.name]
+
+
+async def _grant(session: AsyncSession, actor: Actor, project: Project) -> RoleAssignment:
+    """이 액터에게 그 프로젝트의 이슈 권한을 준다. **할당을 돌려준다** —
+    되돌리는 시험이 그것을 지운다."""
+    repo = RoleRepository(session)
+    role = Role(name=f"r-{secrets.token_hex(4)}", scope_kind="project")
+    repo.add(role)
+    await session.flush()
+    for permission in perms.project_scoped():
+        repo.grant(role.id, permission)
+    assignment = repo.assign(
+        role_id=role.id,
+        scope=Scope.project(project.id),
+        principal_kind="user",
+        principal_id=actor.user_id,
+    )
+    await session.flush()
+    return assignment
+
+
+async def _other_project(session: AsyncSession, actor: Actor, name: str) -> Project:
+    row = Project(key=f"T{secrets.token_hex(3).upper()}", name=name)
+    session.add(row)
+    await session.flush()
+    await _grant(session, actor, row)
+    return row
+
+
+async def _put_my_work_in(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    project: Project,
+    issue_type: IssueType,
+    sprint_id: UUID,
+    summary: str = "내 일",
+) -> UUID:
+    """그 스프린트에 **내게 배정된** 이슈 하나를 넣는다.
+
+    `list_mine` 은 내 일이 든 스프린트만 보므로 시험마다 이것이 있어야 한다 —
+    없으면 전부 빈 목록이고, 그러면 이 목록의 다른 규칙(권한·접힘·정렬)을
+    아무것도 안 보는 시험이 된다.
+    """
+    view = await IssueService(session, permissions).create(
+        actor,
+        NewIssue(
+            project_id=project.id,
+            type_id=issue_type.id,
+            summary=summary,
+            assignee_id=actor.user_id,
+        ),
+    )
+    await SprintService(session, permissions).assign_issues(
+        actor, sprint_id=sprint_id, issue_ids=[view.issue.id], project_id=project.id
+    )
+    return view.issue.id
+
+
+class TestMySprints:
+    """첫 화면이 쓰는 목록 (M5 대시보드).
+
+    **프로젝트를 고르지 않는 목록이다.** 그래서 `list_for` 가 안 보던 것들을
+    여기서 처음 본다: 남의 프로젝트, 접힌 프로젝트, "볼 수 있는 것이 하나도
+    없는 사람", 그리고 **내 일이 안 든 스프린트**.
+    """
+
+    async def test_it_crosses_projects(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        other = await _other_project(session, actor, "다른 프로젝트")
+        service = SprintService(session, permissions)
+        mine = await service.create(actor, project_id=project.id, name="우리 주기")
+        theirs = await service.create(actor, project_id=other.id, name="저쪽 주기")
+        await service.start(actor, mine.id)
+        await service.start(actor, theirs.id)
+        await _put_my_work_in(session, permissions, actor, project, issue_type, mine.id)
+        await _put_my_work_in(session, permissions, actor, other, issue_type, theirs.id)
+
+        found = await service.list_mine(actor)
+        names = {row.view.sprint.name for row in found}
+        assert {"우리 주기", "저쪽 주기"} <= names
+        # **프로젝트가 함께 온다.** 여러 프로젝트를 섞어 보여 주는 화면이라
+        # 이름만 있으면 그게 누구의 주기인지 알 수 없다.
+        keys = {row.view.sprint.name: row.project.key for row in found}
+        assert keys["우리 주기"] == project.key
+        assert keys["저쪽 주기"] == other.key
+
+    async def test_only_the_running_ones(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        service = SprintService(session, permissions)
+        planned = await service.create(actor, project_id=project.id, name="예정")
+        done = await service.create(actor, project_id=project.id, name="지난")
+        await _put_my_work_in(
+            session, permissions, actor, project, issue_type, planned.id, "예정 일"
+        )
+        await service.start(actor, done.id)
+        await _put_my_work_in(session, permissions, actor, project, issue_type, done.id, "지난 일")
+        await service.close(actor, done.id, move_to=None, to_backlog=True)
+
+        names = {row.view.sprint.name for row in await service.list_mine(actor)}
+        assert planned.name not in names
+        assert done.name not in names
+
+    async def test_an_archived_project_drops_out(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**프로젝트를 접는 것은 "이제 안 본다" 는 뜻이다.**
+
+        그 안에서 돌던 스프린트가 첫 화면에 남아 있으면 접은 일이 안 된 것처럼
+        보이고, 사람은 스프린트를 하나씩 닫으러 들어간다.
+        """
+        service = SprintService(session, permissions)
+        running = await service.create(actor, project_id=project.id, name="접힐 주기")
+        await service.start(actor, running.id)
+        await _put_my_work_in(session, permissions, actor, project, issue_type, running.id)
+        assert {row.view.sprint.name for row in await service.list_mine(actor)} == {"접힐 주기"}
+
+        project.archived_at = utcnow()
+        await session.flush()
+
+        assert await service.list_mine(actor) == []
+
+    async def test_a_stranger_sees_nothing(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """역할이 없는 사람에게는 **질의를 보내지도 않는다**(`acl.is_empty`).
+
+        빈 목록이 나오는 것과 남의 스프린트 이름이 보이는 것 사이에는 사고가
+        하나 있다 — 이름만으로도 새는 것이 있다.
+        """
+        service = SprintService(session, permissions)
+        running = await service.create(actor, project_id=project.id, name="남의 주기")
+        await service.start(actor, running.id)
+        await _put_my_work_in(session, permissions, actor, project, issue_type, running.id)
+
+        outsider = User(email=f"x-{new_id()}@example.com", display_name="외부", status="active")
+        session.add(outsider)
+        await session.flush()
+        stranger = Actor(user_id=outsider.id, email=outsider.email, is_active=True)
+
+        assert await service.list_mine(stranger) == []
+
+    async def test_it_hides_my_own_work_in_a_project_i_lost(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**이 시험이 이 목록의 권한을 지킨다.**
+
+        "내 일이 든 스프린트" 로 좁히고 나면 남의 프로젝트는 대개 자동으로
+        빠진다 — 남의 일이 배정된 곳이니까. 그래서 남의 프로젝트로 시험하면
+        **ACL 필터를 지워도 초록이다.**
+
+        정말 필요한 자리는 이쪽이다: 팀을 옮겨 그 프로젝트의 역할을 잃었는데
+        **옛 이슈에는 내 이름이 그대로 남아 있다.** 그러면 `EXISTS` 는 걸리고,
+        막는 것은 ACL 뿐이다. 스프린트 이름은 팀이 하는 일을 말하므로
+        ("결제 이관 2주차") 이름만으로도 새는 것이 있다.
+        """
+        left = Project(key=f"V{secrets.token_hex(3).upper()}", name="떠난 프로젝트")
+        session.add(left)
+        await session.flush()
+        assignment = await _grant(session, actor, left)
+
+        service = SprintService(session, permissions)
+        gone = await service.create(actor, project_id=left.id, name="떠난 주기")
+        await service.start(actor, gone.id)
+        await _put_my_work_in(session, permissions, actor, left, issue_type, gone.id)
+        mine = await service.create(actor, project_id=project.id, name="남은 주기")
+        await service.start(actor, mine.id)
+        await _put_my_work_in(session, permissions, actor, project, issue_type, mine.id)
+
+        # 역할을 잃는다. **액터를 새로 만든다** — ACL 은 액터에 캐시되므로
+        # 같은 객체로 다시 물으면 잃기 전의 답이 돌아온다.
+        await RoleRepository(session).delete_assignment(assignment.id)
+        await session.flush()
+        moved = Actor(
+            user_id=actor.user_id, email=actor.email, is_active=True, mfa_satisfied_at=utcnow()
+        )
+
+        names = [row.view.sprint.name for row in await service.list_mine(moved)]
+        assert names == ["남은 주기"]
+
+    async def test_it_sorts_by_when_they_end(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """곧 끝나는 것이 위다. **기한 없는 것은 맨 뒤**로 — 앞에 오면 이
+        목록을 보는 이유가 사라진다."""
+        later = await _other_project(session, actor, "나중")
+        never = await _other_project(session, actor, "무기한")
+        service = SprintService(session, permissions)
+        soon_row = await service.create(
+            actor,
+            project_id=project.id,
+            name="곧 끝",
+            starts_at=utcnow(),
+            ends_at=utcnow() + timedelta(days=1),
+        )
+        later_row = await service.create(
+            actor,
+            project_id=later.id,
+            name="나중 끝",
+            starts_at=utcnow(),
+            ends_at=utcnow() + timedelta(days=30),
+        )
+        never_row = await service.create(actor, project_id=never.id, name="기한 없음")
+        for row, where in ((soon_row, project), (later_row, later), (never_row, never)):
+            await service.start(actor, row.id)
+            await _put_my_work_in(session, permissions, actor, where, issue_type, row.id)
+
+        names = [row.view.sprint.name for row in await service.list_mine(actor)]
+        assert names == ["곧 끝", "나중 끝", "기한 없음"]
+
+    async def test_a_sprint_without_my_work_does_not_show(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**이 시험이 이 목록을 "내 일" 로 만든다.**
+
+        도는 스프린트 전부를 보여 주면, 팀이 열인 설치에서는 다섯 칸이 임의로
+        고른 남의 주기로 찬다 — 개발 DB 에 서른여섯 개가 쌓인 날 그게
+        드러났다. 첫 화면은 그 자리를 그렇게 쓸 수 없다.
+        """
+        service = SprintService(session, permissions)
+        empty = await service.create(actor, project_id=project.id, name="내 일 없는 주기")
+        await service.start(actor, empty.id)
+        # 스프린트에 이슈는 있지만 **내게 배정되지 않았다.**
+        someone_else = User(email=f"e-{new_id()}@example.com", display_name="남", status="active")
+        session.add(someone_else)
+        await session.flush()
+        view = await IssueService(session, permissions).create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="남의 일",
+                assignee_id=someone_else.id,
+            ),
+        )
+        await service.assign_issues(
+            actor, sprint_id=empty.id, issue_ids=[view.issue.id], project_id=project.id
+        )
+
+        assert await service.list_mine(actor) == []
+
+    async def test_counting_an_empty_sprint_gives_zero(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+    ) -> None:
+        """**`GROUP BY` 는 이슈가 없는 스프린트에 행을 주지 않는다.**
+
+        묶어 세는 질의를 그대로 쓰면 그 스프린트가 목록에서 사라지거나
+        `KeyError` 로 첫 화면이 통째로 안 뜬다. 0 으로 채워 돌려준다.
+        """
+        sprint = await SprintService(session, permissions).create(
+            actor, project_id=project.id, name="빈 주기"
+        )
+        found = await totals_for(session, [sprint.id])
+        assert found[sprint.id].issues == 0
+        assert found[sprint.id].remaining_issues == 0
+        assert found[sprint.id].minutes == 0
+
+    async def test_batched_counting_matches_the_single_one(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**세는 규칙은 한 곳에만 있어야 한다.**
+
+        한 개짜리와 여러 개짜리가 각자 질의를 들면 언젠가 한쪽만 고쳐지고,
+        그때 목록의 숫자와 상세의 숫자가 달라진다 — 어느 쪽이 맞는지는 아무도
+        모른다.
+        """
+        service = SprintService(session, permissions)
+        sprint = await service.create(actor, project_id=project.id, name="세는 주기")
+        first = await make_issue(
+            session, permissions, actor, project, issue_type, "하나", estimate_minutes=60
+        )
+        second = await make_issue(
+            session, permissions, actor, project, issue_type, "둘", estimate_minutes=30
+        )
+        await service.assign_issues(
+            actor, sprint_id=sprint.id, issue_ids=[first, second], project_id=project.id
+        )
+        await finish(session, permissions, actor, second)
+
+        one = await totals_of(session, sprint.id)
+        many = await totals_for(session, [sprint.id])
+        assert many[sprint.id] == one
+        assert one.issues == 2
+        assert one.remaining_issues == 1
+        assert one.minutes == 90
+        assert one.remaining_minutes == 60

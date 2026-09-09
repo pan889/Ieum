@@ -2,7 +2,6 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
 } from '@tanstack/react-router'
 
 import { BoardScreen } from '@/features/boards/BoardScreen'
@@ -35,6 +34,7 @@ import { UsersScreen } from '@/features/settings/UsersScreen'
 import { WorkflowsScreen } from '@/features/settings/WorkflowsScreen'
 import { SessionsScreen } from '@/features/settings/SessionsScreen'
 import { ProjectsScreen } from '@/features/projects/ProjectsScreen'
+import { HomeScreen } from '@/features/home/HomeScreen'
 import { SearchScreen } from '@/features/search/SearchScreen'
 import { RecurrencesScreen } from '@/features/recurrences/RecurrencesScreen'
 import { SprintsScreen } from '@/features/sprints/SprintsScreen'
@@ -46,14 +46,12 @@ import { AppShell } from './AppShell'
 
 const rootRoute = createRootRoute({ component: AppShell })
 
+// 첫 화면. 전에는 `/projects` 로 넘겼는데, 프로젝트 목록은 "무엇이 있나" 를
+// 말하고 "오늘 뭘 해야 하나" 를 말하지 않는다 (M5 대시보드).
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  beforeLoad: () => {
-    // TanStack Router 의 리다이렉트는 throw 기반 제어 흐름이다(라이브러리 규약).
-    // eslint-disable-next-line @typescript-eslint/only-throw-error
-    throw redirect({ to: '/projects' })
-  },
+  component: HomeScreen,
 })
 
 const projectsRoute = createRoute({

@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
@@ -42,10 +43,17 @@ from ieum.modules.issues.models import (
     SprintSnapshot,
     WorkflowState,
 )
+from ieum.modules.org import contracts as org
 
 log = get_logger(__name__)
 
 MAX_NAME = 200
+
+#: 첫 화면이 한 번에 보여 주는 스프린트의 최대 개수.
+#:
+#: 화면은 "내 일이 지금 어느 주기에 들어 있나" 를 묻는 자리이고, 스무 개를
+#: 넘기면 그 질문의 답이 아니라 또 하나의 목록이다.
+MAX_ACTIVE = 20
 
 #: 목록 순서: 도는 것 → 예정 → 끝난 것.
 #:
@@ -73,6 +81,19 @@ class SprintTotals:
 class SprintView:
     sprint: Sprint
     totals: SprintTotals
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveSprint:
+    """도는 스프린트 하나와, 그것이 **어느 프로젝트의 것인지.**
+
+    프로젝트를 함께 주는 이유: 랜딩 화면은 여러 프로젝트를 섞어 보여 준다.
+    "Sprint 3" 만 있으면 그게 누구의 Sprint 3 인지 알 수 없고, 화면이 행마다
+    프로젝트를 물어보면 목록 길이만큼 왕복이 늘어난다.
+    """
+
+    view: SprintView
+    project: org.ProjectRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +130,73 @@ class SprintService:
             .all()
         )
         return [SprintView(sprint=row, totals=await self._totals(row.id)) for row in rows]
+
+    async def list_mine(self, actor: Actor, *, limit: int = MAX_ACTIVE) -> list[ActiveSprint]:
+        """지금 도는 스프린트 중 **내 일이 들어 있는 것.**
+
+        프로젝트를 고르지 않는다. 첫 화면은 "내가 어느 프로젝트에 있는지" 를
+        이미 아는 사람에게 보여 주는 화면이 아니라, 열자마자 지금 상황을
+        말해야 하는 화면이다 — 프로젝트를 골라야 보이면 아무도 안 고른다.
+
+        **"도는 스프린트 전부" 가 아니다.** 설치 하나에 팀이 열이면 도는
+        스프린트도 열이고, 그중 다섯을 끝나는 순서로 골라 보여 주는 것은
+        "내 일" 이 아니라 임의의 목록이다 — 개발 DB 에 스프린트가 서른여섯
+        개 쌓인 날 그게 드러났다. 그래서 **내게 배정된 이슈가 하나라도 든**
+        스프린트만 본다. 하나도 없으면 그렇다고 말한다.
+
+        접힌 프로젝트의 스프린트는 뺀다. 프로젝트를 접는 것은 "이제 안 본다"
+        는 뜻이고, 그 안에서 돌던 스프린트가 첫 화면에 남아 있으면 접은 일이
+        안 된 것처럼 보인다.
+
+        끝나는 순서로 준다. 곧 끝나는 것이 위에 있어야 이 목록을 보는 이유가
+        생긴다 — 기한 없는 것은 맨 뒤다.
+        """
+        acl = await self._perms.acl_for(self._s, actor, perms.ISSUE_VIEW)
+        if acl.is_empty:
+            return []
+        # 내 일이 든 스프린트만. **`EXISTS` 로 본다** — 조인하면 배정된 이슈
+        # 수만큼 행이 곱해지고, 그걸 `DISTINCT` 로 걷어내면 정렬이 흔들린다.
+        mine = (
+            select(Issue.id)
+            .where(
+                Issue.sprint_id == Sprint.id,
+                Issue.assignee_id == actor.user_id,
+                Issue.archived_at.is_(None),
+            )
+            .exists()
+        )
+        stmt = select(Sprint).where(Sprint.state == "active", mine)
+        if not acl.is_global:
+            stmt = stmt.where(Sprint.project_id.in_(acl.project_ids))
+        rows = list(
+            (
+                await self._s.execute(
+                    stmt.order_by(Sprint.ends_at.asc().nulls_last(), Sprint.name).limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            return []
+        # 접힌 프로젝트를 걸러낸다. **`org` 표를 직접 보지 않는다** — 모듈
+        # 경계이므로 계약을 통해 묶어 한 번에 읽는다.
+        projects = await org.get_projects(self._s, [row.project_id for row in rows])
+        live = [
+            row
+            for row in rows
+            # 프로젝트가 사라졌으면(경합) 그 줄도 뺀다 — `KeyError` 로 첫
+            # 화면이 통째로 안 뜨는 것보다 한 줄이 없는 편이 낫다.
+            if row.project_id in projects and not projects[row.project_id].is_archived
+        ]
+        totals = await totals_for(self._s, [row.id for row in live])
+        return [
+            ActiveSprint(
+                view=SprintView(sprint=row, totals=totals[row.id]),
+                project=projects[row.project_id],
+            )
+            for row in live
+        ]
 
     async def burndown(self, actor: Actor, sprint_id: UUID) -> list[BurndownPoint]:
         """찍힌 점들. **없으면 빈 목록이다** — 아직 안 시작한 스프린트다."""
@@ -413,9 +501,31 @@ async def totals_of(session: AsyncSession, sprint_id: UUID) -> SprintTotals:
     추정이 없는 이슈는 0 분으로 센다. `NULL` 을 빼면 "추정 안 한 이슈가 많은
     스프린트" 가 실제보다 가벼워 보이는데, 그건 개수 축이 말해 준다.
     """
-    row = (
+    found = await totals_for(session, [sprint_id])
+    return found[sprint_id]
+
+
+async def totals_for(session: AsyncSession, sprint_ids: Sequence[UUID]) -> dict[UUID, SprintTotals]:
+    """여러 스프린트의 양을 한 번에.
+
+    **세는 규칙이 한 곳에만 있어야 한다.** 한 개짜리와 여러 개짜리가 각자
+    질의를 들면 언젠가 한쪽만 고쳐지고, 그때 목록의 숫자와 상세의 숫자가
+    다르게 나온다 — 어느 쪽이 맞는지는 아무도 모른다. 그래서 `totals_of` 가
+    이 함수를 부른다.
+
+    비어 있는 스프린트도 **0 으로 돌려준다.** `GROUP BY` 는 이슈가 없는
+    스프린트에 행을 주지 않으므로, 그대로 쓰면 부르는 쪽이 `KeyError` 를
+    맞거나 그 스프린트를 목록에서 잃는다.
+    """
+    zero = SprintTotals(issues=0, minutes=0, remaining_issues=0, remaining_minutes=0)
+    unique = list(dict.fromkeys(sprint_ids))
+    out: dict[UUID, SprintTotals] = dict.fromkeys(unique, zero)
+    if not unique:
+        return out
+    rows = (
         await session.execute(
             select(
+                Issue.sprint_id,
                 func.count(Issue.id),
                 func.coalesce(func.sum(func.coalesce(Issue.estimate_minutes, 0)), 0),
                 func.count(Issue.id).filter(WorkflowState.category != "done"),
@@ -428,15 +538,18 @@ async def totals_of(session: AsyncSession, sprint_id: UUID) -> SprintTotals:
             )
             .select_from(Issue)
             .join(WorkflowState, WorkflowState.id == Issue.state_id)
-            .where(Issue.sprint_id == sprint_id, Issue.archived_at.is_(None))
+            .where(Issue.sprint_id.in_(unique), Issue.archived_at.is_(None))
+            .group_by(Issue.sprint_id)
         )
-    ).one()
-    return SprintTotals(
-        issues=int(row[0] or 0),
-        minutes=int(row[1] or 0),
-        remaining_issues=int(row[2] or 0),
-        remaining_minutes=int(row[3] or 0),
-    )
+    ).all()
+    for row in rows:
+        out[row[0]] = SprintTotals(
+            issues=int(row[1] or 0),
+            minutes=int(row[2] or 0),
+            remaining_issues=int(row[3] or 0),
+            remaining_minutes=int(row[4] or 0),
+        )
+    return out
 
 
 async def snapshot_one(session: AsyncSession, sprint: Sprint) -> None:

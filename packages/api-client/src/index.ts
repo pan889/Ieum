@@ -138,6 +138,7 @@ export {
 } from './reports'
 export {
   createSprintsApi,
+  type ActiveSprint,
   type BurndownPoint,
   type NewSprint,
   type Sprint,
