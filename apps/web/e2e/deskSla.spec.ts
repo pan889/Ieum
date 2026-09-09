@@ -28,7 +28,10 @@ async function openSla(page: Page): Promise<void> {
 
 async function addCalendar(page: Page, name: string, hours = HOURS): Promise<void> {
   await page.getByRole('button', { name: /new calendar/i }).click()
-  await page.getByLabel(/^name$/i).fill(name)
+  // **달력과 정책이 한 화면에 있고 둘 다 "이름" 을 묻는다.** 그래서 칸의
+  // 이름을 갈라 뒀다 — `^name$` 로 잡으면 두 폼이 함께 열린 순간 어느 쪽을
+  // 채우는지 알 수 없다.
+  await page.getByLabel(/^calendar name$/i).fill(name)
   await page.getByLabel(/^working hours$/i).fill(hours)
   await page.getByRole('button', { name: /^save$/i }).click()
 }
@@ -49,13 +52,37 @@ test.describe('업무 달력', () => {
     // 무엇이 문제인지 그 자리에서 보인다.
     await openSla(page)
     await page.getByRole('button', { name: /new calendar/i }).click()
-    await page.getByLabel(/^name$/i).fill('broken')
+    await page.getByLabel(/^calendar name$/i).fill('broken')
     await page.getByLabel(/^working hours$/i).fill('월요일 아침부터 저녁까지')
 
     await expect(page.getByRole('button', { name: /^save$/i })).toBeDisabled()
     // 그리고 어떤 모양이어야 하는지 화면이 말한다.
     await expect(page.getByText(/Mon=0/).first()).toBeVisible()
   })
+})
+
+test('달력과 정책 폼을 함께 열어도 이름 칸이 섞이지 않는다', async ({ page }) => {
+  /**
+   * **이 시험이 두 칸의 이름을 갈라 둔 이유다.**
+   *
+   * 달력과 정책은 한 화면에 있고 둘 다 "이름" 을 묻는다. 같은 이름이면
+   * 화면 읽어 주는 사람에게 구별되지 않고, 브라우저 시험도 어느 쪽을
+   * 채우는지 모른다 — 자산 화면에서 같은 실수를 한 번 했다(C15).
+   *
+   * 한동안 이 파일에 "정책 폼의 이름 칸은 두 번째다" 라는 주석이 있었다.
+   * 세어서 피해 간 것이고, 그 셈은 폼이 하나 더 열리면 틀린다.
+   */
+  await openSla(page)
+  await page.getByRole('button', { name: /new calendar/i }).click()
+  await page.getByRole('button', { name: /new policy/i }).click()
+
+  // 둘이 함께 열려 있다. 이름이 같으면 여기서 strict mode 위반이 난다.
+  await page.getByLabel(/^calendar name$/i).fill('달력 쪽')
+  await page.getByLabel(/^policy name$/i).fill('정책 쪽')
+
+  // 그리고 각자 자기 칸에만 들어갔다.
+  await expect(page.getByLabel(/^calendar name$/i)).toHaveValue('달력 쪽')
+  await expect(page.getByLabel(/^policy name$/i)).toHaveValue('정책 쪽')
 })
 
 test.describe('SLA 정책', () => {
@@ -65,9 +92,7 @@ test.describe('SLA 정책', () => {
     await addCalendar(page, calendar)
 
     await page.getByRole('button', { name: /new policy/i }).click()
-    // 정책 폼의 이름 칸은 두 번째다(달력 폼이 닫혀 있어도 목록의 이름과
-    // 겹치지 않게 폼 안에서 고른다).
-    await page.getByLabel(/^name$/i).fill('첫 응답')
+    await page.getByLabel(/^policy name$/i).fill('첫 응답')
     // **초가 아니라 `4h` 다.** 초로 받으면 사람이 14400 을 계산해야 하고
     // 그 계산은 틀린다.
     await page.getByLabel(/^targets$/i).fill('priority>=5 1h\n4h')
@@ -84,7 +109,7 @@ test.describe('SLA 정책', () => {
     await openSla(page)
     await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
     await page.getByRole('button', { name: /new policy/i }).click()
-    await page.getByLabel(/^name$/i).fill('틀린 목표')
+    await page.getByLabel(/^policy name$/i).fill('틀린 목표')
     await page.getByLabel(/^targets$/i).fill('네 시간쯤')
 
     await expect(page.getByRole('button', { name: /^save$/i })).toBeDisabled()
@@ -97,7 +122,7 @@ test.describe('SLA 정책', () => {
     const calendar = `Seoul ${String(Date.now()).slice(-6)}`
     await addCalendar(page, calendar)
     await page.getByRole('button', { name: /new policy/i }).click()
-    await page.getByLabel(/^name$/i).fill('해결')
+    await page.getByLabel(/^policy name$/i).fill('해결')
     await page.getByLabel(/^measures$/i).selectOption('resolution')
     await page.getByLabel(/^targets$/i).fill('3d')
     await page.getByRole('button', { name: /^save$/i }).click()
@@ -122,7 +147,7 @@ test.describe('SLA 정책', () => {
     await addCalendar(page, calendar)
 
     await page.getByRole('button', { name: /new policy/i }).click()
-    await page.getByLabel(/^name$/i).fill('멈춤 확인용')
+    await page.getByLabel(/^policy name$/i).fill('멈춤 확인용')
     await page.getByLabel(/^targets$/i).fill('4h')
 
     // 프로젝트의 상태가 체크박스로 온다 — 이름을 적는 칸이 아니다.
@@ -154,7 +179,7 @@ test.describe('SLA 정책', () => {
     await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
 
     await page.getByRole('button', { name: /new policy/i }).click()
-    await page.getByLabel(/^name$/i).fill('에스컬레이션 확인용')
+    await page.getByLabel(/^policy name$/i).fill('에스컬레이션 확인용')
     await page.getByLabel(/^targets$/i).fill('4h')
 
     await page.getByRole('button', { name: /add rule/i }).click()
@@ -179,7 +204,7 @@ test.describe('SLA 정책', () => {
     await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
 
     await page.getByRole('button', { name: /new policy/i }).click()
-    await page.getByLabel(/^name$/i).fill('사람 없는 규칙')
+    await page.getByLabel(/^policy name$/i).fill('사람 없는 규칙')
     await page.getByLabel(/^targets$/i).fill('4h')
     await page.getByRole('button', { name: /add rule/i }).click()
     // 기본 조치는 우선순위 올리기다 — 그것만으로는 저장할 수 있다.
@@ -219,7 +244,7 @@ test.describe('티켓의 잔여 시간', () => {
     await page.getByRole('button', { name: new RegExp(portal.projectKey) }).click()
 
     await page.getByRole('button', { name: /new policy/i }).click()
-    await page.getByLabel(/^name$/i).fill('첫 응답')
+    await page.getByLabel(/^policy name$/i).fill('첫 응답')
     await page.getByLabel(/^targets$/i).fill('4h')
     await page.getByRole('button', { name: /^save$/i }).click()
     await expect(page.getByText('첫 응답')).toBeVisible()

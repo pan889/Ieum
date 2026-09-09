@@ -187,7 +187,11 @@ export function SlaScreen() {
         <p className="text-sm text-muted">{t('desk:sla.policiesDescription')}</p>
       </header>
 
-      {/* 달력이 먼저다 — 정책에 달력이 필요하다. 순서가 그것을 말한다. */}
+      {/* 달력이 먼저다 — 정책에 달력이 필요하다. 순서가 그것을 말한다.
+          **두 칸의 이름을 갈라 뒀다**(`calendarName`·`policyName`): 달력과
+          정책이 한 화면에 있고 둘 다 "이름" 을 묻는다. 같은 이름이면 화면
+          읽어 주는 사람에게 구별되지 않고, 브라우저 시험도 어느 쪽을 채우는지
+          모른다 — 자산 화면에서 같은 실수를 한 번 했다(C15). */}
       <Calendars />
 
       <ProjectPicker label={t('desk:sla.calendar')} chosen={project} onPick={setPicked} />
@@ -307,7 +311,7 @@ function Calendars() {
         >
           {save.isError ? <Alert>{describeError(save.error)}</Alert> : null}
           <Field
-            label={t('desk:sla.name')}
+            label={t('desk:sla.calendarName')}
             value={form.name}
             onChange={(event) => { setForm({ ...form, name: event.target.value }) }}
           />
@@ -659,7 +663,7 @@ function Policies({ projectId }: { projectId: string }) {
         >
           {save.isError ? <Alert>{describeError(save.error)}</Alert> : null}
           <Field
-            label={t('desk:sla.name')}
+            label={t('desk:sla.policyName')}
             value={form.name}
             onChange={(event) => { setForm({ ...form, name: event.target.value }) }}
           />
