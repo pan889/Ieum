@@ -33,10 +33,27 @@ export interface Collab {
   announceCaret: (caret: number) => void
 }
 
+/**
+ * 붙는 순간 무엇을 본문으로 삼을지 화면이 답한다.
+ *
+ * **이것이 없으면 사람이 쓴 글이 사라진다.** 붙기 전에는 화면이 자기 상태를
+ * 본문으로 쓰고, 붙으면 공유 문서가 임자가 된다. 그 갈아타기에서 붙는 사이에
+ * 친 글을 공유에 싣지 않으면 그냥 버려진다 — 느린 연결에서 문서를 열고 바로
+ * 쓰면 그렇게 된다.
+ */
+export interface CollabHandoff {
+  /**
+   * 받은 공유 문서를 그대로 쓰려면 `null`, 내가 들고 있던 글을 실어야 하면
+   * 그 글을 돌려준다. 무엇이 맞는지는 화면이 안다(`PageDetail`).
+   */
+  onAdopt: (shared: string) => string | null
+}
+
 export function useCollab(
   pageId: string,
   me: { userId: string; name: string } | null,
   enabled: boolean,
+  handoff?: CollabHandoff,
 ): Collab {
   const [status, setStatus] = useState<CollabStatus>('connecting')
   const [peers, setPeers] = useState<Peer[]>([])
@@ -45,6 +62,16 @@ export function useCollab(
   const source = useRef<HTMLTextAreaElement | null>(null)
   //: 마지막으로 본 본문. 원격 편집이 무엇이었는지 알아야 캐럿을 옮길 수 있다.
   const seen = useRef('')
+  /**
+   * 갈아타기 판단을 **최신 클로저로** 들고 있는다.
+   *
+   * 소켓 effect 는 한 번만 돌지만 갈아타기는 그보다 훨씬 뒤에 일어난다. 인자를
+   * 그대로 쓰면 첫 렌더의 클로저가 잡혀, 그 사이에 사람이 친 글을 못 본다.
+   */
+  const adopt = useRef<CollabHandoff | undefined>(handoff)
+  useEffect(() => {
+    adopt.current = handoff
+  })
 
   useEffect(() => {
     if (!enabled || me === null) return
@@ -63,6 +90,13 @@ export function useCollab(
           // 받았으면 받은 것이므로, 이 신호로 갈아탄다.
           seen.current = next
           setText(next)
+          // 붙는 사이에 사람이 쓴 글이 있으면 그것을 공유에 싣는다. 안 싣고
+          // 갈아타면 그 글은 그냥 사라진다 (`CollabHandoff` 주석).
+          const mine = adopt.current?.onAdopt(next) ?? null
+          if (mine === null || mine === next) return
+          const edit = singleEdit(next, mine)
+          if (edit === null) return
+          live.edit(edit.at, edit.remove, edit.insert)
         },
         onPeers: setPeers,
         onStatus: setStatus,

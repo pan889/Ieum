@@ -2,6 +2,7 @@
   "collab.status.connecting": "Connecting",
   "collab.status.live": "Editing together",
   "collab.status.offline": "Disconnected — retrying",
+  "collab.clashed": "You and someone else had both edited this page while it was connecting. Their version is shown — your unsent edits are not in it.",
   "collab.alone": "You are the only one here right now.",
   "collab.withMe": "{count, plural, one {# other person here} other {# other people here}}",
   "spaces.title": "Spaces",

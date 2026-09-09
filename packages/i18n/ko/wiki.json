@@ -2,6 +2,7 @@
   "collab.status.connecting": "잇는 중",
   "collab.status.live": "같이 편집 중",
   "collab.status.offline": "끊김 — 다시 잇는 중",
+  "collab.clashed": "붙는 사이에 당신과 다른 사람이 각자 이 문서를 고쳤습니다. 지금 보이는 것은 그쪽 판이고, 아직 안 보낸 당신의 편집은 여기 없습니다.",
   "collab.alone": "지금은 혼자 보고 있습니다.",
   "collab.withMe": "{count, plural, other {함께 보는 사람 #명}}",
   "spaces.title": "스페이스",

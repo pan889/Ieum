@@ -290,10 +290,33 @@ function PageEditorForm({
    * 편집을 내 상태가 덮는다.
    */
   const me = useAuthStore((s) => s.user)
+  /**
+   * 둘 다 고쳐 놓은 채로 붙었다. 내 것을 실으면 남의 편집을 덮으므로 공유를
+   * 따르는데, **그 사실을 말해야 한다** — 조용히 넘기면 사람은 자기가 쓴 글이
+   * 어디로 갔는지 알 수 없다.
+   */
+  const [clashed, setClashed] = useState(false)
   const collab = useCollab(
     page.id,
     me === null ? null : { userId: me.id, name: me.display_name },
     true,
+    {
+      /**
+       * 붙는 순간의 판단. 셋 중 하나다.
+       *
+       * 1. 나는 안 고쳤다 → 공유를 그대로 받는다.
+       * 2. 나는 고쳤고 공유는 게시본과 같다(남은 안 고쳤다) → **내 것을 싣는다.**
+       *    이 줄이 없으면 붙는 사이에 친 글이 사라진다.
+       * 3. 둘 다 고쳤다 → 공유를 따르고 말해 준다. 셋을 합치는 것(3-way merge)은
+       *    이 슬라이스 밖이고, 합치는 척하다 틀리는 것보다 말하는 것이 낫다.
+       */
+      onAdopt: (shared) => {
+        if (body === page.body) return null
+        if (shared === page.body) return body
+        setClashed(true)
+        return null
+      },
+    },
   )
   const shared = collab.text !== null
   const text = shared ? (collab.text ?? '') : body
@@ -405,6 +428,9 @@ function PageEditorForm({
           onChange={(e) => { setTitle(e.target.value) }}
         />
         <Presence status={collab.status} peers={collab.peers} />
+        {/* 붙는 사이에 둘이 각자 고쳤다. 공유를 따랐으므로 내가 친 글은 이
+            화면에 없다 — **그것을 말한다** (`onAdopt` 3번). */}
+        {clashed ? <Alert>{t('wiki:collab.clashed')}</Alert> : null}
         <MarkdownEditor
           label={t('wiki:page.body')}
           value={text}
