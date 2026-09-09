@@ -73,6 +73,8 @@
   "people.searchHint": "Type a name or an email address.",
   "permission.desk.email.manage": "Manage email channels",
   "permission.desk.approval.manage": "Cancel a pending approval",
+  "permission.desk.asset.manage": "Register and edit assets",
+  "permission.desk.asset.view": "View the asset registry",
   "permission.desk.automation.manage": "Manage automation rules",
   "permission.desk.customer.manage": "Manage customer organizations",
   "permission.desk.portal.manage": "Manage portals and request types",

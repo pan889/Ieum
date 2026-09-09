@@ -2,6 +2,7 @@ import {
   ApiClient,
   createApiTokensApi,
   createApprovalsApi,
+  createAssetsApi,
   createAttachmentsApi,
   createAuditApi,
   createAuthApi,
@@ -62,3 +63,4 @@ export const reportsApi = createReportsApi(apiClient)
 export const recurrencesApi = createRecurrencesApi(apiClient)
 export const repositoriesApi = createRepositoriesApi(apiClient)
 export const approvalsApi = createApprovalsApi(apiClient)
+export const assetsApi = createAssetsApi(apiClient)

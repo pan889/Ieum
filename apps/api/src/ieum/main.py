@@ -38,6 +38,7 @@ from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
 from ieum.db.session import dispose_engine, get_session_factory, init_engine
 from ieum.modules.desk.approval_router import approvals_router
+from ieum.modules.desk.asset_router import assets_router
 from ieum.modules.desk.report_router import desk_reports_router
 from ieum.modules.desk.router import (
     automation_router,
@@ -264,6 +265,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         automation_router,
         portal_router,
         approvals_router,
+        assets_router,
         repositories_router,
         # 코드 호스트가 두드리는 문 (A22). **인증이 없다** — 액세스 토큰
         # 대신 서명으로 확인한다. 그래서 파일도 라우터도 따로다

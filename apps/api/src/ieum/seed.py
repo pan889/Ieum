@@ -52,7 +52,15 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
     ),
     "Member": (
         "global",
-        (identity_perms.USER_VIEW, org_perms.PROJECT_VIEW),
+        (
+            identity_perms.USER_VIEW,
+            org_perms.PROJECT_VIEW,
+            # 자산 목록 (C15). 전역 권한이라 프로젝트 역할(`Desk Agent`)에
+            # 담을 수 없고, 상담원이 티켓에 장비를 이으려면 찾을 수 있어야
+            # 한다. 재고는 조직의 것이고 비밀이 아니다 — 고객은 역할을
+            # 받지 않으므로 이 손잡이가 고객에게 열리지도 않는다.
+            desk_perms.ASSET_VIEW,
+        ),
     ),
     "Project Admin": (
         "project",

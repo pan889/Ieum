@@ -12,6 +12,7 @@ import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
 
 import { Approvals } from './Approvals'
+import { Assets } from './Assets'
 import { Attachments } from './Attachments'
 import { Development } from './Development'
 import { LinkedDocs } from './LinkedDocs'
@@ -87,7 +88,10 @@ export function IssueDetailScreen() {
               있어야 한다 (C12). */}
           <Transitions issue={data} onMoved={invalidate} />
           <Approvals issueId={data.id} />
+          {/* 자산은 관계 옆이다 — 둘 다 "이 건이 무엇과 얽혀 있나" 를
+              말한다 (C15). */}
           <Relations issueId={data.id} issueKey={data.key} />
+          <Assets issueId={data.id} />
           <TimeTracking issueId={data.id} version={data.version} />
           <Attachments ownerType="issue" ownerId={data.id} />
           <LinkedDocs issueId={data.id} />

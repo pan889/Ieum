@@ -52,6 +52,16 @@ APPROVAL_STATUSES = ("pending", "approved", "declined", "cancelled")
 #: 승인자가 낼 수 있는 결정.
 APPROVAL_DECISIONS = ("approve", "decline")
 
+#: 자산이 지금 어떤 처지인가 (C15). **고정 어휘다.**
+#:
+#: 데이터로 두지 않는 이유: 이 값은 아무것도 굴리지 않는다(워크플로우가 아니다).
+#: 설치마다 어휘가 다르면 "수리 중인 장비 몇 대" 를 설치 사이에서 비교할 수
+#: 없고, 그러면 이 열은 자유 메모와 같아진다.
+#:
+#: `retired` 가 삭제를 대신한다. 자산은 지워지지 않는다 — 지난 티켓이
+#: 그 자산을 가리키고 있고, 그 이력이 이 기능의 값이다.
+ASSET_STATUSES = ("in_use", "spare", "repair", "retired")
+
 #: 메일이 오간 방향. 받은 것과 보낸 것을 한 테이블에 두는 이유는 스레드를
 #: 잇는 근거(`message_id`)가 양쪽에 다 필요하기 때문이다 — 우리가 보낸 메일의
 #: id 를 모르면 고객의 회신이 어디에 붙는지 알 수 없다.
@@ -714,3 +724,94 @@ class ApprovalVote(Entity):
         CheckConstraint(decision.in_(APPROVAL_DECISIONS), name="approval_vote_decision"),
         UniqueConstraint("approval_id", "user_id", name="uq_approval_vote_person"),
     )
+
+
+class AssetType(Entity, Archivable):
+    """자산의 종류 (C15). 학교면 노트북·프로젝터·교실, SaaS 면 서비스·서버.
+
+    고정 목록으로 두지 않는 이유: 설치마다 다르다. 그리고 종류는 **관리자가
+    지은 이름**이라 번역하지 않는다(i18n.md 1절) — 상태(`ASSET_STATUSES`)와
+    반대인데, 그쪽은 시스템 값이다.
+    """
+
+    __tablename__ = "asset_type"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    #: 목록에 보여줄 아이콘 이름(선택). 그림 자체를 담지 않는다.
+    icon: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class Asset(Entity):
+    """자산 하나 — 장비, 서비스, 자리 (C15).
+
+    **속성을 자유롭게 담지 않는다.** JSONB 하나를 두고 아무 키나 넣게 하면 두
+    사람이 같은 것을 다르게 적고, 화면은 그것을 그릴 수 없다. 커스텀 필드
+    기계를 여기까지 늘리는 것도 하지 않았다 — 그건 이슈에 붙어 있고
+    (`issue_field_value`), 자산으로 넓히면 두 벌이 된다. 실제 요청이 올 때
+    정의를 갖춘 채로 더한다.
+
+    **프로젝트에 속하지 않는다.** 노트북은 조직의 것이고 프로젝트의 것이
+    아니다. 그래서 권한도 전역이다(`desk.asset.view`).
+    """
+
+    __tablename__ = "asset"
+
+    type_id: Mapped[UUID] = mapped_column(
+        ForeignKey("asset_type.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: 자산번호·시리얼. **있으면 유일하다.** 없는 자산이 흔하므로(교실, 서비스)
+    #: NULL 을 허용하고, Postgres 의 유니크는 NULL 을 여럿 받아들인다.
+    #:
+    #: 저장할 때 대문자로 맞춘다. 사람이 손으로 치는 값이라 `A-1024` 와
+    #: `a-1024` 가 두 자산이 되는 것을 막는다 (프로젝트 키와 같은 판단).
+    tag: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="in_use")
+    #: 지금 쓰는 사람. SET NULL 이다 — 사람이 나가도 장비는 남는다.
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    #: 어느 고객 조직의 것인가 (C13). "이 프로젝터는 A 학교 것" 을 적는 자리다.
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("customer_organization.id", ondelete="SET NULL"), nullable=True
+    )
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(status.in_(ASSET_STATUSES), name="asset_status"),
+        Index("ix_asset_type_id", "type_id"),
+        Index("ix_asset_organization_id", "organization_id"),
+        # 이름으로 찾는다. 자산은 수천 개가 될 수 있고 화면은 **검색으로만**
+        # 고르게 한다 (ux-principles "잘린 선택 목록").
+        Index("ix_asset_name", "name"),
+    )
+
+
+class AssetLink(Base):
+    """이 티켓은 이 자산에 대한 것이다 (C15).
+
+    `entity_link`(org 의 중립 링크)를 쓰지 않는다. 그쪽은 서로 모듈을 모르는
+    쌍을 위한 것이고 UUID 에 타입이 없다 — 자산을 지우면 링크가 유령으로
+    남는다. `desk` 는 이미 `issues.contracts` 를 부르므로 FK 를 걸 수 있다.
+    """
+
+    __tablename__ = "asset_link"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("asset.id", ondelete="CASCADE"), primary_key=True
+    )
+    issue_id: Mapped[UUID] = mapped_column(
+        ForeignKey("issue.id", ondelete="CASCADE"), primary_key=True
+    )
+    linked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    #: 누가 이었나. 자산 이력을 읽을 때 "누가 이 장비를 이 건에 붙였나" 가
+    #: 질문이 된다. SET NULL 이다 — 사람이 나가도 링크는 남는다.
+    linked_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (Index("ix_asset_link_issue", "issue_id"),)

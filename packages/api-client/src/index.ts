@@ -131,6 +131,21 @@ export {
   type RecurrencesApi,
 } from './recurrences'
 export {
+  createAssetsApi,
+  type Asset,
+  type AssetPage,
+  type AssetPatch,
+  type AssetQuery,
+  type AssetStatus,
+  type AssetTicket,
+  type AssetType,
+  type AssetsApi,
+  type LinkedAsset,
+  type NewAsset,
+  type OrgChoice,
+  type OrgChoicePage,
+} from './assets'
+export {
   createApprovalsApi,
   type Approval,
   type ApprovalDecision,

@@ -54,6 +54,18 @@ AUTOMATION_MANAGE = "desk.automation.manage"
 #: 요청자가 물러서면 그 티켓은 영원히 멈춘다. 그 문을 열 사람이 있어야 한다.
 #: 그리고 취소한 사람은 행에 남는다(`approval.cancelled_by`).
 APPROVAL_MANAGE = "desk.approval.manage"
+#: 자산 목록을 본다 (C15). **전역이다** — 자산은 프로젝트의 것이 아니다.
+#:
+#: 상담원이 티켓에 자산을 이으려면 목록을 볼 수 있어야 하고, 자산은 조직
+#: 전체의 재고다. 프로젝트 단위로 나누면 "이 프로젝터는 어느 프로젝트의
+#: 것인가" 를 물어야 하는데, 그건 답이 없는 질문이다.
+ASSET_VIEW = "desk.asset.view"
+#: 자산·자산 종류를 등록하고 고친다. 전역이다.
+#:
+#: step-up 은 걸지 않는다. 재고를 고치는 것은 데이터가 새는 일이 아니고,
+#: 장비를 하루에 스무 개 등록하는 사람에게 2FA 를 스무 번 요구하면 그 사람은
+#: 스프레드시트로 돌아간다.
+ASSET_MANAGE = "desk.asset.manage"
 
 registry.register_many(
     [
@@ -67,6 +79,8 @@ registry.register_many(
         PermissionDef(EMAIL_MANAGE, PROJECT, "메일 채널 관리", requires_step_up=True),
         PermissionDef(AUTOMATION_MANAGE, PROJECT, "자동화 규칙 관리", requires_step_up=True),
         PermissionDef(APPROVAL_MANAGE, PROJECT, "승인 취소"),
+        PermissionDef(ASSET_VIEW, GLOBAL, "자산 목록 조회"),
+        PermissionDef(ASSET_MANAGE, GLOBAL, "자산·자산 종류 관리"),
     ]
 )
 
@@ -79,6 +93,8 @@ ALL = (
     EMAIL_MANAGE,
     AUTOMATION_MANAGE,
     APPROVAL_MANAGE,
+    ASSET_VIEW,
+    ASSET_MANAGE,
 )
 
 #: 상담원에게 기본으로 주는 묶음. 시드가 사용한다.
@@ -86,4 +102,9 @@ ALL = (
 #: 승인 취소가 여기 있는 이유: 멈춰 있는 티켓을 푸는 일은 큐에서 일하는
 #: 사람의 몫이다. 관리자만 할 수 있게 두면 상담원은 "승인자가 없다" 인
 #: 티켓을 보면서 아무것도 못 한다.
+#: 자산 조회는 **여기 없다.** `Desk Agent` 는 프로젝트 범위 역할이고
+#: `desk.asset.view` 는 전역이다 — 프로젝트 역할은 전역 권한을 담을 수 없고,
+#: `test_seed_grants.py` 가 그것을 붙잡는다. 대신 `Member`(전역)에 준다:
+#: 상담원도 팀원이고, 자산 목록은 조직의 재고이지 비밀이 아니다. 고객은
+#: 역할을 받지 않으므로(포털이 근거다) 이 손잡이가 고객에게 열리지 않는다.
 AGENT_DEFAULTS = (QUEUE_WORK, APPROVAL_MANAGE)
