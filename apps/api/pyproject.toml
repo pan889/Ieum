@@ -67,6 +67,20 @@ dependencies = [
     # i18n (서버측 알림·메일 렌더)
     "babel>=2.17",
     "pycrdt>=0.14.4",
+    # 내보내기 (B17). **여기도 직접 만들지 않는다.**
+    #
+    # PDF 는 WeasyPrint 가 HTML+CSS 를 조판한다. 우리는 이미 마크다운을 HTML
+    # 로 만들고 있으니(ADR-0008) 그 결과를 그대로 태운다 — 별도 렌더러를
+    # 두면 화면과 인쇄물이 서로 다른 문서가 된다. 페이지 나눔·머리글·바닥글은
+    # `@page` CSS 가 하고, 그건 직접 쓰면 표가 페이지 경계에서 깨진다.
+    #
+    # **시스템 라이브러리를 요구한다**(pango·cairo·harfbuzz)와 **CJK 글꼴**이
+    # 이미지에 있어야 한다. 없으면 한글이 두부(□)로 나온다 — 실패가 아니라
+    # 조용히 못 읽는 PDF 다 (apps/api/Dockerfile 참조).
+    "weasyprint>=62,<67",
+    # Word 는 python-docx. `.docx` 는 OOXML 압축 묶음이고, 손으로 쓰면
+    # 워드가 "복구할 수 없는 문서" 로 여는 날이 온다.
+    "python-docx>=1.1,<2",
 ]
 
 [project.optional-dependencies]
@@ -77,6 +91,9 @@ dev = [
     "pytest-asyncio>=1.2",
     "pytest-cov>=7.0",
     "moto[s3,server]>=5.0",  # 실제 S3 없이 presigned 업로드 전체 경로를 돈다
+    # 내보낸 PDF 를 **읽어서** 확인한다 (B17). 바이트 수와 `%PDF-` 머리만
+    # 보면 빈 쪽짜리 PDF 도 통과한다 — 그건 시험이 아니다.
+    "pypdf>=5.1",
     "testcontainers[postgres]>=4.13",
     "bandit>=1.9",
     "types-qrcode>=8.2",
@@ -154,6 +171,11 @@ packages = ["ieum"]
 # 우리 dataclass 만 내보낸다. 이 override 를 다른 모듈로 넓히지 않는다.
 module = [
     "arq.*",
+    # WeasyPrint·python-docx 는 스텁을 배포하지 않는다. 그래서 `core/paper.py`
+    # 가 타입 경계다 — 라이브러리와 닿는 자리를 그 파일 안으로 몰아 두고,
+    # 밖으로는 우리 dataclass 와 bytes 만 내보낸다.
+    "weasyprint.*",
+    "docx.*",
     "testcontainers.*",
     "boto3.*",
     "botocore.*",

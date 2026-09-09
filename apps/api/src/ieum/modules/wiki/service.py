@@ -37,6 +37,7 @@ from ieum.core.markdown.tasks import parse_tasks, set_done
 from ieum.core.outbox import publish
 from ieum.core.pagination import Page as PageResult
 from ieum.core.pagination import PageRequest
+from ieum.core.paper import MAX_CHAPTERS, Asset, Chapter, Paper
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
@@ -1096,6 +1097,84 @@ class PageService:
             front_matter=view.current.front_matter if view.current else {},
         )
         return f"{view.page.slug}.md", content
+
+    async def export_paper(self, actor: Actor, page_id: UUID) -> Paper:
+        """문서 하나를 인쇄물 한 부로 (B17).
+
+        **조판은 여기서 하지 않는다.** 이 함수는 권한을 보고 첨부 바이트를
+        모아 `Paper` 를 만든다 — PDF·Word 로 만드는 것은 `core.paper` 의 순수
+        함수다. 그래야 조판을 시험할 때 DB 를 세울 필요가 없다.
+        """
+        view = await self.get(actor, page_id)
+        assets = await self._paper_assets(actor, [(view.page, view.body)])
+        return Paper(
+            title=view.page.title,
+            chapters=(Chapter(title=view.page.title, body=view.body),),
+            assets=assets,
+        )
+
+    async def export_space_paper(self, actor: Actor, space_id: UUID) -> Paper:
+        """스페이스를 인쇄물 한 부로. 문서 트리 순서가 장 순서다.
+
+        **볼 수 없는 문서는 안 담는다**(`_visible`). 제목만으로도 새는 것이
+        있어서, 인쇄물은 특히 위험하다 — 파일이 사람 손을 타고 옮겨 다닌다.
+        """
+        space = await self._require_space(space_id)
+        await self._perms.require(self._s, actor, perms.PAGE_VIEW, scope=Scope.space(space.id))
+        rows = await self._visible(actor, await self._pages.tree_of(space.id, kind=None))
+
+        chapters: list[Chapter] = []
+        bodies: list[tuple[Page, str]] = []
+        for page in rows[:MAX_CHAPTERS]:
+            view = await self.to_view(page, space=space)
+            bodies.append((page, view.body))
+            chapters.append(Chapter(title=page.title, body=view.body))
+        return Paper(
+            title=space.name,
+            chapters=tuple(chapters),
+            assets=await self._paper_assets(actor, bodies),
+            dropped=max(0, len(rows) - MAX_CHAPTERS),
+        )
+
+    async def _paper_assets(self, actor: Actor, bodies: list[tuple[Page, str]]) -> dict[str, Asset]:
+        """본문들이 가리키는 첨부를 읽어 온다.
+
+        **여기가 ACL 을 보는 자리다.** `core.paper` 는 바이트만 받으므로,
+        볼 수 없는 첨부가 인쇄물에 박히는 일은 이 함수가 막는다
+        (`AttachmentService.read` 가 검사한다).
+
+        총량 상한을 둔다. 없으면 그림 많은 스페이스 하나가 메모리를 통째로
+        먹는다 — 넘치면 그 파일만 빼고, 인쇄물은 그 자리에 대체 글자를 남긴다.
+
+        같은 첨부를 두 가지로 적을 수 있다(`attachment:<id>` 와
+        `attachment:<id>/a.png`). 읽기는 **한 번만** 하고 표기마다 자리를
+        만든다 — 조판기는 본문에 적힌 주소로 찾으므로, 한 표기만 넣으면 다른
+        표기로 적힌 그림이 빠진다.
+        """
+        store = self._store
+        if store is None:
+            return {}
+        attachments = AttachmentService(self._s, store)
+        assets: dict[str, Asset] = {}
+        read: dict[UUID, Asset | None] = {}
+        budget = MAX_EXPORT_ASSET_BYTES
+        for _page, body in bodies:
+            for ref in attachment_targets(body):
+                key = ref.target.removeprefix("attachment:")
+                if key in assets:
+                    continue
+                if ref.attachment_id not in read:
+                    read[ref.attachment_id] = None
+                    found = await attachments.read(actor, ref.attachment_id)
+                    if found is not None:
+                        row, data = found
+                        if len(data) <= budget:
+                            budget -= len(data)
+                            read[ref.attachment_id] = Asset(data=data, media_type=row.mime)
+                asset = read[ref.attachment_id]
+                if asset is not None:
+                    assets[key] = asset
+        return assets
 
     async def export_space(self, actor: Actor, space_id: UUID) -> bytes:
         """스페이스를 ZIP 으로. 문서 경로가 그대로 폴더 구조가 된다.

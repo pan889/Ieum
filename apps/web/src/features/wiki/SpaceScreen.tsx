@@ -357,9 +357,31 @@ function Transfer({
     },
   })
 
+  /**
+   * 인쇄물로 내보낸다 (B17). ZIP 과 **다른 일**이다: ZIP 은 옮기기 위한 것,
+   * 이쪽은 읽히기 위한 것이다 — 문서 트리 순서가 장 순서인 한 부의 책.
+   */
+  const exportPaper = useMutation({
+    mutationFn: async (word: boolean) => {
+      const blob = word
+        ? await wikiApi.spaces.exportDocx(spaceId)
+        : await wikiApi.spaces.exportPdf(spaceId)
+      saveBlob(blob, `${spaceKey}.${word ? 'docx' : 'pdf'}`)
+    },
+  })
+
+  /** 어느 형식이 지금 만들어지고 있나. 버튼마다 자기 것만 돌아야 한다. */
+  const busy = (word: boolean) => exportPaper.isPending && exportPaper.variables === word
+
   return (
     <div className="mb-2 flex flex-col gap-1">
-      <div className="flex gap-1">
+      {/*
+        **묶음에 이름을 준다.** 문서 쪽에도 같은 이름의 PDF·Word 버튼이 있어서,
+        이름만으로는 "이 스페이스를 내보내는 버튼" 과 "이 문서를 내보내는
+        버튼" 이 구별되지 않는다 — 스크린리더로 듣는 사람에게는 그 둘이 같은
+        말이다 (ux-principles "묶음에는 묶음의 이름을 준다").
+      */}
+      <div className="flex gap-1" role="group" aria-label={t('wiki:transfer.spaceGroup')}>
         <Button
           variant="ghost"
           className="text-xs"
@@ -375,6 +397,22 @@ function Transfer({
           onClick={() => { exportZip.mutate() }}
         >
           {t('wiki:transfer.export')}
+        </Button>
+        <Button
+          variant="ghost"
+          className="text-xs"
+          loading={busy(false)}
+          onClick={() => { exportPaper.mutate(false) }}
+        >
+          {t('wiki:transfer.exportPdf')}
+        </Button>
+        <Button
+          variant="ghost"
+          className="text-xs"
+          loading={busy(true)}
+          onClick={() => { exportPaper.mutate(true) }}
+        >
+          {t('wiki:transfer.exportWord')}
         </Button>
       </div>
       <input
@@ -392,6 +430,7 @@ function Transfer({
       />
       {importFile.isError ? <Alert>{describeError(importFile.error)}</Alert> : null}
       {exportZip.isError ? <Alert>{describeError(exportZip.error)}</Alert> : null}
+      {exportPaper.isError ? <Alert>{describeError(exportPaper.error)}</Alert> : null}
     </div>
   )
 }

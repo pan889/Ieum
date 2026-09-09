@@ -66,6 +66,23 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
     },
   })
 
+  /**
+   * 인쇄물로 내보낸다 (B17). 조판은 **서버가** 한다 — 브라우저 인쇄에 미루면
+   * 쪽 번호와 페이지 나눔이 브라우저마다 다르고, 받는 사람이 "인쇄" 를 눌러
+   * 주기를 기대할 수 없다. 파일 하나가 나와야 메일에 붙일 수 있다.
+   */
+  const exportPaper = useMutation({
+    mutationFn: async (word: boolean) => {
+      const blob = word
+        ? await wikiApi.pages.exportDocx(page.id)
+        : await wikiApi.pages.exportPdf(page.id)
+      saveBlob(blob, `${page.slug}.${word ? 'docx' : 'pdf'}`)
+    },
+  })
+
+  /** 어느 형식이 지금 만들어지고 있나. 버튼마다 자기 것만 돌아야 한다. */
+  const busy = (word: boolean) => exportPaper.isPending && exportPaper.variables === word
+
   return (
     <article className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
@@ -104,6 +121,22 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
             >
               {t('wiki:transfer.exportPage')}
             </Button>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              loading={busy(false)}
+              onClick={() => { exportPaper.mutate(false) }}
+            >
+              {t('wiki:transfer.exportPdf')}
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              loading={busy(true)}
+              onClick={() => { exportPaper.mutate(true) }}
+            >
+              {t('wiki:transfer.exportWord')}
+            </Button>
             <Button variant="ghost" className="text-xs" onClick={() => { setShowHistory((v) => !v) }}>
               {t('wiki:page.history')}
             </Button>
@@ -123,6 +156,7 @@ export function PageDetail({ page, allNodes, spaceKey, onChanged }: PageDetailPr
 
       {archive.isError ? <Alert>{describeError(archive.error)}</Alert> : null}
       {exportMd.isError ? <Alert>{describeError(exportMd.error)}</Alert> : null}
+      {exportPaper.isError ? <Alert>{describeError(exportPaper.error)}</Alert> : null}
       {copy.isError ? <Alert>{describeError(copy.error)}</Alert> : null}
 
       {editing ? (

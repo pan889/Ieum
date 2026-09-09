@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -15,6 +16,7 @@ from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown.anchors import MAX_CONTEXT, MAX_QUOTE, Anchor
 from ieum.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageRequest
+from ieum.core.paper import Paper, to_docx, to_pdf
 from ieum.modules.wiki.models import PAGE_KINDS, SPACE_KINDS, PageTask
 from ieum.modules.wiki.portable import MAX_ARCHIVE_BYTES, content_disposition
 from ieum.modules.wiki.service import (
@@ -576,6 +578,100 @@ async def export_space(
             # 내보내기는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
             "Cache-Control": "no-store",
         },
+    )
+
+
+#: 인쇄물의 media type. 브라우저가 이걸 보고 저장할지 열지를 정한다.
+_PDF = "application/pdf"
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+async def _render(paper: Paper, *, word: bool) -> bytes:
+    """조판은 **스레드로 넘긴다.**
+
+    WeasyPrint 와 python-docx 는 동기이고 CPU 를 쓴다. 이벤트 루프에서 그냥
+    부르면 문서 한 부를 조판하는 동안 **그 워커의 모든 요청이 멈춘다** —
+    헬스체크까지 멈추므로 오케스트레이터가 인스턴스를 죽이는 날이 온다.
+    """
+    return await asyncio.to_thread(to_docx if word else to_pdf, paper)
+
+
+def _download(data: bytes, *, filename: str, media_type: str) -> Response:
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": content_disposition(filename),
+            # 내보내기는 사용자별 ACL 을 탄다. 중간 캐시에 남으면 안 된다.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@spaces_router.get("/{space_id}/export.pdf")
+async def export_space_pdf(
+    space_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    store: StorageDep,
+) -> Response:
+    """스페이스를 한 부의 PDF 로. 문서 트리 순서가 장 순서다."""
+    paper = await PageService(session, permissions, store=store).export_space_paper(actor, space_id)
+    space = await SpaceService(session, permissions).get(actor, space_id)
+    return _download(await _render(paper, word=False), filename=f"{space.key}.pdf", media_type=_PDF)
+
+
+@spaces_router.get("/{space_id}/export.docx")
+async def export_space_docx(
+    space_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    store: StorageDep,
+) -> Response:
+    paper = await PageService(session, permissions, store=store).export_space_paper(actor, space_id)
+    space = await SpaceService(session, permissions).get(actor, space_id)
+    return _download(
+        await _render(paper, word=True), filename=f"{space.key}.docx", media_type=_DOCX
+    )
+
+
+@pages_router.get("/{page_id}/export.pdf")
+async def export_page_pdf(
+    page_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    store: StorageDep,
+) -> Response:
+    """문서 하나를 PDF 로 (B17).
+
+    스토리지를 받는 이유는 그림을 **박아 넣기** 때문이다. 조판기에게 주소를
+    주고 가져오게 하지 않는다 — 그러면 본문에 주소를 쓴 사람이 서버의
+    자리에서 요청을 보낼 수 있다 (`core.paper` 주석 참조).
+    """
+    service = PageService(session, permissions, store=store)
+    paper = await service.export_paper(actor, page_id)
+    view = await service.get(actor, page_id)
+    return _download(
+        await _render(paper, word=False), filename=f"{view.page.slug}.pdf", media_type=_PDF
+    )
+
+
+@pages_router.get("/{page_id}/export.docx")
+async def export_page_docx(
+    page_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    store: StorageDep,
+) -> Response:
+    service = PageService(session, permissions, store=store)
+    paper = await service.export_paper(actor, page_id)
+    view = await service.get(actor, page_id)
+    return _download(
+        await _render(paper, word=True), filename=f"{view.page.slug}.docx", media_type=_DOCX
     )
 
 

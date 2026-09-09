@@ -1671,3 +1671,119 @@ class TestCopyKeepsRestrictions:
         child = next(n for n in tree if n.path == f"{copied.page.path}/salaries")
         with pytest.raises(PermissionDeniedError):
             await service.get(actor_for(other), child.id)
+
+
+class TestPrintablePaper:
+    """인쇄물로 내보낼 재료 (B17).
+
+    **조판은 여기서 시험하지 않는다** — `test_paper.py` 가 순수 함수로 본다.
+    여기서 보는 것은 권한과 첨부, 즉 조판기에 **무엇이 넘어가는가**다:
+
+    - 볼 수 없는 문서는 장에 안 들어간다. 인쇄물은 파일로 사람 손을 타고
+      옮겨 다니므로 특히 위험하다.
+    - 첨부 바이트는 여기서 ACL 을 보고 채운다. `core.paper` 는 바이트만 받는다.
+    """
+
+    async def test_a_page_becomes_one_chapter(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        view = await pages.create(
+            actor, NewPage(space_id=space.id, title="인쇄 문서", body="본문이다.", publish=True)
+        )
+
+        paper = await pages.export_paper(actor, view.page.id)
+        assert paper.title == "인쇄 문서"
+        assert [c.title for c in paper.chapters] == ["인쇄 문서"]
+        assert "본문이다." in paper.chapters[0].body
+
+    async def test_the_space_keeps_tree_order(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """장 순서가 문서 트리 순서다. 흔들리면 같은 스페이스를 두 번
+        내보냈을 때 다른 책이 나온다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        parent = await pages.create(actor, NewPage(space_id=space.id, title="가이드", publish=True))
+        await pages.create(
+            actor,
+            NewPage(space_id=space.id, title="하위", parent_id=parent.page.id, publish=True),
+        )
+        await pages.create(actor, NewPage(space_id=space.id, title="나중", publish=True))
+
+        paper = await pages.export_space_paper(actor, space.id)
+        titles = [c.title for c in paper.chapters]
+        # 부모가 자식보다 먼저 온다.
+        assert titles.index("가이드") < titles.index("하위")
+        assert set(titles) >= {"가이드", "하위", "나중"}
+
+    async def test_a_restricted_page_stays_out(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """**제목만으로도 새는 것이 있다.**
+
+        인쇄물은 파일이 되어 사람 손을 타고 옮겨 다닌다 — 볼 수 없는 문서가
+        한 장으로 들어가면 그 뒤로는 우리가 손쓸 수 있는 것이 없다.
+        """
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        await pages.create(actor, NewPage(space_id=space.id, title="열린 문서", publish=True))
+        secret = await pages.create(
+            actor, NewPage(space_id=space.id, title="닫힌 문서", publish=True)
+        )
+        await pages.set_restrictions(
+            actor, secret.page.id, mode="view", principals=[("user", user.id)]
+        )
+
+        stranger_user = User(email=f"s-{new_id()}@example.com", display_name="남", status="active")
+        session.add(stranger_user)
+        await session.flush()
+        stranger = await full_access(session, stranger_user, space)
+
+        titles = [c.title for c in (await pages.export_space_paper(stranger, space.id)).chapters]
+        assert "열린 문서" in titles
+        assert "닫힌 문서" not in titles
+
+    async def test_the_attachment_bytes_come_along(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        ready_store: ObjectStore,
+        page_attachments: None,
+    ) -> None:
+        """조판기는 **본문에 적힌 주소로** 그림을 찾는다. 그래서 열쇠가
+        `attachment:` 를 뗀 그대로여야 한다 — 어긋나면 그림이 조용히 빠진다."""
+        actor = await full_access(session, user, space)
+        blob = b"\x89PNG\r\n\x1a\n" + b"pixels"
+        pages = PageService(session, permissions, store=ready_store)
+        view = await pages.create(
+            actor, NewPage(space_id=space.id, title="그림 문서", publish=True)
+        )
+        row = await AttachmentService(session, ready_store).ingest(
+            actor,
+            owner_type=wiki_attachments.OWNER_PAGE,
+            owner_id=view.page.id,
+            filename="a.png",
+            mime="image/png",
+            data=blob,
+        )
+        await pages.update(actor, view.page.id, body=f"![그림](attachment:{row.id}/a.png)")
+
+        paper = await pages.export_paper(actor, view.page.id)
+        assert paper.assets[f"{row.id}/a.png"].data == blob
+        assert paper.assets[f"{row.id}/a.png"].media_type == "image/png"

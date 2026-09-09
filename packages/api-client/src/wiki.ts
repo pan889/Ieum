@@ -237,6 +237,16 @@ export function createWikiApi(client: ApiClient) {
       archive: (id: string) => client.post<Space>(`${SPACES}/${id}/archive`),
       tree: (id: string) => client.get<PageNode[]>(`${SPACES}/${id}/tree`),
 
+      /**
+       * 스페이스를 한 부의 인쇄물로 (B17).
+       *
+       * `exportZip` 과 다른 일을 한다. ZIP 은 **옮기기 위한** 것이다(마크다운
+       * + 첨부, 다시 올리면 왕복이 닫힌다). PDF·Word 는 **읽히기 위한** 것 —
+       * 문서 트리 순서가 장 순서인 한 부의 책이다. 서로를 대신하지 못한다.
+       */
+      exportPdf: (id: string) => client.getBlob(`${SPACES}/${id}/export.pdf`),
+      exportDocx: (id: string) => client.getBlob(`${SPACES}/${id}/export.docx`),
+
       /** `.md` 하나 또는 `.md` 를 담은 ZIP. 서버가 내용을 읽어야 해서
        *  스토리지를 거치지 않는다(첨부와 다르다). */
       importFile: (id: string, file: File, parentId?: string) => {
@@ -301,6 +311,15 @@ export function createWikiApi(client: ApiClient) {
         ),
 
       exportMarkdown: (id: string) => client.getBlob(`${PAGES}/${id}/export`),
+      /**
+       * 인쇄물로 내보낸다 (B17).
+       *
+       * 조판은 **서버가** 한다. 브라우저 인쇄로 미루지 않는 이유: 쪽 번호와
+       * 페이지 나눔이 브라우저마다 다르고, 받는 사람이 "인쇄" 를 눌러 주기를
+       * 기대할 수 없다. 파일 하나가 나와야 메일에 붙일 수 있다.
+       */
+      exportPdf: (id: string) => client.getBlob(`${PAGES}/${id}/export.pdf`),
+      exportDocx: (id: string) => client.getBlob(`${PAGES}/${id}/export.docx`),
 
       /** 이 이슈를 본문에서 참조한 문서들. 위키가 답한다(모듈 경계). */
       mentioning: (issueId: string) =>
