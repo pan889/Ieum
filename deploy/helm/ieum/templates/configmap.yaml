@@ -1,0 +1,13 @@
+{{- include "ieum.require" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ieum.fullname" . }}-config
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+data:
+  IEUM_CORS_ORIGINS: {{ .Values.config.webOrigins | quote }}
+  IEUM_S3_PUBLIC_ENDPOINT_URL: {{ .Values.config.s3PublicEndpointUrl | quote }}
+  {{- range $key, $value := .Values.config.extra }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

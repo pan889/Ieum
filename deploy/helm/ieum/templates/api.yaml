@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ieum.fullname" . }}-api
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ieum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "ieum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        # 설정이 바뀌면 파드를 다시 굴린다. 안 하면 ConfigMap 만 바뀌고
+        # 파드는 옛 값을 들고 계속 돈다 — 그게 조용한 고장이다.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ieum.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "ieum.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - uvicorn
+            - ieum.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --workers
+            - {{ .Values.api.workers | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            {{- include "ieum.env" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ieum.fullname" . }}-config
+          # **`readyz` 와 `healthz` 를 나눠 쓴다.** `readyz` 는 붙는 것들을
+          # 보므로 DB 가 잠깐 흔들리면 트래픽만 빠지고, `healthz` 는 프로세스
+          # 만 보므로 파드를 죽이지 않는다. 둘을 같이 쓰면 DB 가 흔들릴 때
+          # 쿠버네티스가 파드를 계속 재시작해 복구를 방해한다.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            failureThreshold: 40
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            # 루트 파일시스템을 읽기 전용으로 두었으므로 쓸 자리를 준다.
+            # WeasyPrint 가 조판할 때 임시 파일을 만든다.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ieum.fullname" . }}-api
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "ieum.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api

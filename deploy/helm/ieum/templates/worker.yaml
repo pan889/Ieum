@@ -1,0 +1,79 @@
+{{/*
+워커. **여러 개 띄워도 된다** — 근거는 `values.yaml` 의 `worker` 주석에 셋으로
+적어 두었다(아웃박스 `SKIP LOCKED`, arq `unique` 크론, 멱등 스윕).
+
+서비스가 없다. 워커는 아무 요청도 받지 않는다 — 큐를 끌어다 쓴다.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ieum.fullname" . }}-worker
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ieum.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "ieum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ieum.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # **돌던 작업을 마치고 나간다.** arq 는 SIGTERM 을 받으면 새 작업을
+      # 안 집고 남은 것을 끝낸다. 기본 30초로는 IMAP 왕복(채널당 20초)이
+      # 걸린 스윕이 잘리고, 잘린 자리가 다음 스윕에서 다시 도는 것이 아니라
+      # 그 사이 받은 메일이 늦게 들어온다.
+      terminationGracePeriodSeconds: 180
+      containers:
+        - name: worker
+          image: {{ include "ieum.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["arq", "ieum.worker.settings.WorkerSettings"]
+          env:
+            {{- include "ieum.env" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ieum.fullname" . }}-config
+          # **HTTP 프로브가 없다.** 워커는 포트를 안 열고, arq 의 건강 신호는
+          # Redis 키다. 억지로 `exec` 프로브를 붙이면 파드마다 프로세스를
+          # 하나 더 띄우는 값을 치르고 얻는 것이 없다 — 죽은 워커는 큐가
+          # 밀리는 것으로 드러나고, 그 지표는 이미 `/metrics` 에 있다
+          # (`outbox_pending`·`worker_last_run`).
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

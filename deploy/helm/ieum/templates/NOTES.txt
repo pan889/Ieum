@@ -1,0 +1,26 @@
+이음 {{ .Chart.AppVersion }} 을 올렸습니다 (릴리스: {{ .Release.Name }}).
+
+  API      {{ include "ieum.fullname" . }}-api ({{ .Values.api.replicaCount }}개, uvicorn 워커 {{ .Values.api.workers }})
+  워커      {{ include "ieum.fullname" . }}-worker ({{ .Values.worker.replicaCount }}개)
+  웹        {{ include "ieum.fullname" . }}-web ({{ .Values.web.replicaCount }}개)
+
+떴는지 봅니다:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "ieum.fullname" . }}-api
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "ieum.fullname" . }}-migrate-{{ .Release.Revision }}
+
+{{ if .Values.ingress.enabled -}}
+주소: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else -}}
+인그레스를 안 켰습니다. 열어 보려면:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ieum.fullname" . }}-web 8080:80
+{{- end }}
+
+{{ if not .Values.secrets.existingSecret -}}
+⚠ 비밀을 값으로 받았습니다. **운영에서는 `secrets.existingSecret` 을 쓰세요** —
+  값으로 준 것은 릴리스 이력에 남고 `helm get values` 로 되읽힙니다.
+{{- end }}
+
+이 차트는 Postgres·Redis·S3·SMTP 를 만들지 않습니다. 왜 그런지는
+`deploy/helm/ieum/README.md` 에 있습니다.

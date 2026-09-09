@@ -1,0 +1,115 @@
+{{- if .Values.migrate.enabled }}
+{{/*
+스키마를 올린다. **앱이 뜨기 전에 한 번만 돈다.**
+
+initContainer 가 아닌 이유: 파드 수만큼 동시에 `alembic upgrade` 가 돌아
+서로 경쟁한다. Alembic 이 그것을 막아 주지 않으므로, 운이 나쁘면 같은
+리비전을 둘이 적용하려 들다 한쪽이 실패하고 그 파드가 기동 루프에 빠진다.
+
+`helm upgrade` 에서도 도는 이유: 새 코드가 옛 스키마 위에서 뜨면 조용히
+틀린다 — 없는 열을 읽거나, 있어야 할 제약이 없다.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ieum.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    # **실패한 Job 을 남긴다.** 지우면 왜 실패했는지 로그를 볼 수 없고,
+    # 마이그레이션 실패는 그 로그가 유일한 단서다.
+    "helm.sh/hook-delete-policy": {{ if .Values.migrate.keepFailed }}before-hook-creation{{ else }}before-hook-creation,hook-succeeded{{ end }}
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "ieum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "ieum.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "ieum.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+          env:
+            {{- include "ieum.env" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ieum.fullname" . }}-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- if .Values.seed.enabled }}
+---
+{{/*
+내장 역할·워크플로우를 만든다. **멱등이라 다시 돌아도 안전하다** —
+`upgrade` 에서도 도는 이유가 그것이다: 새 판이 권한을 하나 더 정의했으면
+내장 역할에 그것을 더해 줘야 하고, 안 하면 관리자가 새 화면에서 403 을 본다
+(실제로 웹훅 화면에서 그 일이 있었다 — `seed.py` 주석).
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ieum.fullname" . }}-seed-{{ .Release.Revision }}
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "ieum.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: seed
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "ieum.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: seed
+          image: {{ include "ieum.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["python", "-m", "ieum.cli", "seed"]
+          env:
+            {{- include "ieum.env" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ieum.fullname" . }}-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
