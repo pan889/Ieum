@@ -13,6 +13,8 @@ from ieum.core.heartbeat import Heartbeat
 from ieum.core.outbox import OutboxEvent
 from ieum.db.base import Base
 from ieum.modules.desk.models import (
+    Approval,
+    ApprovalVote,
     CustomerMembership,
     CustomerOrganization,
     Portal,
@@ -78,6 +80,8 @@ from ieum.modules.wiki.models import (
 
 __all__ = [
     "ApiToken",
+    "Approval",
+    "ApprovalVote",
     "Attachment",
     "AuditLog",
     "Base",

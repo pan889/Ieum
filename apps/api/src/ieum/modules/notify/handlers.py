@@ -50,6 +50,22 @@ ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     # 고른다. 표에는 기본값을 둔다: 조치를 늘리면서 제목을 안 더해도 알림
     # 자체는 나가야 한다(빠진 것은 문구이고, 사람을 부르는 일 자체가 아니다).
     "desk.sla.escalated": ("desk.sla.escalated", "notifications:sla.escalated"),
+    # 승인 (C12). **같은 표에 둔다** — 알림 경로가 하나여야 한다.
+    #
+    # 승인 요청의 수신자는 워처가 아니라 **찍어 둔 승인자들**이다. 그 사람들은
+    # 티켓을 보고 있지 않고(부서장·고객이다), 지목하지 않으면 결정할 사람이
+    # 아무 소식을 못 받는다. `_recipients` 가 `to_user_ids` 를 읽는다.
+    "desk.approval.requested": ("desk.approval.requested", "notifications:approval.requested"),
+    # 결정은 반대다: 기다리던 사람들(보고자·담당자·워처)에게 간다.
+    "desk.approval.decided": ("desk.approval.decided", "notifications:approval.decided"),
+}
+
+#: 결정 결과별 제목. 승인과 거절은 사람이 해야 할 다음 일이 다르다 —
+#: 거절은 이유를 읽고 다시 낼지 정해야 한다. 한 문구로 묶으면 알림을 열어
+#: 봐야 어느 쪽인지 안다.
+DECISION_TITLES: dict[str, str] = {
+    "approved": "notifications:approval.approved",
+    "declined": "notifications:approval.declined",
 }
 
 #: 조치별 제목. 없으면 위 표의 기본값을 쓴다.
@@ -108,6 +124,8 @@ async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> li
     }
     if envelope.event_type == "desk.sla.escalated":
         title_key = ESCALATION_TITLES.get(str(envelope.get("action", "")), title_key)
+    if envelope.event_type == "desk.approval.decided":
+        title_key = DECISION_TITLES.get(str(envelope.get("status", "")), title_key)
     service = NotificationService(ctx.session, ctx.settings)
     created = []
 
@@ -160,6 +178,10 @@ async def _recipients(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]
         found = envelope.uuid(key)
         if found is not None:
             watchers.add(found)
+    # **여럿을 지목하는 이벤트**도 있다 (승인 요청, C12). 승인자는 워처도
+    # 담당자도 아닐 수 있고, 이 줄이 없으면 결정할 사람들에게만 알림이 안
+    # 간다 — 그 알림이 이 기능이 하는 일의 전부인데.
+    watchers |= set(envelope.uuid_list("to_user_ids"))
     return watchers
 
 

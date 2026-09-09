@@ -158,6 +158,26 @@ class GroupRepository:
         )
         return list((await self._s.execute(stmt)).scalars().all())
 
+    async def active_member_ids(self, group_ids: Sequence[UUID]) -> set[UUID]:
+        """이 그룹들에 속한 **활성** 사용자 id. 여러 그룹을 한 번에 본다.
+
+        정지된 계정을 빼는 이유: 부르는 쪽(승인 명단, C12)이 "전원 동의" 를
+        셀 때 정지된 사람이 명단에 있으면 그 셈이 절대 완성되지 않는다.
+        그건 기다리는 것이 아니라 멈춘 것이고, 화면은 둘을 구별해 주지 못한다.
+
+        부르는 쪽도 사람을 한 번 더 읽어 거른다 — 그쪽은 **다른 이유**다(고객
+        계정을 뺀다). 그래서 둘 다 있고, 이 필터는 계약으로 따로 붙잡는다
+        (`test_desk_approvals.py`).
+        """
+        if not group_ids:
+            return set()
+        stmt = (
+            select(GroupMember.user_id)
+            .join(User, User.id == GroupMember.user_id)
+            .where(GroupMember.group_id.in_(list(group_ids)), User.status == "active")
+        )
+        return set((await self._s.execute(stmt)).scalars().all())
+
     async def delete(self, group_id: UUID) -> None:
         """그룹을 지운다. 멤버 행은 FK 의 ON DELETE CASCADE 가 정리한다.
 

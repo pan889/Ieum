@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from ieum.config import Settings
 from ieum.core.permissions import PermissionService, set_permission_service
+from ieum.modules.desk import approvals as desk_approvals
 from ieum.modules.issues import attachments as issue_attachments
 from ieum.modules.issues.contracts import issue_model
 from ieum.modules.issues.service import SecurityLevelGuard
@@ -35,6 +36,10 @@ def install_permissions(settings: Settings) -> PermissionService:
     # 첨부 소유자별 권한 리졸버. core 는 어떤 모듈이 첨부를 쓰는지 모른다.
     issue_attachments.install()
     wiki_attachments.install()
+    # 전이 관문: 승인을 기다리는 티켓은 착수·종료로 못 간다 (C12).
+    # **여기서 꽂아야 한다** — `issues` 는 `desk` 를 import 할 수 없고,
+    # 안 꽂으면 승인은 요청되지만 아무것도 막지 못한다.
+    desk_approvals.install()
     return permissions
 
 

@@ -26,6 +26,8 @@ import { deskApi, fieldsApi, issuesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Badge, Button, Card, Field, Select } from '@/shared/ui/primitives'
 
+import { ApprovalRule } from './ApprovalRule'
+
 /** 서버의 `FORBIDDEN_FORM_KINDS` 와 같아야 한다. */
 const NOT_ON_FORMS = ['user', 'version']
 
@@ -82,9 +84,16 @@ export function RequestTypes({
   // 커스텀 필드 정의는 전역 목록을 받아 이 프로젝트·유형에 뜨는 것만 남긴다.
   // 서버가 이미 그렇게 걸러 주는 조회가 있지만 그건 `issue.view` 를 요구하고,
   // 이 화면의 권한은 `desk.portal.manage` 다.
+  //
+  // **폼을 열 때만 묻는다.** 이 목록은 새 요청 유형을 만드는 폼의 매핑
+  // 선택지로만 쓰인다. 그런데 그 조회는 `issue.field.manage`(전역 +
+  // step-up)를 요구하므로, 2FA 없이 들어온 관리자가 이 칸을 펼치기만 해도
+  // 콘솔에 403 이 찍혔다 — 승인 스펙이 콘솔을 검사하면서 드러났다. 안 쓰는
+  // 조회를 안 하는 것이 먼저다.
   const definitions = useQuery({
     queryKey: ['fields'],
     queryFn: () => fieldsApi.list(),
+    enabled: adding,
   })
 
   const candidates = (definitions.data ?? []).filter((definition) => {
@@ -183,6 +192,13 @@ export function RequestTypes({
               create.mutate()
             }}
           >
+            {/*
+              **못 읽었으면 그렇게 말한다.** 이 조회는 step-up 을 요구하고,
+              실패하면 매핑 후보가 빈 목록이 된다 — 그러면 관리자는 "이
+              프로젝트에는 커스텀 필드가 없다" 로 읽고 답 갈 곳 없는 폼을
+              저장하려 한다.
+            */}
+            {definitions.isError ? <Alert>{describeError(definitions.error)}</Alert> : null}
             <div className="flex flex-wrap items-end gap-3">
               <Field
                 label={t('desk:requestTypes.name')}
@@ -375,6 +391,9 @@ export function RequestTypes({
                 ))}
               </select>
             </label>
+            {/* 승인 규칙도 줄에서 고친다 (C12). 지식베이스와 같은 이유:
+                요청 유형에 편집 폼이 없어서 이 칸만 따로 낸다. */}
+            <ApprovalRule requestType={row} onChanged={() => { void types.refetch() }} />
             <Button
               className="ml-auto text-xs"
               variant="ghost"

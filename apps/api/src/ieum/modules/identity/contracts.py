@@ -104,6 +104,16 @@ async def group_ids_for(session: AsyncSession, user_id: UUID) -> frozenset[UUID]
     return await UserRepository(session).group_ids_for(user_id)
 
 
+async def active_group_members(session: AsyncSession, group_ids: Iterable[UUID]) -> frozenset[UUID]:
+    """이 그룹들의 **활성** 구성원. 데스크의 승인 명단(C12)이 쓴다.
+
+    사람 목록을 내주지 않고 id 만 주는 이유: 부르는 쪽이 필요한 것은 "누가
+    승인할 수 있나" 이고, 이름은 화면이 따로 묻는다(`get_users`). 사람 행을
+    통째로 넘기면 경계가 이름만 남는다.
+    """
+    return frozenset(await GroupRepository(session).active_member_ids(list(group_ids)))
+
+
 async def load_actor(session: AsyncSession, user_id: UUID) -> Actor | None:
     """요청 컨텍스트용 액터를 만든다."""
     repo = UserRepository(session)

@@ -36,6 +36,22 @@ TICKET_CHANNELS = ("portal", "email", "agent")
 #: 폼에서 이슈 자신의 컬럼으로 가는 예약 키. 매핑이 필요 없다.
 RESERVED_FORM_KEYS = ("summary", "description")
 
+#: 승인에 필요한 동의 수 (C12).
+#:
+#: `one` — 한 사람이면 된다(대표 승인).
+#: `all` — 명단 전원. **거절은 한 사람으로 끝난다** — 나머지에게 물어봐야
+#:         답이 달라지지 않고, 물어보는 동안 요청이 멈춰 있다.
+APPROVAL_MODES = ("one", "all")
+
+#: 승인의 상태.
+#:
+#: `cancelled` 가 필요한 이유: 명단이 비거나(그룹이 비었다) 요청자가 물러선
+#: 경우에 상담원이 문을 열 길이 있어야 한다. 없으면 그 티켓은 영원히 멈춘다.
+APPROVAL_STATUSES = ("pending", "approved", "declined", "cancelled")
+
+#: 승인자가 낼 수 있는 결정.
+APPROVAL_DECISIONS = ("approve", "decline")
+
 #: 메일이 오간 방향. 받은 것과 보낸 것을 한 테이블에 두는 이유는 스레드를
 #: 잇는 근거(`message_id`)가 양쪽에 다 필요하기 때문이다 — 우리가 보낸 메일의
 #: id 를 모르면 고객의 회신이 어디에 붙는지 알 수 없다.
@@ -154,6 +170,15 @@ class RequestType(Entity, Archivable):
     kb_space_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("space.id", ondelete="SET NULL"), nullable=True
     )
+    #: 이 유형의 요청은 **승인을 받아야 처리된다** (C12).
+    #:
+    #: `{"mode": "one"|"all", "user_ids": [...], "group_ids": [...]}`. 비어
+    #: 있으면(`NULL`) 승인이 없는 유형이다 — 대부분이 그렇다.
+    #:
+    #: 규칙을 여기 두는 이유: 워크플로우 상태에 두는 길도 있었지만 워크플로우는
+    #: 이 제품에서 아직 **읽기 전용**이다(`workflows_router` 에 GET 만 있다).
+    #: 켤 수 있는 화면이 없는 설정은 없는 설정과 같다.
+    approval: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     #: 끄면 폼 목록에서 사라진다. 지우는 것과 다르다 — 이미 만들어진 티켓의
     #: `ticket_ext.request_type_id` 가 살아 있어야 "어떤 폼으로 들어왔나" 를
     #: 나중에도 말할 수 있다.
@@ -601,4 +626,91 @@ class AutomationRule(Entity, Archivable):
     __table_args__ = (
         UniqueConstraint("project_id", "name", name="uq_automation_rule_project_id_name"),
         Index("ix_automation_rule_project_id", "project_id"),
+    )
+
+
+class Approval(Entity):
+    """티켓 하나에 대한 승인 요청 (C12).
+
+    **승인자를 찍어 둔다** (`approver_ids`). 그룹을 그때그때 펼치지 않는
+    이유는 `approvals.py` 머리에 적어 뒀다: 그룹은 바뀌고, 바뀌면 `all` 모드의
+    셈과 "누구를 기다렸나" 가 함께 사라진다.
+
+    한 티켓에 **기다리는 승인은 하나뿐**이다. 부분 유니크 색인으로 DB 가
+    막는다 — 애플리케이션에서만 막으면 요청이 두 번 들어올 때 둘 다 통과하고,
+    그러면 한쪽만 승인된 채로 문이 열린다.
+    """
+
+    __tablename__ = "approval"
+
+    issue_id: Mapped[UUID] = mapped_column(
+        ForeignKey("issue.id", ondelete="CASCADE"), nullable=False
+    )
+    #: 어느 폼이 이 승인을 요구했나. SET NULL 이다 — 유형을 지운다고 이미
+    #: 받은 승인 기록이 사라지면 안 된다.
+    request_type_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("request_type.id", ondelete="SET NULL"), nullable=True
+    )
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="pending")
+    #: 찍어 둔 승인자 명단. 비어 있을 수 있다(그룹이 비었거나 요청자뿐이었다) —
+    #: 그때 화면은 "승인자가 없다" 를 보여 주고 상담원이 취소한다.
+    #:
+    #: "내가 승인할 것" 은 이 열을 `@>` 로 훑는다. **GIN 색인을 아직 두지
+    #: 않는다** — 기다리는 승인은 설치 전체에서 열려 있는 요청 수만큼이고
+    #: (수십 개 규모), 그 부분집합만 훑는다. 그 수가 수천이 되는 날 둔다.
+    approver_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 취소한 사람. 취소는 사람이 문을 여는 일이라 누가 했는지 남는다.
+    cancelled_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(mode.in_(APPROVAL_MODES), name="approval_mode"),
+        CheckConstraint(status.in_(APPROVAL_STATUSES), name="approval_status"),
+        # 기다리는 승인은 티켓당 하나. **부분 유니크다** — 끝난 승인은 여러
+        # 개 쌓인다(거절 후 다시 요청하는 흐름이 있다).
+        Index(
+            "uq_approval_pending_issue",
+            "issue_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("ix_approval_issue_id", "issue_id"),
+    )
+
+
+class ApprovalVote(Entity):
+    """승인자 한 사람의 결정.
+
+    **한 사람은 한 번만 결정한다**(유니크). 바꿀 길을 두지 않는 이유: 승인은
+    기록이고, 고칠 수 있는 기록은 근거가 못 된다. 마음이 바뀌면 상담원이
+    승인을 취소하고 다시 요청한다.
+
+    결정 시각은 `created_at` 이다. 표는 만들어질 때 결정이고 그 뒤 바뀌지
+    않으므로, `decided_at` 을 따로 두면 같은 값을 두 벌 들고 있게 된다.
+    """
+
+    __tablename__ = "approval_vote"
+
+    approval_id: Mapped[UUID] = mapped_column(
+        ForeignKey("approval.id", ondelete="CASCADE"), nullable=False
+    )
+    #: 사람은 지워지지 않지만(정지만 된다) FK 는 걸어 둔다. 지워진 계정의
+    #: 표가 남으면 "누가 승인했나" 를 답할 수 없다.
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: 거절 이유. **거절에는 사실상 필요하다** — 이유 없는 거절을 받은 사람은
+    #: 무엇을 고쳐 다시 낼지 모른다. 강제하지는 않는다(승인에는 필요 없다).
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(decision.in_(APPROVAL_DECISIONS), name="approval_vote_decision"),
+        UniqueConstraint("approval_id", "user_id", name="uq_approval_vote_person"),
     )

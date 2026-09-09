@@ -1,4 +1,5 @@
 import type { ApiClient } from './client'
+import type { ApprovalRule } from './approvals'
 
 // ── 폼 정의 ─────────────────────────────────────────────────────
 
@@ -65,6 +66,8 @@ export interface RequestType {
   is_enabled: boolean
   /** 요청 중 문서를 추천할 스페이스 (C8). 안 걸었으면 `null`. */
   kb_space_id: string | null
+  /** 승인 규칙 (C12). `null` 이면 승인 없는 유형이다. */
+  approval: ApprovalRule | null
   is_archived: boolean
   ticket_count: number
 }
@@ -97,6 +100,9 @@ export interface RequestTypePatch {
    * 않는다 — 부분 수정에서 값이 없다는 것은 언제나 후자다.
    */
   clear_kb_space?: boolean
+  approval?: ApprovalRule
+  /** 승인을 **끈다.** 위와 같은 이유로 `approval: undefined` 로는 못 한다. */
+  clear_approval?: boolean
 }
 
 // ── 고객 조직 ───────────────────────────────────────────────────

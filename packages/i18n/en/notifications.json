@@ -40,5 +40,9 @@
   "sla.breached": "SLA missed on {key}: {summary}",
   "sla.escalated": "SLA escalation on {key}: past {percent}% of the target",
   "sla.escalated.notify": "SLA deadline approaching on {key} ({percent}% of target): {summary}",
-  "sla.escalated.raisePriority": "Priority on {key} raised to {priority} — {percent}% of the SLA target"
+  "sla.escalated.raisePriority": "Priority on {key} raised to {priority} — {percent}% of the SLA target",
+  "approval.requested": "Approval needed on {key}: {summary}",
+  "approval.decided": "Approval decided on {key}: {summary}",
+  "approval.approved": "{key} was approved: {summary}",
+  "approval.declined": "{key} was declined: {summary}"
 }

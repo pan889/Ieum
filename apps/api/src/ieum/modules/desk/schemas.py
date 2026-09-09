@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ieum.modules.desk.approvals import MAX_APPROVERS, MAX_GROUPS
+
 # ── 폼 정의 ─────────────────────────────────────────────────────
 
 
@@ -74,6 +76,21 @@ class PortalResponse(BaseModel):
     request_type_count: int
 
 
+class ApprovalRuleSpec(BaseModel):
+    """이 요청 유형은 승인을 받아야 처리된다 (C12).
+
+    승인자를 **비울 수 없다.** 승인자 없는 규칙은 요청을 영원히 멈추는
+    스위치다 — 서비스가 한 번 더 막지만, 여기서 막으면 저장 버튼 자리에서
+    보인다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(pattern="^(one|all)$")
+    user_ids: list[UUID] = Field(default_factory=list, max_length=MAX_APPROVERS)
+    group_ids: list[UUID] = Field(default_factory=list, max_length=MAX_GROUPS)
+
+
 class RequestTypeCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -87,6 +104,8 @@ class RequestTypeCreateRequest(BaseModel):
     is_enabled: bool = True
     #: 고객이 제목을 적는 동안 문서를 추천할 스페이스 (C8). `kind = "kb"` 만.
     kb_space_id: UUID | None = None
+    #: 승인 규칙 (C12). 비우면 승인이 없는 유형이다 — 대부분이 그렇다.
+    approval: ApprovalRuleSpec | None = None
 
 
 class RequestTypeUpdateRequest(BaseModel):
@@ -111,6 +130,11 @@ class RequestTypeUpdateRequest(BaseModel):
     #: 않는다 — 부분 수정에서 `None` 은 언제나 후자다. 정형 응답의 단축키
     #: 지우기와 같은 판단이다.
     clear_kb_space: bool = False
+    approval: ApprovalRuleSpec | None = None
+    #: 승인을 **끈다.** 위와 같은 이유로 `approval: null` 로는 표현할 수 없다.
+    #: 끄면 이미 기다리는 승인은 그대로 남는다 — 지난 요청의 문을 설정 변경이
+    #: 소급해서 열면, 승인을 기다리던 티켓이 조용히 통과한다.
+    clear_approval: bool = False
 
 
 class RequestTypeResponse(BaseModel):
@@ -128,6 +152,8 @@ class RequestTypeResponse(BaseModel):
     field_mapping: dict[str, str]
     is_enabled: bool
     kb_space_id: UUID | None
+    #: `{"mode": ..., "user_ids": [...], "group_ids": [...]}` 또는 `null`.
+    approval: dict[str, Any] | None
     is_archived: bool
     ticket_count: int
 

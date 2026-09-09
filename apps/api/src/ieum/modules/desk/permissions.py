@@ -44,6 +44,16 @@ EMAIL_MANAGE = "desk.email.manage"
 #: 하나 걸어 두면 그 뒤로 오는 모든 요청에 그 글이 배달된다 — 큐 조건을
 #: 고치는 것과는 무게가 다르다.
 AUTOMATION_MANAGE = "desk.automation.manage"
+#: 승인을 취소한다 (C12). **프로젝트 단위다.**
+#:
+#: 승인을 주는 것은 권한이 아니라 **명단**이다 — 찍어 둔 승인자만 결정할 수
+#: 있고, 그건 권한 검사로 표현하지 않는다(관리자가 남의 승인을 대신 주는
+#: 길이 열리면 명단이 뜻을 잃는다).
+#:
+#: 이 손잡이가 여는 것은 취소뿐이다. 취소가 필요한 이유: 승인자 그룹이 비거나
+#: 요청자가 물러서면 그 티켓은 영원히 멈춘다. 그 문을 열 사람이 있어야 한다.
+#: 그리고 취소한 사람은 행에 남는다(`approval.cancelled_by`).
+APPROVAL_MANAGE = "desk.approval.manage"
 
 registry.register_many(
     [
@@ -56,6 +66,7 @@ registry.register_many(
         PermissionDef(CUSTOMER_MANAGE, GLOBAL, "고객 조직·소속 관리", requires_step_up=True),
         PermissionDef(EMAIL_MANAGE, PROJECT, "메일 채널 관리", requires_step_up=True),
         PermissionDef(AUTOMATION_MANAGE, PROJECT, "자동화 규칙 관리", requires_step_up=True),
+        PermissionDef(APPROVAL_MANAGE, PROJECT, "승인 취소"),
     ]
 )
 
@@ -67,7 +78,12 @@ ALL = (
     CUSTOMER_MANAGE,
     EMAIL_MANAGE,
     AUTOMATION_MANAGE,
+    APPROVAL_MANAGE,
 )
 
 #: 상담원에게 기본으로 주는 묶음. 시드가 사용한다.
-AGENT_DEFAULTS = (QUEUE_WORK,)
+#:
+#: 승인 취소가 여기 있는 이유: 멈춰 있는 티켓을 푸는 일은 큐에서 일하는
+#: 사람의 몫이다. 관리자만 할 수 있게 두면 상담원은 "승인자가 없다" 인
+#: 티켓을 보면서 아무것도 못 한다.
+AGENT_DEFAULTS = (QUEUE_WORK, APPROVAL_MANAGE)

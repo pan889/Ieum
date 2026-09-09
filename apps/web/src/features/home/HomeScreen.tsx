@@ -23,9 +23,10 @@ import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ApprovalDecision } from '@/features/desk/ApprovalDecision'
 import { categoryTone, formatDate, formatRelative } from '@/features/issues/format'
 import { isoDay, urgencyOf, type Urgency } from '@/features/wiki/due'
-import { notificationsApi, searchApi, sprintsApi, wikiApi } from '@/shared/api'
+import { approvalsApi, notificationsApi, searchApi, sprintsApi, wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { RichText } from '@/shared/markdown/RichText'
 import { Alert, Badge, Card } from '@/shared/ui/primitives'
@@ -56,7 +57,7 @@ const TONE: Record<Urgency, 'danger' | 'in_progress' | 'neutral'> = {
 }
 
 export function HomeScreen() {
-  const { t } = useTranslation(['home', 'common', 'wiki'])
+  const { t } = useTranslation(['home', 'common', 'wiki', 'desk'])
   const today = isoDay(new Date())
 
   const issues = useQuery({
@@ -75,11 +76,27 @@ export function HomeScreen() {
     queryKey: ['home', 'notifications'],
     queryFn: () => notificationsApi.list({ unreadOnly: true, limit: ROWS }),
   })
+  /**
+   * 내가 결정해야 할 승인 (C12).
+   *
+   * **비면 칸을 내지 않는다.** 위 네 칸과 다른 판단이고, 이유가 있다: 저 넷은
+   * 누구에게나 매일의 일이라 "없다" 도 답이지만, 승인자인 것은 대부분의
+   * 사람에게 해당하지 않는 역할이다. 늘 비어 있는 칸은 첫 화면을 읽는 데
+   * 방해만 된다.
+   *
+   * 그래도 이 칸이 있어야 하는 이유: 알림은 지나가고, 승인은 **남는 일**이다.
+   * 알림 하나를 놓친 승인자는 자기 몫이 어디 있는지 볼 곳이 없다.
+   */
+  const approvals = useQuery({
+    queryKey: ['home', 'approvals'],
+    queryFn: () => approvalsApi.mine(),
+  })
 
   const issueRows = issues.data?.items ?? []
   const taskRows = tasks.data ?? []
   const sprintRows = sprints.data ?? []
   const newsRows = news.data?.items ?? []
+  const approvalRows = approvals.data ?? []
   // **이미 받은 것으로 센다.** 요약을 따로 물어보면 목록과 숫자가 다른 순간이
   // 생기고, 그때 사람은 어느 쪽을 믿어야 할지 모른다.
   const counts = countDue(
@@ -221,6 +238,42 @@ export function HomeScreen() {
             </li>
           ))}
         </Panel>
+
+        {/* 기다리는 것이 있을 때만 자리를 차지한다 (위 `approvals` 주석). */}
+        {approvalRows.length > 0 ? (
+          <Panel
+            title={t('desk:approval.mine')}
+            action={null}
+            error={approvals.error}
+            empty={null}
+            testId="home-approvals"
+          >
+            {approvalRows.slice(0, ROWS).map((row) => (
+              <li key={row.id} className="flex flex-col gap-1.5 text-sm">
+                <span className="flex flex-wrap items-baseline gap-2">
+                  {/*
+                    키는 링크로 둔다 — 상담원이 열어 보는 길이다. 승인자는
+                    그 프로젝트의 이슈를 볼 권한이 없을 수 있으므로, **결정은
+                    여기서 끝낼 수 있어야 한다.**
+                  */}
+                  <Link
+                    to="/issues/$issueKey"
+                    params={{ issueKey: row.issue_key }}
+                    className="font-mono text-xs text-accent hover:underline"
+                  >
+                    {row.issue_key}
+                  </Link>
+                  <span className="min-w-0 flex-1 truncate">{row.summary}</span>
+                  <Badge tone="todo">{t(`desk:approval.mode.${row.mode}`)}</Badge>
+                </span>
+                <ApprovalDecision
+                  approvalId={row.id}
+                  onDecided={() => approvals.refetch().then(() => undefined)}
+                />
+              </li>
+            ))}
+          </Panel>
+        ) : null}
       </div>
     </section>
   )

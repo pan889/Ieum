@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar
 from uuid import UUID
 
@@ -92,3 +92,51 @@ class SlaEscalated(DomainEvent):
     #: `raise_priority` 가 올린 값.
     priority: int | None = None
     assignee_id: UUID | None = None
+
+
+@events.register_event
+@dataclass(frozen=True)
+class ApprovalRequested(DomainEvent):
+    """승인을 기다린다 (feature-map C12).
+
+    **`to_user_ids` 가 이 이벤트의 이유다.** 승인자는 워처도 담당자도 아닐 수
+    있다 — 부서장이거나 고객이다. 그 사람들을 지목하지 않으면 알림은 티켓을
+    보고 있던 사람들에게만 가고, 정작 결정할 사람은 아무 소식을 못 받는다.
+    그러면 요청은 승인을 기다리며 영원히 멈춰 있고 아무도 그것을 모른다.
+
+    명단이 비어 있을 수 있다(그룹이 비었거나 요청자뿐이었다). 그때도 이벤트는
+    나간다 — 티켓을 보고 있는 상담원이 "승인자가 없다" 를 알아야 한다.
+    """
+
+    event_type: ClassVar[str] = "desk.approval.requested"
+    aggregate_type: ClassVar[str] = "issue"
+
+    project_id: UUID
+    issue_key: str
+    #: 알림 제목이 쓴다. 키만으로는 무엇을 승인하는지 알 수 없다.
+    summary: str
+    approval_id: UUID
+    #: 찍어 둔 승인자들. `notify` 가 이 사람들을 수신자에 더한다.
+    to_user_ids: list[UUID] = field(default_factory=list)
+
+
+@events.register_event
+@dataclass(frozen=True)
+class ApprovalDecided(DomainEvent):
+    """승인이 끝났다 — 승인이든 거절이든 (feature-map C12).
+
+    취소에는 이벤트가 없다. 취소는 상담원이 자기 화면에서 한 일이고, 그것을
+    알림으로 되돌려 주면 자기가 누른 것을 자기가 통보받는다.
+    """
+
+    event_type: ClassVar[str] = "desk.approval.decided"
+    aggregate_type: ClassVar[str] = "issue"
+
+    project_id: UUID
+    issue_key: str
+    summary: str
+    approval_id: UUID
+    #: `approved` 또는 `declined`.
+    status: str
+    #: 마지막 표를 낸 사람. 알림에서 본인은 빠진다.
+    actor_id: UUID | None = None

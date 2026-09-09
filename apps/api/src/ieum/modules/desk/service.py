@@ -26,7 +26,7 @@ from ieum.core.outbox import publish
 from ieum.core.pagination import Page, PageRequest
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
-from ieum.modules.desk import automation, csat
+from ieum.modules.desk import approvals, automation, csat
 from ieum.modules.desk import permissions as perms
 from ieum.modules.desk.calendar import CalendarError
 from ieum.modules.desk.events import TicketSubmitted
@@ -368,6 +368,7 @@ class PortalService:
         field_mapping: dict[str, str],
         is_enabled: bool,
         kb_space_id: UUID | None = None,
+        approval: dict[str, Any] | None = None,
     ) -> RequestTypeView:
         portal = await self._require_portal(portal_id)
         await self._perms.require(
@@ -409,6 +410,7 @@ class PortalService:
                 field_mapping=mapping,
                 is_enabled=is_enabled,
                 kb_space_id=await self._validated_kb_space(kb_space_id),
+                approval=await self._validated_approval(approval),
             )
         )
         await self._s.flush()
@@ -429,6 +431,8 @@ class PortalService:
         is_enabled: bool | None = None,
         kb_space_id: UUID | None = None,
         clear_kb_space: bool = False,
+        approval: dict[str, Any] | None = None,
+        clear_approval: bool = False,
     ) -> RequestTypeView:
         """고친다.
 
@@ -459,6 +463,13 @@ class PortalService:
             row.kb_space_id = None
         elif kb_space_id is not None:
             row.kb_space_id = await self._validated_kb_space(kb_space_id)
+        # 승인을 끄는 것은 **앞으로 들어오는 요청**에만 적용된다. 이미
+        # 기다리는 승인은 그대로 남는다 — 설정 변경이 지난 요청의 문을 열면,
+        # 승인을 기다리던 티켓이 아무 결정 없이 통과한다.
+        if clear_approval:
+            row.approval = None
+        elif approval is not None:
+            row.approval = await self._validated_approval(approval)
 
         # 폼과 매핑은 **함께** 갈아 끼운다. 한쪽만 받으면 남은 쪽과 어긋난
         # 상태를 저장하게 된다 — 매핑 없는 필드나 필드 없는 매핑이 생긴다.
@@ -517,6 +528,44 @@ class PortalService:
                 code="desk.invalid_slug",
             )
         return slug
+
+    async def _validated_approval(self, raw: dict[str, Any] | None) -> dict[str, Any] | None:
+        """승인 규칙을 저장할 모양으로 검증한다 (C12).
+
+        **적은 사람과 그룹이 실재하는지 본다.** 없는 id 를 적으면 명단을 찍을
+        때 조용히 사라지고, 그러면 "승인자가 없다" 인 승인이 요청마다 만들어진다
+        — 설정 화면에서 막는 편이 낫다.
+        """
+        if raw is None:
+            return None
+        rule = approvals.validate_rule(raw)
+        found = await identity.get_users(self._s, rule.user_ids)
+        missing = [str(value) for value in rule.user_ids if value not in found]
+        if missing:
+            raise ValidationError(
+                "없는 사용자를 승인자로 적었다.",
+                code="desk.approver_not_found",
+                details={"ids": ", ".join(missing)},
+            )
+        # **고객 계정은 아직 승인자가 될 수 없다.** 고객은 포털 밖을 볼 수
+        # 없으므로(auth.md 5절) 승인 알림의 링크가 막힌 문을 가리키게 된다 —
+        # 부르고 나서 갈 곳이 없는 알림은 없는 알림보다 나쁘다. 포털에
+        # 승인 화면을 내는 것은 따로 할 일이다.
+        customers = [str(uid) for uid, ref in found.items() if ref.is_customer]
+        if customers:
+            raise ValidationError(
+                "고객 계정은 승인자로 지정할 수 없다.",
+                code="desk.approver_is_customer",
+                details={"ids": ", ".join(sorted(customers))},
+            )
+        for group_id in rule.group_ids:
+            if await identity.get_group(self._s, group_id) is None:
+                raise ValidationError(
+                    "없는 그룹을 승인자로 적었다.",
+                    code="desk.approver_group_not_found",
+                    details={"id": str(group_id)},
+                )
+        return rule.to_json()
 
     async def _validated_kb_space(self, space_id: UUID | None) -> UUID | None:
         """**`kind = "kb"` 인 스페이스만** 건다 (C8).
@@ -1173,6 +1222,14 @@ class CustomerPortalService:
             )
         )
         await self._s.flush()
+        # 승인이 필요한 유형이면 **여기서** 요청한다 (C12). 이벤트로 뒤에
+        # 처리하면 아웃박스가 도는 사이에 승인 없는 티켓이 열려 있다.
+        await approvals.request_for(
+            self._s,
+            issue_id=issue.id,
+            request_type=form.request_type,
+            reporter_id=actor.user_id,
+        )
         publish(
             self._s,
             TicketSubmitted(
@@ -1236,6 +1293,14 @@ class CustomerPortalService:
             )
         )
         await self._s.flush()
+        # 게스트도 승인을 탄다. 요청자가 계정이 아니므로 명단에서 뺄 사람이
+        # 없다(`reporter_id=None`) — 게스트가 자기 요청을 승인할 길은 없다.
+        await approvals.request_for(
+            self._s,
+            issue_id=issue.id,
+            request_type=form.request_type,
+            reporter_id=None,
+        )
         publish(
             self._s,
             TicketSubmitted(

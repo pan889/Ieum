@@ -11,6 +11,7 @@ import { RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
 import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
 
+import { Approvals } from './Approvals'
 import { Attachments } from './Attachments'
 import { Development } from './Development'
 import { LinkedDocs } from './LinkedDocs'
@@ -81,7 +82,11 @@ export function IssueDetailScreen() {
       <div className="grid gap-5 lg:grid-cols-[1fr_18rem]">
         <div className="flex flex-col gap-5">
           <SummaryAndDescription issue={data} onSaved={invalidate} />
+          {/* 승인은 전이 **바로 아래**다. 착수가 막혀 있을 때 사람이
+              보는 순서가 그렇다: 버튼이 안 되는 이유가 그 다음 칸에
+              있어야 한다 (C12). */}
           <Transitions issue={data} onMoved={invalidate} />
+          <Approvals issueId={data.id} />
           <Relations issueId={data.id} issueKey={data.key} />
           <TimeTracking issueId={data.id} version={data.version} />
           <Attachments ownerType="issue" ownerId={data.id} />

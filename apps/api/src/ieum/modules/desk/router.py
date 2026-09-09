@@ -155,6 +155,7 @@ def _request_type(view: RequestTypeView) -> RequestTypeResponse:
         field_mapping=row.field_mapping,
         is_enabled=row.is_enabled,
         kb_space_id=row.kb_space_id,
+        approval=row.approval,
         is_archived=row.is_archived,
         ticket_count=view.ticket_count,
     )
@@ -359,6 +360,7 @@ async def create_request_type(
         field_mapping=payload.field_mapping,
         is_enabled=payload.is_enabled,
         kb_space_id=payload.kb_space_id,
+        approval=payload.approval.model_dump(mode="json") if payload.approval else None,
     )
     await session.commit()
     return _request_type(view)
@@ -388,6 +390,8 @@ async def update_request_type(
         is_enabled=payload.is_enabled,
         kb_space_id=payload.kb_space_id,
         clear_kb_space=payload.clear_kb_space,
+        approval=payload.approval.model_dump(mode="json") if payload.approval else None,
+        clear_approval=payload.clear_approval,
     )
     await session.commit()
     return _request_type(view)

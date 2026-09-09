@@ -131,6 +131,17 @@ export {
   type RecurrencesApi,
 } from './recurrences'
 export {
+  createApprovalsApi,
+  type Approval,
+  type ApprovalDecision,
+  type ApprovalMode,
+  type ApprovalRule,
+  type ApprovalStatus,
+  type ApprovalVote,
+  type Approver,
+  type ApprovalsApi,
+} from './approvals'
+export {
   createRepositoriesApi,
   type ChangeLink,
   type IssuedRepository,

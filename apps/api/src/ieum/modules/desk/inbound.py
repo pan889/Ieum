@@ -30,6 +30,7 @@ from ieum.core.outbox import publish
 from ieum.core.permissions import PermissionService
 from ieum.core.storage import ObjectStore
 from ieum.core.time import utcnow
+from ieum.modules.desk import approvals
 from ieum.modules.desk.email import ParsedEmail, ticket_key_in
 from ieum.modules.desk.events import TicketSubmitted
 from ieum.modules.desk.models import EmailChannel, EmailMessage, RequestType, TicketExt
@@ -260,6 +261,14 @@ async def _create_ticket(
         )
     )
     await session.flush()
+    # 메일로 들어온 요청도 승인을 탄다 (C12). 채널마다 다르게 두면 승인을
+    # 우회하는 길이 "메일로 보내기" 가 된다.
+    await approvals.request_for(
+        session,
+        issue_id=issue.id,
+        request_type=request_type,
+        reporter_id=None,
+    )
     publish(
         session,
         TicketSubmitted(

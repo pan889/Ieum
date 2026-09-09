@@ -40,5 +40,9 @@
   "sla.breached": "{key} 의 SLA 를 넘겼습니다: {summary}",
   "sla.escalated": "{key} 의 SLA 에스컬레이션: 목표의 {percent}% 를 지났습니다",
   "sla.escalated.notify": "{key} 의 SLA 마감이 다가옵니다 (목표의 {percent}%): {summary}",
-  "sla.escalated.raisePriority": "{key} 의 우선순위를 {priority} 로 올렸습니다 — SLA 목표의 {percent}%"
+  "sla.escalated.raisePriority": "{key} 의 우선순위를 {priority} 로 올렸습니다 — SLA 목표의 {percent}%",
+  "approval.requested": "{key} 의 승인이 필요합니다: {summary}",
+  "approval.decided": "{key} 의 승인이 끝났습니다: {summary}",
+  "approval.approved": "{key} 이 승인됐습니다: {summary}",
+  "approval.declined": "{key} 이 거절됐습니다: {summary}"
 }

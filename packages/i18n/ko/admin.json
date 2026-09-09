@@ -72,6 +72,7 @@
   "people.noMatches": "해당하는 사람이 없습니다.",
   "people.searchHint": "이름이나 이메일 주소를 입력하세요.",
   "permission.desk.email.manage": "메일 채널 관리",
+  "permission.desk.approval.manage": "기다리는 승인 취소",
   "permission.desk.automation.manage": "자동화 규칙 관리",
   "permission.desk.customer.manage": "고객 조직 관리",
   "permission.desk.portal.manage": "포털·요청 유형 관리",

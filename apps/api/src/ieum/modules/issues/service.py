@@ -30,6 +30,7 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import events as issue_events
+from ieum.modules.issues import gates
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.fields import validate_value
 from ieum.modules.issues.models import (
@@ -734,6 +735,23 @@ class IssueService:
             raise ConflictError("전이 대상 상태가 없다.", code="issues.invalid_transition")
 
         current = await self._workflows.state(issue.state_id)
+
+        # **다른 모듈이 막을 수 있는 자리** (C12 승인). 조건 평가보다 먼저
+        # 본다: 관문은 기본 거절이고, 조건은 관리자가 켜야 걸린다 —
+        # 순서를 뒤집으면 조건을 통과한 전이가 관문에서 막히는 것을
+        # "조건을 만족하지 않는다" 로 잘못 말하게 된다. 막은 쪽이 자기
+        # 문구와 코드를 들고 예외를 던진다 (`gates.py`).
+        await gates.check(
+            self._s,
+            actor,
+            gates.Gate(
+                issue_id=issue.id,
+                project_id=issue.project_id,
+                from_category=current.category if current else None,
+                to_category=target.category,
+            ),
+        )
+
         ctx = await self._transition_context(actor, issue, target, inputs=inputs or {})
         spec = _spec_of(row)
 
