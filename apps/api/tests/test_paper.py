@@ -32,6 +32,7 @@ from ieum.core.paper import (
     Chapter,
     Paper,
     for_print,
+    korean_is_renderable,
     to_docx,
     to_pdf,
 )
@@ -78,6 +79,23 @@ def _docx_paragraphs(data: bytes) -> list[tuple[str | None, str]]:
         style = re.search(r'w:pStyle w:val="([^"]+)"', block)
         out.append((style.group(1) if style else None, text))
     return out
+
+
+def test_this_machine_can_draw_korean() -> None:
+    """**먼저 이것을 본다.** 아니면 아래 여섯 개가 이유를 숨긴 채 붉어진다.
+
+    한국어 글꼴이 없으면 WeasyPrint 는 터지지 않고 한국어를 텍스트 층에서
+    빼 버린 PDF 를 준다. 그러면 아래 시험들이
+    `assert '가나다라' in '   '` 로 떨어지는데, 그것만 보고는 조판이 깨진 건지
+    글꼴이 없는 건지 알 수 없다. 실제로 CI 에서 그 상태로 여섯 개가 붉었고,
+    원인이 글꼴이라는 것을 알아내는 데 오래 걸렸다.
+
+    이 시험이 먼저 붉으면 할 일이 하나다: `fonts-noto-cjk` 를 깐다.
+    """
+    assert korean_is_renderable(), (
+        "이 기계에 한국어를 그릴 수 있는 글꼴이 없다 — `fonts-noto-cjk` 를 설치하세요. "
+        "없으면 내보낸 PDF 에서 한국어가 빈칸으로 나갑니다(오류 없이)."
+    )
 
 
 class TestThePdf:

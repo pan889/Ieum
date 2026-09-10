@@ -46,7 +46,7 @@ jobs:
         # 없다. 앱을 임포트하는 갈래만 `-k` 로 뺀다.
         run: |
           pip install --quiet pytest
-          python -m pytest apps/api/tests/test_version_agrees.py -q \
+          python -m pytest apps/api/tests/test_version_agrees.py \
             --no-header -p no:cacheprovider --noconftest -k "not running_app"
 
   images:

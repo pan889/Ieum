@@ -34,12 +34,17 @@ from __future__ import annotations
 
 import io
 import re
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
+from ieum.core.logging import get_logger
 from ieum.core.markdown import to_html
 from ieum.core.markdown.directives import LEAF_NAMES, parse_leaf
+
+log = get_logger(__name__)
 
 #: 인쇄물 한 부에 담을 장(章) 수의 상한.
 #:
@@ -83,9 +88,48 @@ class Paper:
 # ── PDF ─────────────────────────────────────────────────────────
 
 
+@lru_cache(maxsize=1)
+def korean_is_renderable() -> bool:
+    """한국어를 그릴 수 있는 글꼴이 이 기계에 있는가.
+
+    **없으면 내보내기가 조용히 틀린 것을 만든다.** WeasyPrint 는 글꼴이 없어도
+    터지지 않고, 한국어 글자를 텍스트 층에서 빼 버린 PDF 를 준다 — 파일은
+    열리고 라틴 문자는 멀쩡하다. 내보낸 사람은 파일을 열고 나서야 알고, 로그에는
+    아무것도 안 남는다. 그래서 여기서 한 번 보고 말한다.
+
+    실제로 이것 때문에 CI 의 `test_paper.py` 여섯 개가 러너에서만 붉었고,
+    단언이 `assert '가나다라' in '   '` 로 나와서 글꼴 문제로 보이지 않았다.
+
+    fontconfig 에 물어본다(`fc-list :lang=ko`). 그것이 없는 기계라면 판단할
+    근거가 없으므로 **참으로 둔다** — 있는지 모르는 것을 없다고 말하면 멀쩡한
+    설치에 거짓 경보를 낸다.
+    """
+    try:
+        found = subprocess.run(
+            ["fc-list", ":lang=ko", "family"],  # noqa: S607 - PATH 로 찾는다
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if found.returncode != 0:
+        return True
+    return bool(found.stdout.strip())
+
+
 def to_pdf(paper: Paper) -> bytes:
     """PDF 바이트. 장마다 새 쪽에서 시작한다."""
     from weasyprint import CSS, HTML  # 무거운 import 를 부를 때까지 미룬다
+
+    if not korean_is_renderable():
+        # 막지는 않는다 — 영어만 내보내는 사람에게는 이것이 문제가 아니다.
+        # 다만 **로그에는 남는다.** 이것이 안 남으면 아무 데도 안 남는다.
+        log.error(
+            "paper.no_korean_font",
+            hint="fonts-noto-cjk 를 설치하세요. 없으면 한국어가 빈칸으로 나갑니다.",
+        )
 
     document = HTML(
         string=_document_html(paper),
