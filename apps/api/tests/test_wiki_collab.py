@@ -239,9 +239,15 @@ class TestTheRoom:
 
         task = asyncio.create_task(watch())
         try:
-            await asyncio.sleep(0.3)
             a = Listener((await _user(session)).id)
             await left.join(a.client)
+            # 방이 열릴 때 오가는 인사와 상태 벡터는 **이 시험의 관심이 아니다**
+            # (그건 아래 `test_a_late_room_...` 이 본다). 가라앉기를 기다린 뒤
+            # 지운다 — 세는 것은 "친 것 한 통" 이고, 그 수가 늘어나는 것이
+            # 여기서 잡으려는 고장이다.
+            await asyncio.sleep(0.6)
+            seen.clear()
+
             await left.handle(a.client, _typed("한 번"))
             await asyncio.sleep(0.6)
 
@@ -253,6 +259,54 @@ class TestTheRoom:
             await spy.aclose()
             await left.stop()
             await right.stop()
+
+    async def test_a_late_room_gets_edits_that_are_not_saved_yet(
+        self, session: AsyncSession, redis: Redis
+    ) -> None:
+        """**늦게 생긴 방이 남의 안 저장된 편집을 받는다.**
+
+        인스턴스를 여러 개 띄우면 사람마다 다른 프로세스에 붙고, 방은 붙은
+        사람이 생길 때 만들어진다. 그래서 두 번째 방은 첫 번째 방보다 늦게
+        생기고, **낡은 스냅샷에서 출발한다** — 저장은 3초에 한 번이라 그 사이의
+        편집은 DB 에 없다. 그리고 Redis pub/sub 은 **과거를 주지 않는다.**
+
+        물어보지 않으면 그 편집은 영원히 안 온다. 늦은 방은 자기가 쓰기 전까지
+        스냅샷을 다시 읽지도 않으므로, 그 사람은 낡은 본문을 "지금 문서" 로
+        믿고 편집한다. 조용히 틀리는 쪽이고, 한 인스턴스에서 도는 시험은 이
+        성질에 대해 아무것도 말해 주지 않는다.
+
+        저장을 아예 안 하는 방으로 세워(`_noop_save`) 그 창을 **시간이 아니라
+        구조로** 만든다. 3초를 기다리는 시험은 느린 기계에서 뜻이 뒤집힌다.
+        """
+        page = await _page(session, "")
+        state = await collab.load_or_seed(session, page.id)
+
+        first = collab.Room(page.id, state, redis)
+        await first.start(_noop_save)
+        try:
+            await asyncio.sleep(0.2)  # 구독이 붙을 틈
+            a = Listener((await _user(session)).id)
+            await first.join(a.client)
+            await first.handle(a.client, _typed("먼저 친 글"))
+            await asyncio.sleep(0.2)
+            assert "먼저 친 글" in first.body()
+
+            # 늦은 방은 **저장되지 않은** 상태에서 출발한다 — 방금 심은 그것.
+            late = collab.Room(page.id, state, redis)
+            await late.start(_noop_save)
+            try:
+                await asyncio.sleep(0.8)
+                assert "먼저 친 글" in late.body(), "늦게 생긴 방이 낡은 본문을 들고 있다"
+                # 그 다음부터는 양쪽이 이어진다.
+                b = Listener((await _user(session)).id)
+                await late.join(b.client)
+                await late.handle(b.client, _typed("나중에 친 글"))
+                await asyncio.sleep(0.5)
+                assert "나중에 친 글" in first.body()
+            finally:
+                await late.stop()
+        finally:
+            await first.stop()
 
     async def test_presence_reaches_the_other_person(
         self, session: AsyncSession, redis: Redis

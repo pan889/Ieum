@@ -108,7 +108,7 @@ test('아직 안 알린 위반도 "지금 넘김" 으로 보이고, 어떻게 �
   await page.goto('/settings/sla')
   await expect(page.getByRole('heading', { name: /sla policies/i, level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /new calendar/i }).click()
-  await page.getByLabel(/^name$/i).fill(`Always ${String(Date.now()).slice(-6)}`)
+  await page.getByLabel(/^calendar name$/i).fill(`Always ${String(Date.now()).slice(-6)}`)
   await page.getByLabel(/^working hours$/i).fill(ALWAYS_OPEN)
   await page.getByRole('button', { name: /^save$/i }).click()
 
@@ -117,7 +117,7 @@ test('아직 안 알린 위반도 "지금 넘김" 으로 보이고, 어떻게 �
   await page.getByRole('button', { name: new RegExp(portal.projectKey) }).click()
 
   await page.getByRole('button', { name: /new policy/i }).click()
-  await page.getByLabel(/^name$/i).fill('일 분 안에')
+  await page.getByLabel(/^policy name$/i).fill('일 분 안에')
   await page.getByLabel(/^targets$/i).fill('1m')
   await page.getByRole('button', { name: /^save$/i }).click()
   await expect(page.getByText('일 분 안에')).toBeVisible()

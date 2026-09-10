@@ -22,6 +22,7 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as redis_from_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ieum.core.logging import get_logger
 from ieum.db.session import get_session_factory
 from ieum.modules.wiki.collab import Merge, Room, load_or_seed, save_snapshot
 
@@ -33,6 +34,8 @@ from ieum.modules.wiki.collab import Merge, Room, load_or_seed, save_snapshot
 #: 갈아끼우므로 그 전역이 비어 있다. 시험할 수 없는 자리는 결국 안 시험한
 #: 자리가 된다.
 SessionSource = Callable[[], async_sessionmaker[AsyncSession]]
+
+logger = get_logger(__name__)
 
 
 class RoomRegistry:
@@ -127,7 +130,13 @@ class RoomRegistry:
             await self.release(page_id)
         pending = list(self._closing.values())
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            # 하나가 터져도 남은 것은 닫는다 — 그래서 예외를 모은다. 그런데
+            # **삼키지는 않는다**: 여기서 실패한 저장은 마지막 기회였고, 그
+            # 편집은 이제 아무 데도 없다. 아무 줄도 남기지 않으면 사람은
+            # 나중에 "내가 쓴 게 없다" 로만 그 사실을 만난다.
+            for outcome in await asyncio.gather(*pending, return_exceptions=True):
+                if isinstance(outcome, BaseException):
+                    logger.error("collab.shutdown_save_failed", error=str(outcome))
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None

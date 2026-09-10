@@ -81,6 +81,7 @@ from ieum.modules.search.router import router as unified_search_router
 from ieum.modules.vcs.router import repositories_router
 from ieum.modules.vcs.webhook_router import vcs_webhooks_router
 from ieum.modules.wiki.collab_router import collab_router
+from ieum.modules.wiki.rooms import registry as rooms
 from ieum.modules.wiki.router import pages_router, spaces_router
 from ieum.wiring import install_permissions
 
@@ -192,6 +193,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            # **엔진을 버리기 전에** 편집 방을 닫는다 — 닫기가 마지막 저장을
+            # 포함하고, 그 저장은 세션을 쓴다. 순서를 바꾸면 저장이 죽은
+            # 엔진을 잡는다.
+            #
+            # 소켓이 끊길 때 `release` 가 이미 닫기를 띄우지만 **그것을
+            # 기다리는 사람이 없다**: 프로세스가 내려가면서 루프가 먼저
+            # 걷히면 마지막 몇 초의 편집이 사라진다. 롤링 업데이트에서는
+            # 그게 예외가 아니라 매번이다.
+            await rooms.aclose()
             await dispose_engine()
             log.info("api.shutdown")
 

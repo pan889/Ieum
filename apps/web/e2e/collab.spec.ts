@@ -222,3 +222,61 @@ test('붙기 전에 쓴 글은 갈아탈 때 살아남는다', async ({ page, co
 
   expect(consoleErrors).toEqual([])
 })
+
+/**
+ * 두 번째 오리진. 있으면 **다른 API 인스턴스에 붙은** 창을 띄울 수 있다.
+ *
+ * 없으면 아래 시험을 건너뛴다 — 인스턴스를 둘 띄우는 것은 개발 기본값이
+ * 아니고, 없는데 억지로 돌리면 "같은 인스턴스에서 됐다" 를 "HA 에서 됐다" 로
+ * 잘못 읽게 된다.
+ */
+const SECOND_ORIGIN = process.env['E2E_SECOND_ORIGIN'] ?? ''
+
+test('다른 API 인스턴스에 붙어도 같이 편집된다', async ({ page, browser, consoleErrors }) => {
+  /**
+   * **HA 가이드가 "API 를 여러 개 띄워도 된다" 고 말할 근거다.**
+   *
+   * 방(CRDT 상태)은 프로세스 메모리에 있고, 프로세스 사이는 Redis pub/sub 로
+   * 잇는다(`collab.py` 의 `_publish`). 코드는 그렇게 보이지만, 그 사슬이
+   * 실제로 이어지는지는 **인스턴스를 둘 띄워 봐야** 안다 — 한 인스턴스에서
+   * 도는 시험은 이 성질에 대해 아무것도 말해 주지 않는다.
+   *
+   * 편집과 **프레즌스를 함께** 본다. 편집만 전달되고 프레즌스가 안 넘어오면
+   * 사람은 자기가 혼자라고 생각하고 쓰다가 나중에 놀란다.
+   */
+  test.skip(SECOND_ORIGIN === '', 'E2E_SECOND_ORIGIN 이 없다 (인스턴스 하나로 도는 중)')
+
+  const key = spaceKey()
+  await signIn(page)
+  await createSpace(page, key)
+  await newPage(page, key, 'Across Instances')
+  const mine = await openEditor(page)
+
+  // 두 번째 창은 **다른 오리진**을 본다. 그 오리진의 앱은 다른 API 를 부른다.
+  const second = await browser.newContext({ baseURL: SECOND_ORIGIN })
+  const other = await second.newPage()
+  try {
+    await signIn(other)
+    await other.goto(`/wiki/${key}/across-instances`)
+    const theirs = await openEditor(other)
+
+    // **프레즌스가 프로세스를 넘는다.** awareness 도 Redis 로 나간다.
+    await expect(page.getByTestId('collab-peer').first()).toBeVisible({ timeout: 15_000 })
+    await expect(other.getByTestId('collab-peer').first()).toBeVisible({ timeout: 15_000 })
+
+    // 한쪽에서 쓴 글이 다른 인스턴스의 창에 뜬다.
+    await mine.click()
+    await mine.pressSequentially('첫째 인스턴스에서 쓴 글')
+    await expect(theirs).toHaveValue(/첫째 인스턴스에서 쓴 글/, { timeout: 20_000 })
+
+    // 반대 방향도. 한 방향만 되면 발행은 되고 구독이 안 되는 것이다.
+    await theirs.click()
+    await other.keyboard.press('End')
+    await other.keyboard.type(' / 둘째에서 덧붙인 글')
+    await expect(mine).toHaveValue(/둘째에서 덧붙인 글/, { timeout: 20_000 })
+  } finally {
+    await second.close()
+  }
+
+  expect(consoleErrors).toEqual([])
+})

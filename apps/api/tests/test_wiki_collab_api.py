@@ -26,8 +26,10 @@ import pytest
 from pycrdt import Doc, Text, create_update_message
 from redis.asyncio import Redis
 from redis.asyncio import from_url as redis_from_url
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ieum.config import Settings
 from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, Scope, set_permission_service
 from ieum.modules.identity.models import User
@@ -277,6 +279,61 @@ class TestPermissionOnThePage:
 
         found = await PageService(session, permissions).page_for_edit(actor_for(editor), page.id)
         assert found.id == page.id
+
+
+class TestShutdown:
+    async def test_shutting_down_saves_open_rooms(
+        self, app_client: httpx.AsyncClient, engine: object, settings: Settings
+    ) -> None:
+        """**내려갈 때 열린 방을 닫는다** — 닫기가 마지막 저장이다.
+
+        소켓이 끊길 때 `release` 가 이미 닫기를 띄우지만 그것을 **기다리는
+        사람이 없다**: 프로세스가 내려가면서 루프가 먼저 걷히면 마지막 몇 초의
+        편집이 사라진다. 롤링 업데이트는 파드를 하나씩 내리는 일이라 그게 예외가
+        아니라 매번이고, 오류도 안 난다 — 사람은 나중에 "내가 쓴 게 없다" 로만
+        만난다.
+
+        `RoomRegistry.aclose()` 가 그것을 막으려고 있는 함수인데, **배선을
+        빼먹으면 있어도 아무 일도 안 한다.** 그래서 여기서는 레지스트리를
+        직접 부르지 않는다 — 실제 앱의 lifespan 을 열고 닫아서 그 배선을 본다.
+        """
+        headers = await _auth(app_client)
+        page = await _page_over_api(app_client, headers)
+        page_id = UUID(page["id"])
+        me = UUID((await app_client.get("/api/v1/auth/me", headers=headers)).json()["id"])
+
+        from ieum.main import create_app
+        from ieum.modules.wiki.rooms import registry
+
+        app = create_app(settings)
+        async with app.router.lifespan_context(app):
+            # 전역 레지스트리를 쓴다 — lifespan 이 닫는 것이 바로 그것이다.
+            room = await registry.acquire(page_id, REDIS_URL)
+            got: list[bytes] = []
+
+            async def send(message: bytes) -> None:
+                got.append(message)
+
+            # **진짜 사용자로 붙는다.** `saved_by` 가 FK 라서 아무 UUID 나 쓰면
+            # 저장이 FK 위반으로 죽고, 이 시험은 배선이 아니라 그 위반을 본다.
+            client = collab.Client(user_id=me, send=send)
+            await room.join(client)
+            await room.handle(client, _typed("내려가기 직전에 친 글"))
+            assert "내려가기 직전에 친 글" in room.body()
+            # 스냅샷 주기(3초)를 **기다리지 않는다.** 기다리면 주기 저장이
+            # 대신 해 주고, 이 시험은 아무것도 안 보게 된다.
+
+        factory = async_sessionmaker(bind=engine, expire_on_commit=False)  # type: ignore[arg-type]
+        async with factory() as session:
+            # `page_id` 는 PK 가 아니라 유일 FK 다 — `get()` 으로는 안 찾아진다.
+            saved = (
+                await session.execute(
+                    select(collab.PageCollab).where(collab.PageCollab.page_id == page_id)
+                )
+            ).scalar_one_or_none()
+            assert saved is not None
+            body = collab.text_of(saved.state)
+        assert "내려가기 직전에 친 글" in body, "내려가면서 마지막 편집이 사라졌다"
 
 
 def _sessions(engine: object) -> object:

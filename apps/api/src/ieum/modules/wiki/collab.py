@@ -99,6 +99,24 @@ SNAPSHOT_SECONDS = 3.0
 MAX_CLIENTS = 30
 
 
+#: **프로세스 사이에서만 쓰는 신호.** "방이 새로 생겼다, 누구 있나요?"
+#:
+#: Redis pub/sub 은 **과거를 주지 않는다.** 늦게 생긴 방은 이미 붙어 있는
+#: 사람들의 프레즌스를 받은 적이 없고, awareness 는 각자 자기 것을 바뀔 때만
+#: 방송하므로 그 방에서는 누군가 다음 키를 누를 때까지 빈 방으로 보인다.
+#: 같은 프로세스 안에서는 `Room.join` 이 이미 그것을 막고 있다(붙자마자 아는
+#: 프레즌스를 전부 넘긴다) — 이 신호는 그 장치를 프로세스 사이로 넓힌 것이다.
+#:
+#: **본문은 이 신호로 못 가져온다.** 그건 `_listen` 이 함께 던지는 상태 벡터가
+#: 한다 — 아래 주석 참조. 둘을 하나로 합치지 않은 이유는 방향이 다르기
+#: 때문이다: 프레즌스는 "내가 아는 것을 내놓는다", 본문은 "내가 없는 것을
+#: 달라고 한다".
+#:
+#: Y 프로토콜의 종류와 겹치지 않는 값을 쓴다(SYNC=0, AWARENESS=1). 이 바이트는
+#: 클라이언트에게 절대 나가지 않는다 — 서버끼리의 말이다.
+HELLO = b"\xff"
+
+
 def channel_for(page_id: UUID) -> str:
     return f"ieum:collab:{page_id}"
 
@@ -452,6 +470,17 @@ class Room:
     async def _listen(self) -> None:
         pubsub = self._redis.pubsub()
         await pubsub.subscribe(channel_for(self.page_id))
+        # **구독한 뒤에 인사한다.** 먼저 인사하면 남들의 답을 놓친다.
+        await self._publish(HELLO)
+        # **그리고 문서를 달라고 한다.** 이 방은 DB 스냅샷에서 출발하는데,
+        # 스냅샷은 다른 프로세스가 **아직 저장하지 않은 편집**을 모른다(저장은
+        # 3초에 한 번이다). 안 물어보면 그 편집은 영원히 안 온다 — pub/sub 은
+        # 과거를 주지 않고, 이 방은 자기가 쓰기 전까지 스냅샷을 다시 읽지도
+        # 않는다. 그래서 다른 인스턴스의 사람은 낡은 본문을 보며 편집한다.
+        #
+        # 던지는 것은 **상태 벡터**(SyncStep1) 다: "내가 여기까지 안다, 없는
+        # 것을 달라." 답(SyncStep2)은 `_apply_remote` 가 채널로 되돌린다.
+        await self._publish(create_sync_message(self._doc))
         try:
             async for raw in pubsub.listen():
                 if raw.get("type") != "message":
@@ -464,17 +493,41 @@ class Room:
     def _apply_remote(self, message: bytes) -> None:
         if not message:
             return
+        if message == HELLO:
+            # 새 방이 인사했다. 내가 아는 프레즌스를 내놓는다 — 답에는 답하지
+            # 않으므로 왕복이 여기서 끝난다.
+            self._answer_hello()
+            return
         kind = message[0]
         self._applying_remote = True
         try:
             if kind == YMessageType.SYNC:
-                handle_sync_message(message[1:], self._doc)
+                reply = handle_sync_message(message[1:], self._doc)
+                if reply is not None:
+                    # 상태 벡터에만 답이 나온다. 편집 한 통(SyncStep2)에는 답이
+                    # 없으므로 왕복이 늘어나지 않는다 — 방이 새로 생길 때 한
+                    # 번씩만 오간다.
+                    asyncio.ensure_future(self._publish(reply))  # noqa: RUF006
             elif kind == YMessageType.AWARENESS:
                 update = read_message(message[1:])
                 self._awareness.apply_awareness_update(update, origin=self)
                 self._relay(create_awareness_message(update), skip=None)
         finally:
             self._applying_remote = False
+
+    def _answer_hello(self) -> None:
+        """아는 프레즌스를 채널에 내놓는다.
+
+        `join` 이 새 클라이언트에게 하는 것과 **같은 것**을 채널에 한다. 내가
+        아는 상태에는 내 클라이언트들의 것뿐 아니라 남에게서 받은 것도 섞여
+        있는데, 그것을 함께 보내는 것이 맞다 — awareness 업데이트는 멱등이고,
+        중간에 있던 방이 사라져도 그 사람이 사라진 것은 아니다.
+        """
+        known = list(self._awareness.states.keys())
+        if not known:
+            return
+        message = create_awareness_message(self._awareness.encode_awareness_update(known))
+        asyncio.ensure_future(self._publish(message))  # noqa: RUF006
 
     async def _save_loop(self) -> None:
         while True:
@@ -526,6 +579,7 @@ def _sync_update(update: bytes) -> bytes:
 
 __all__ = [
     "BODY_KEY",
+    "HELLO",
     "MAX_CLIENTS",
     "SNAPSHOT_SECONDS",
     "Client",
