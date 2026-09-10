@@ -53,12 +53,31 @@ COPY packages/i18n ./packages/i18n
 
 ENV PYTHONPATH=/app/src
 
+# **앱이 자기 판을 말할 수 있게 한다.**
+#
+# 위의 `uv sync` 는 `--no-install-project` 로 돈다(그 시점에 소스가 아직
+# 없다). 그래서 `ieum-api` 의 dist-info 가 venv 에 없고,
+# `importlib.metadata.version("ieum-api")` 가 `PackageNotFoundError` 로 떨어져
+# `/openapi.json` 이 판을 **`0.0.0`** 이라고 말한다. 실제로 그렇게 말하는 것을
+# 돌려 보고 알았다 — 테스트는 프로젝트가 설치된 개발 트리에서 도니까 통과했고,
+# 이미지만 틀렸다.
+#
+# 소스를 `/app/src` 에 두는 것은 compose 가 거기 마운트하기 때문에 못 바꾼다.
+# 그래서 프로젝트가 기대하는 자리(`apps/api/src`, `packages = ["src/ieum"]`)를
+# 심볼릭 링크로 만들어 주고 프로젝트만 설치한다. 코드 사본은 하나다 —
+# uv 가 워크스페이스 프로젝트를 editable 로 넣으므로 결국 `/app/src` 를 가리킨다.
+RUN ln -s /app/src /app/apps/api/src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=secret,id=ca,required=false \
+    sh -c 'if [ -f /run/secrets/ca ]; then export SSL_CERT_FILE=/run/secrets/ca; fi; \
+     uv sync --project apps/api --frozen --no-dev'
+
 # ── 개발: 핫리로드. 소스는 compose 가 마운트한다 ────────────────
 FROM base AS dev
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=ca,required=false \
     sh -c 'if [ -f /run/secrets/ca ]; then export SSL_CERT_FILE=/run/secrets/ca; fi; \
-     uv sync --project apps/api --frozen --no-install-project'
+     uv sync --project apps/api --frozen'
 EXPOSE 8000
 CMD ["uvicorn", "ieum.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 

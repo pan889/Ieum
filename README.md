@@ -21,6 +21,11 @@ Python 3.12 / FastAPI / PostgreSQL 16 / Redis / React 19 + TypeScript
 
 ## 문서
 
+**읽는 문서: <https://pan889.github.io/ieum-docs/>** — 설치·사용·운영 안내가
+거기 있다. 처음이면 [설치하기](https://pan889.github.io/ieum-docs/install/)부터.
+
+판마다 바뀐 것과 **어디까지 실제로 확인했는지**는 [CHANGELOG.md](CHANGELOG.md).
+
 개발 문서는 **별도 저장소 [pan889/ieum-docs](https://github.com/pan889/ieum-docs)** 가 단독으로 소유한다.
 이 저장소에는 문서 사본을 두지 않는다.
 

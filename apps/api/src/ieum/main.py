@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, status
@@ -90,6 +91,17 @@ from ieum.modules.wiki.router import pages_router, spaces_router
 from ieum.wiring import install_permissions
 
 log = get_logger(__name__)
+
+#: 이 설치의 판. **여기서 손으로 적지 않는다** — `apps/api/pyproject.toml` 이
+#: 정본이고 그것을 읽는다. 두 곳에 적으면 한 곳만 갱신되는 날이 오고, 그날
+#: `/openapi.json` 이 옛 판을 말한다(웹훅을 받는 쪽이 그것으로 판을 읽는다).
+#:
+#: 설치되지 않은 상태(소스 트리에서 곧바로 실행)에서는 메타데이터가 없다.
+#: 그때 죽지 않게 `0.0.0` 으로 둔다 — 개발 중이라는 뜻으로 읽힌다.
+try:
+    APP_VERSION = version("ieum-api")
+except PackageNotFoundError:  # pragma: no cover - 설치된 환경에서는 안 온다
+    APP_VERSION = "0.0.0"
 
 API_PREFIX = "/api/v1"
 
@@ -227,7 +239,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Ieum API",
-        version="0.1.0",
+        version=APP_VERSION,
         description="셀프호스팅 팀 협업 플랫폼 — 이슈·위키·서비스데스크",
         docs_url="/docs" if not settings.is_production else None,
         redoc_url=None,

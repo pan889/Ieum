@@ -1,0 +1,123 @@
+name: 릴리스
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  guard:
+    # **태그와 선언된 판이 같은가.** 다르면 여기서 멈춘다 — 태그는 사람이
+    # 손으로 붙이는 것이고, `v1.0.0` 을 붙였는데 `pyproject.toml` 이
+    # `0.9.0` 이면 그 이미지는 자기 판을 잘못 말한다. 그리고 그 오류는
+    # 한참 뒤에 "어느 판이 돌고 있냐" 를 못 믿게 되는 것으로 나타난다.
+    name: 태그와 판이 맞는가
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: check
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          declared=$(python3 -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('apps/api/pyproject.toml').read_text())['project']['version'])
+          ")
+          echo "태그: $tag / 선언: $declared"
+          if [ "$tag" != "$declared" ]; then
+            echo "::error::태그($tag)와 apps/api/pyproject.toml($declared)이 다르다"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: 나머지 선언도 같은가
+        # 게이트가 이미 있다. 릴리스에서 한 번 더 부르는 이유: CI 를 건너뛴
+        # 태그(예: 다른 브랜치에서 붙인 것)가 여기로 들어올 수 있다.
+        #
+        # `--noconftest` 가 핵심이다. `apps/api/tests/conftest.py` 는
+        # httpx·sqlalchemy·ieum 을 임포트하는데 여기서는 pytest 만 넣는다 —
+        # 없으면 **수집 단계에서 exit 4** 로 죽는다(실제로 그렇게 죽는 것을
+        # 확인했다). 이 테스트는 픽스처를 하나도 안 쓰므로 conftest 가 필요
+        # 없다. 앱을 임포트하는 갈래만 `-k` 로 뺀다.
+        run: |
+          pip install --quiet pytest
+          python -m pytest apps/api/tests/test_version_agrees.py -q \
+            --no-header -p no:cacheprovider --noconftest -k "not running_app"
+
+  images:
+    name: 이미지 (ghcr)
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: runtime
+          push: true
+          # **`latest` 를 붙이지 않는다.** 운영에서 `latest` 를 가리키면
+          # 다시 배포할 때마다 다른 것이 뜨고, 그러면 무엇이 돌고 있는지
+          # 말할 수 없다. 판을 적어서 배포한다.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ieum-api:${{ needs.guard.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ieum-web:${{ needs.guard.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  notes:
+    name: 릴리스 노트
+    needs: [guard, images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: CHANGELOG 에서 이 판의 절을 뽑는다
+        # 노트를 두 곳에 쓰지 않는다. CHANGELOG 가 정본이고 여기서 잘라 온다 —
+        # 두 벌을 두면 한 벌만 고쳐지는 날이 온다.
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os, pathlib, re, sys
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          text = pathlib.Path("CHANGELOG.md").read_text()
+          match = re.search(
+              rf"^## {re.escape(version)} .*?$(.*?)(?=^## |\Z)", text, re.S | re.M
+          )
+          if match is None:
+              sys.exit(f"CHANGELOG.md 에 '## {version}' 절이 없다")
+          pathlib.Path("release-notes.md").write_text(match.group(1).strip() + "\n")
+          PY
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          # 태그 이름을 제목으로 쓴다. 사람이 두 번 적지 않는다.
+          name: ${{ github.ref_name }}
+          # `v1.0.0-rc1` 처럼 하이픈이 붙은 것은 사전 공개로 둔다.
+          prerelease: ${{ contains(github.ref_name, '-') }}
