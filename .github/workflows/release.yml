@@ -17,23 +17,34 @@ jobs:
     name: 태그와 판이 맞는가
     runs-on: ubuntu-latest
     outputs:
+      # 이미지에 적는 판. 사전 공개면 꼬리까지 그대로 들어간다.
       version: ${{ steps.check.outputs.version }}
+      # 릴리스 판. `pyproject.toml` 과 맞추고 CHANGELOG 절을 찾는 데 쓴다.
+      core: ${{ steps.check.outputs.core }}
     steps:
       - uses: actions/checkout@v5
       - id: check
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
+          # `1.0.0-rc1` 의 릴리스 판은 `1.0.0` 이다. 사전 공개는 **그 판을
+          # 향하는 후보**이므로 선언과 맞춰야 하는 것은 꼬리를 뗀 쪽이다.
+          # `pyproject.toml` 에 `1.0.0-rc1` 을 적을 수는 없다 —
+          # `test_version_agrees.py` 가 MAJOR.MINOR.PATCH 를 요구하고,
+          # 그 규칙이 있는 이유는 차트와 JS 패키지가 같은 값을 손으로 적기
+          # 때문이다.
+          core="${tag%%-*}"
           declared=$(python3 -c "
           import tomllib, pathlib
           print(tomllib.loads(pathlib.Path('apps/api/pyproject.toml').read_text())['project']['version'])
           ")
-          echo "태그: $tag / 선언: $declared"
-          if [ "$tag" != "$declared" ]; then
-            echo "::error::태그($tag)와 apps/api/pyproject.toml($declared)이 다르다"
+          echo "태그: $tag / 릴리스 판: $core / 선언: $declared"
+          if [ "$core" != "$declared" ]; then
+            echo "::error::태그의 릴리스 판($core)과 apps/api/pyproject.toml($declared)이 다르다"
             exit 1
           fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "core=$core" >> "$GITHUB_OUTPUT"
 
       - name: 나머지 선언도 같은가
         # 게이트가 이미 있다. 릴리스에서 한 번 더 부르는 이유: CI 를 건너뛴
@@ -99,12 +110,15 @@ jobs:
       - name: CHANGELOG 에서 이 판의 절을 뽑는다
         # 노트를 두 곳에 쓰지 않는다. CHANGELOG 가 정본이고 여기서 잘라 온다 —
         # 두 벌을 두면 한 벌만 고쳐지는 날이 온다.
+        env:
+          RELEASE_CORE: ${{ needs.guard.outputs.core }}
         run: |
           set -euo pipefail
           python3 <<'PY'
           import os, pathlib, re, sys
 
-          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          # 사전 공개(`v1.0.0-rc1`)에는 자기 절이 없다. 향하는 판의 절을 쓴다.
+          version = os.environ["RELEASE_CORE"]
           text = pathlib.Path("CHANGELOG.md").read_text()
           match = re.search(
               rf"^## {re.escape(version)} .*?$(.*?)(?=^## |\Z)", text, re.S | re.M
