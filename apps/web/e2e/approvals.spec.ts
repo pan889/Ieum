@@ -17,6 +17,8 @@
 import type { Page } from '@playwright/test'
 
 import {
+  ADMIN_EMAIL,
+  ADMIN_PASSWORD,
   API,
   createPortal,
   expect,
@@ -28,10 +30,14 @@ import {
 
 test.slow()
 
-/** 관리자 토큰. 준비는 API 로 하고, 보는 것은 화면으로 한다. */
+/** 관리자 토큰. 준비는 API 로 하고, 보는 것은 화면으로 한다.
+ *
+ * **자격은 `fixtures` 에서 받는다.** 여기에 적어 두면 시드 비밀번호를 정해 두는
+ * 곳(CI)에서 401 이 된다 — 실제로 이 파일이 그래서 CI 에서만 붉었다.
+ */
 async function adminToken(page: Page): Promise<string> {
   const signedIn = await page.request.post(`${API}/api/v1/auth/login`, {
-    data: { email: 'admin@example.com', password: 'seed-admin-password-1234' },
+    data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
   })
   expect(signedIn.ok(), await signedIn.text()).toBe(true)
   return ((await signedIn.json()) as { access_token: string }).access_token
