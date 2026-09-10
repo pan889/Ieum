@@ -8,6 +8,15 @@ metadata:
 data:
   IEUM_CORS_ORIGINS: {{ .Values.config.webOrigins | quote }}
   IEUM_S3_PUBLIC_ENDPOINT_URL: {{ .Values.config.s3PublicEndpointUrl | quote }}
+  IEUM_SEARCH_BACKEND: {{ .Values.search.backend | quote }}
+  {{- if eq .Values.search.backend "opensearch" }}
+  IEUM_OPENSEARCH_URL: {{ .Values.search.opensearch.url | quote }}
+  IEUM_OPENSEARCH_INDEX: {{ .Values.search.opensearch.index | quote }}
+  IEUM_OPENSEARCH_ANALYZER: {{ .Values.search.opensearch.analyzer | quote }}
+  {{- with .Values.search.opensearch.username }}
+  IEUM_OPENSEARCH_USERNAME: {{ . | quote }}
+  {{- end }}
+  {{- end }}
   {{- range $key, $value := .Values.config.extra }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}

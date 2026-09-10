@@ -7,10 +7,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, Field, SecretStr, field_validator
+from pydantic import BeforeValidator, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["development", "test", "production"]
+SearchBackendName = Literal["postgres", "opensearch"]
 
 
 def _repo_root() -> Path:
@@ -98,6 +99,23 @@ class Settings(BaseSettings):
     s3_access_key: SecretStr = SecretStr("")
     s3_secret_key: SecretStr = SecretStr("")
 
+    # 검색 백엔드 (ADR-0005, ADR-0015)
+    #: `postgres`(기본, PGroonga) 또는 `opensearch`.
+    #:
+    #: **바꿔도 색인은 여전히 Postgres 에 쓴다.** OpenSearch 는 그 표를 비추는
+    #: 읽기 쪽이다 — 그래서 되돌릴 때 되색인이 필요 없고, OpenSearch 가
+    #: 죽어도 이슈 저장이 실패하지 않는다.
+    search_backend: SearchBackendName = "postgres"
+    opensearch_url: str | None = None
+    opensearch_index: str = "ieum-search"
+    #: 본문에 쓸 분석기. 기본값 `cjk` 는 루씬에 들어 있는 것이라 **플러그인
+    #: 없이** 돈다 — 한국어를 두 글자씩 쪼갠다(`문서로` → `문서`·`서로`).
+    #: 되찾기는 되지만 헛맞음이 생긴다. `analysis-nori` 를 설치했다면
+    #: `nori` 로 바꾼다 — 그쪽이 형태소를 안다.
+    opensearch_analyzer: str = "cjk"
+    opensearch_username: str | None = None
+    opensearch_password: SecretStr = SecretStr("")
+
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_tls: bool = False
@@ -126,6 +144,17 @@ class Settings(BaseSettings):
     #: 브라우저에게 서로 다른 오리진이라, 한쪽만 넣어 두면 다른 쪽으로 연 사람이
     #: 로그인부터 실패한다.
     cors_origins: CommaList = ("http://localhost:5173", "http://127.0.0.1:5173")
+
+    @model_validator(mode="after")
+    def _opensearch_needs_a_url(self) -> Settings:
+        """백엔드를 골라 놓고 주소를 안 주면 **기동에서** 멈춘다.
+
+        안 멈추면 앱은 멀쩡히 뜨고 검색만 조용히 0건이 된다. 검색이 0건인
+        것은 "없다" 와 구별되지 않아서, 아무도 고장이라고 생각하지 않는다.
+        """
+        if self.search_backend == "opensearch" and not (self.opensearch_url or "").strip():
+            raise ValueError("IEUM_SEARCH_BACKEND=opensearch 면 IEUM_OPENSEARCH_URL 이 필요하다.")
+        return self
 
     @field_validator("secret_key")
     @classmethod

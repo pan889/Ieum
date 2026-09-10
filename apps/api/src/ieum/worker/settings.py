@@ -15,6 +15,7 @@ from ieum.wiring import install_permissions
 from ieum.worker.tasks import (
     task_deliver_webhooks,
     task_drain_outbox,
+    task_mirror_search,
     task_poll_email,
     task_send_digests,
     task_sweep,
@@ -48,6 +49,8 @@ class WorkerSettings:
         # 훑어라" 를 시킬 자리가 있어야 한다 — 채널 설정을 고친 직후에
         # 15초를 기다리며 되는지 아닌지 모르는 상태로 두지 않는다.
         task_poll_email,
+        # 검색 미러 (ADR-0015). 백엔드가 Postgres 면 즉시 0 을 돌려준다.
+        task_mirror_search,
     ]
     # 아웃박스 지연은 사용자가 체감한다. 15초마다 훑는다. API 가 이벤트를
     # 넣을 때 큐에 바로 밀어 넣어 즉시 처리하는 건 M2 과제로 남긴다.
@@ -63,6 +66,22 @@ class WorkerSettings:
         # 지역 시각**이 정한다 — 전 세계 한 시각에 몰아 보내면 절반에게는
         # 한밤중이다 (notify/digest.py).
         cron(cast("WorkerCoroutine", task_send_digests), minute={0}, second={5}),
+        # **검색 미러는 스윕과 따로, 더 자주 돈다** (ADR-0015).
+        #
+        # 따로 두는 이유: 스윕은 IMAP 왕복을 포함하고, 그 뒤에 서면 "방금
+        # 만든 이슈가 검색에 없다" 가 남의 메일 서버 상태에 묶인다.
+        #
+        # 더 자주 도는 이유: 사람이 기다리는 것이다. 15초 주기에 태우면
+        # 실측 지연이 14초였다 — Postgres 백엔드는 같은 트랜잭션이라 0초인
+        # 자리이므로, 백엔드를 바꾼 대가가 그만큼 눈에 보인다. 5초로 두면
+        # OpenSearch 의 리프레시(약 1초)를 합쳐 대략 6초 안쪽이다.
+        #
+        # 큐가 비어 있으면 인덱스를 탄 COUNT 한 번이다. 그 값으로 5초는 싸다.
+        cron(
+            cast("WorkerCoroutine", task_mirror_search),
+            second=set(range(0, 60, 5)),
+            run_at_startup=True,
+        ),
     ]
     on_startup = startup
     on_shutdown = shutdown

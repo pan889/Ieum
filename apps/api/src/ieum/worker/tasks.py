@@ -62,6 +62,7 @@ from ieum.modules.notify.models import Notification, Webhook
 from ieum.modules.notify.repository import DeliveryRepository
 from ieum.modules.notify.service import NotificationService
 from ieum.modules.org import contracts as org_contracts
+from ieum.modules.search import mirror as search_mirror
 
 log = get_logger(__name__)
 
@@ -408,6 +409,38 @@ async def _note_poll(session: AsyncSession, channel_id: Any, *, error: str | Non
     channel.last_polled_at = utcnow()
 
 
+async def mirror_search() -> int:
+    """Postgres 색인을 OpenSearch 로 비춘다. 보낸 키 수를 돌려준다 (ADR-0015).
+
+    백엔드가 Postgres 면 아무 일도 안 한다 — 큐도 안 쌓인다
+    (`search.contracts._touch`).
+
+    **스윕 안에 두지 않는다.** 스윕은 IMAP 왕복을 포함하고(채널 하나가
+    응답하지 않으면 20초), 그 뒤에 미러가 서면 "방금 만든 이슈가 검색에
+    없다" 가 남의 메일 서버 상태에 묶인다. 그리고 스윕보다 자주 돌아야 한다 —
+    사람이 기다리는 것은 알림이 아니라 검색 결과다.
+
+    **한 배치만** 보낸다. 밀린 것이 만 건이면 한 번에 다 보내려다 이 작업이
+    통째로 늘어진다. 남은 것은 다음 번이 집는다 — 큐가 durable 하므로
+    잃지 않는다.
+
+    심장박동을 남긴다. 미러가 죽으면 **아무 오류도 안 나고** 검색만 점점
+    낡는다 — 밖에서 그것을 알 수 있는 자리가 있어야 한다.
+    """
+    settings = get_settings()
+    if settings.search_backend != "opensearch":
+        return 0
+    started = utcnow()
+    try:
+        async with session_scope() as session:
+            sent = await search_mirror.flush(session, settings)
+    except Exception as exc:
+        await _beat("search_mirror", started, error=f"{type(exc).__name__}: {exc}")
+        raise
+    await _beat("search_mirror", started)
+    return sent
+
+
 async def sweep() -> dict[str, int]:
     """주기 실행 진입점. 파이프라인을 한 번씩 돌린다.
 
@@ -552,6 +585,10 @@ async def task_sweep(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> dict[str, in
 
 async def task_poll_email(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:
     return await poll_email()
+
+
+async def task_mirror_search(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:
+    return await mirror_search()
 
 
 async def task_sweep_attachments(_ctx: dict[Any, Any], *_a: Any, **_kw: Any) -> int:

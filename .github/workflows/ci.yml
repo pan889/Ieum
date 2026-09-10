@@ -392,10 +392,96 @@ jobs:
       - name: 키 동기화 · ICU · 하드코딩 탐지
         run: node tools/i18n-check.mjs
 
+  search-opensearch:
+    # **따로 도는 잡이다.** 백엔드 잡에 OpenSearch 를 붙이면 모든 PR 이
+    # 512MB JVM 의 기동을 기다린다. 따로 두면 나머지와 **병렬로** 돌아
+    # 벽시계 비용이 거의 없다.
+    #
+    # 그리고 **매 PR 마다 돈다.** 야간으로 미루면, 검색을 고친 사람이 그
+    # 결과를 다음날 보게 되고 — 그러면 아무도 안 본다. 이 잡이 붙잡는 것은
+    # 두 백엔드의 권한 필터가 같은지이고, 한쪽만 새는 것이 가능한 모양이다.
+    name: 검색 백엔드 (Postgres ↔ OpenSearch)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: groonga/pgroonga:4.0.1-alpine-16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ieum
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      opensearch:
+        image: opensearchproject/opensearch:2.18.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: 'true'
+          DISABLE_INSTALL_DEMO_CONFIG: 'true'
+          OPENSEARCH_JAVA_OPTS: '-Xms512m -Xmx512m'
+          bootstrap.memory_lock: 'false'
+          # 러너의 디스크가 90% 를 넘으면 색인 생성이 403 으로 막힌다
+          # (`FORBIDDEN/10`). 그 오류는 검색과 상관없어 보인다.
+          cluster.routing.allocation.disk.threshold_enabled: 'false'
+        ports: ['9200:9200']
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 30
+    env:
+      IEUM_TEST_OPENSEARCH_URL: http://localhost:9200
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.8.17'
+          enable-cache: true
+
+      - name: 의존성 설치
+        run: uv sync --project apps/api --extra dev --frozen
+
+      - name: 테스트 DB 준비
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c 'CREATE DATABASE ieum_test;'
+          for db in ieum ieum_test; do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d "$db" \
+              -f deploy/compose/postgres-init/01-extensions.sql
+          done
+
+      - name: 두 백엔드에 같은 질의를 던진다
+        # `pipefail` 이 없으면 `pytest | tee` 의 종료 코드가 **tee 의 것**이
+        # 되어 시험 실패가 초록으로 지나간다.
+        run: |
+          set -o pipefail
+          uv run --project apps/api pytest \
+            apps/api/tests/test_search_backends.py \
+            apps/api/tests/test_search_mirror.py \
+            -q --no-header -p no:cacheprovider | tee /tmp/search.log
+
+      - name: 건너뛴 채 초록이 되지 않았는지
+        # `IEUM_TEST_OPENSEARCH_URL` 이 없으면 이 시험들은 스스로 건너뛴다 —
+        # 그리고 건너뛴 스위트는 **초록으로 보인다.** 서비스가 안 뜬 날
+        # 이 잡이 아무것도 확인하지 않고 통과하는 것을 막는다.
+        run: |
+          grep -Eq '[0-9]+ passed' /tmp/search.log || {
+            echo "통과한 시험이 없다"; exit 1;
+          }
+          if grep -Eq '[0-9]+ skipped' /tmp/search.log; then
+            echo "OpenSearch 시험이 건너뛰어졌다 — 서비스가 안 떴거나 주소가 틀렸다"
+            exit 1
+          fi
+
   images:
     name: 이미지 빌드
     runs-on: ubuntu-latest
-    needs: [backend, frontend, e2e]
+    needs: [backend, frontend, e2e, search-opensearch]
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3

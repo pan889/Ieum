@@ -9,7 +9,7 @@ helm install ieum ./deploy/helm/ieum \
 
 ## 이 차트가 만들지 않는 것
 
-**Postgres·Redis·S3·SMTP 를 만들지 않는다.** 주소만 받는다. 이유가 셋이다.
+**Postgres·Redis·S3·SMTP·OpenSearch 를 만들지 않는다.** 주소만 받는다. 이유가 셋이다.
 
 1. **`helm uninstall` 이 데이터를 지운다.** 차트가 데이터베이스를 소유하면
    릴리스를 지우는 것과 데이터를 지우는 것이 같은 명령이 된다. 그 둘은 같은
@@ -19,6 +19,10 @@ helm install ieum ./deploy/helm/ieum \
 3. **Postgres 는 PGroonga 확장이 필요하다** (한국어 전문검색, ADR-0005).
    흔한 Postgres 차트로는 안 되고, 되는 것처럼 기본값을 두면 검색이 조용히
    안 되는 설치가 생긴다.
+
+OpenSearch 도 같은 이유로 안 만든다(ADR-0015). 기본 검색 백엔드는 PGroonga
+이므로 **아무것도 더 필요 없다** — `search.backend` 를 `opensearch` 로 바꿀
+때만 클러스터 주소를 준다.
 
 개발·시험용으로 한 판 띄우려면 `deploy/compose` 를 쓴다.
 
@@ -66,6 +70,26 @@ Alembic 이 그것을 막아 주지 않으므로, 운이 나쁘면 같은 리비
 
 2번은 실제로 확인했다: 워커 둘을 같은 Redis 에 붙여 1분을 돌렸고, 스윕은
 한쪽에서만 실행됐다.
+
+## 검색 백엔드를 바꿀 때
+
+```yaml
+search:
+  backend: opensearch
+  opensearch:
+    url: https://search.internal:9200
+```
+
+주소를 안 주면 **배포가 실패한다.** 안 실패시키면 앱은 멀쩡히 뜨고 검색만
+조용히 0건이 되는데, 0건은 "없다" 와 구별되지 않아서 아무도 고장이라고
+생각하지 않는다.
+
+**바꾼 뒤 한 번은 `ieum reindex` 를 돌려야 한다.** 켜기 전에 쌓인 것은 미러
+큐에 없다. 빼먹으면 옛 문서가 검색에 하나도 안 나오고, 오류는 없다.
+
+되돌리는 것은 `backend: postgres` 하나다 — 색인은 그동안 계속 Postgres 에
+쓰이고 있었다. 대가와 확인하지 못한 것은 `docs/contributing/operations.md`
+7절에 있다.
 
 ## 프로브를 나눠 쓴다
 

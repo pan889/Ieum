@@ -84,6 +84,16 @@ API·워커가 함께 쓰는 환경. **비밀은 값으로 넣지 않는다** �
     secretKeyRef:
       name: {{ include "ieum.secretName" . }}
       key: IEUM_REDIS_URL
+{{- if eq .Values.search.backend "opensearch" }}
+- name: IEUM_OPENSEARCH_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "ieum.secretName" . }}
+      key: IEUM_OPENSEARCH_PASSWORD
+      # 비밀번호를 요구하지 않는 클러스터도 있고, `existingSecret` 에 이 키가
+      # 없을 수도 있다. `optional` 이 아니면 그때 파드가 아예 안 뜬다.
+      optional: true
+{{- end }}
 {{- range $key, $_ := .Values.secrets.extra }}
 - name: {{ $key }}
   valueFrom:
@@ -107,6 +117,11 @@ API·워커가 함께 쓰는 환경. **비밀은 값으로 넣지 않는다** �
 {{- end -}}
 {{- if not .Values.config.s3PublicEndpointUrl -}}
 {{- fail "config.s3PublicEndpointUrl 이 필요하다. 브라우저가 첨부를 여는 주소다 (예: https://files.example.com). 없으면 아무도 못 여는 링크를 발급한다." -}}
+{{- end -}}
+{{- if eq .Values.search.backend "opensearch" -}}
+{{- if not .Values.search.opensearch.url -}}
+{{- fail "search.backend 를 opensearch 로 두면 search.opensearch.url 이 필요하다. 없으면 앱은 멀쩡히 뜨고 검색만 조용히 0건이 된다." -}}
+{{- end -}}
 {{- end -}}
 {{- if not .Values.secrets.existingSecret -}}
 {{- if not .Values.secrets.secretKey -}}

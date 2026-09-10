@@ -70,6 +70,29 @@ config:
   # 그 밖의 `IEUM_*` 설정을 그대로 넘긴다.
   extra: {}
 
+# 검색 백엔드 (ADR-0005, ADR-0015).
+#
+# **이 차트는 OpenSearch 를 만들지 않는다.** Postgres·Redis·S3 와 같은 이유다:
+# 클러스터는 백업·이중화·버전 올리기를 따로 받아야 하고, `helm uninstall` 이
+# 색인을 지우는 명령이 되면 안 된다.
+#
+# 기본값 `postgres` 는 아무것도 더 필요 없다(PGroonga 가 이미 그 안에 있다).
+# `opensearch` 로 바꾸면 색인은 여전히 Postgres 에 쓰이고 OpenSearch 는 그것을
+# 비추는 읽기 쪽이 된다 — 그래서 되돌릴 때 되색인이 필요 없다.
+#
+# 바꾼 뒤 **한 번은 `ieum reindex` 를 돌려야 한다.** 켜기 전에 쌓인 것은 미러
+# 큐에 없다.
+search:
+  backend: postgres
+  opensearch:
+    url: ""
+    index: ieum-search
+    # 본문 분석기. `cjk` 는 루씬에 들어 있어 플러그인 없이 돌지만 한국어를
+    # 두 글자씩 쪼갠다. `analysis-nori` 를 설치한 이미지라면 `nori` 로
+    # 바꾼다 — 바꾸면 되색인이 필요하다(분석기는 색인 시점에 적용된다).
+    analyzer: cjk
+    username: ""
+
 # 비밀. **운영에서는 `existingSecret` 을 쓴다.**
 #
 # 아래 값에 직접 적으면 `values.yaml` 이 비밀 창고가 되고, 그 파일은 대개
@@ -80,6 +103,8 @@ secrets:
   secretKey: ""
   databaseUrl: ""
   redisUrl: ""
+  # `search.backend: opensearch` 이고 클러스터가 비밀번호를 요구할 때만.
+  opensearchPassword: ""
   extra: {}
 
 ingress:

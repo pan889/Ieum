@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
 from ieum.core.permissions import Acl, PermissionService
-from ieum.modules.search.models import DOCUMENT_KINDS, SearchDocument
-from ieum.modules.search.repository import SearchRepository
+from ieum.modules.search.backends import backend_for
+from ieum.modules.search.backends.base import IndexedDocument
+from ieum.modules.search.models import DOCUMENT_KINDS
 
 #: 종류별로 필요한 권한. 이 모듈은 남의 권한 상수를 import 하지 않는다
 #: (모듈 경계) — 문자열은 어차피 레지스트리에 등록된 같은 값이다.
@@ -57,7 +58,6 @@ class SearchService:
     def __init__(self, session: AsyncSession, permissions: PermissionService) -> None:
         self._s = session
         self._perms = permissions
-        self._repo = SearchRepository(session)
 
     async def search(
         self,
@@ -74,14 +74,22 @@ class SearchService:
 
         wanted = tuple(k for k in kinds if k in DOCUMENT_KINDS) or DOCUMENT_KINDS
         acls = {kind: await self._acl(actor, kind) for kind in wanted}
-        rows, total = await self._repo.search(
-            query=text,
-            acls=acls,
-            principal_ids=actor.principal_ids,
-            kinds=wanted,
-            limit=min(limit, MAX_LIMIT),
-            offset=max(offset, 0),
-        )
+        # **부를 때 만들고 닫는다.** `__init__` 에서 만들어 두면 두 번
+        # 검색하는 요청이 닫힌 클라이언트를 쓴다. OpenSearch 백엔드는
+        # 소켓을 여므로 안 닫으면 요청 수만큼 쌓이고, 그건 한참 뒤에
+        # "파일 핸들이 없다" 로만 나타난다. Postgres 쪽은 할 일이 없다.
+        backend = backend_for(self._s)
+        try:
+            rows, total = await backend.search(
+                query=text,
+                acls=acls,
+                principal_ids=actor.principal_ids,
+                kinds=wanted,
+                limit=min(limit, MAX_LIMIT),
+                offset=max(offset, 0),
+            )
+        finally:
+            await backend.aclose()
         keywords = _keywords(text)
         return SearchResults(
             hits=[_hit(row, keywords) for row in rows], total=total, keywords=keywords
@@ -101,7 +109,7 @@ def _keywords(query: str) -> list[str]:
     return list(dict.fromkeys(words))[:10]
 
 
-def _hit(row: SearchDocument, keywords: list[str]) -> SearchHit:
+def _hit(row: IndexedDocument, keywords: list[str]) -> SearchHit:
     return SearchHit(
         kind=row.kind,
         entity_id=row.entity_id,

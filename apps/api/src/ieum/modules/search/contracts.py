@@ -10,17 +10,28 @@ issues·wiki 가 자기 것을 저장할 때 여기로 색인을 넘긴다. **�
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.config import Settings, get_settings
+from ieum.modules.search import mirror
+from ieum.modules.search.backends import backend_for
 from ieum.modules.search.repository import SearchRepository
 
 ISSUE = "issue"
 PAGE = "page"
+
+#: 설정을 어디서 얻는가. 기본값은 프로세스 전역이다.
+#:
+#: 갈아끼울 수 있게 둔 이유는 `wiki.rooms.SessionSource` 와 같다: 미러 큐에
+#: 넣는 갈래는 **설정에 따라 갈리고**, 전역을 코드 안에서 직접 부르면 시험이
+#: 그 갈래를 밟을 수 없다. 밟을 수 없는 갈래는 결국 안 밟힌 채 배포된다 —
+#: 그리고 이 갈래가 안 돌면 OpenSearch 색인이 조용히 비어 있는다.
+settings_source: Callable[[], Settings] = get_settings
 
 
 async def index_document(
@@ -55,17 +66,42 @@ async def index_document(
             "source_updated_at": updated_at,
         }
     )
+    await _touch(session, kind, [entity_id])
 
 
 async def remove_document(session: AsyncSession, *, kind: str, entity_id: UUID) -> None:
     await SearchRepository(session).remove(kind, entity_id)
+    await _touch(session, kind, [entity_id])
 
 
 async def remove_documents(session: AsyncSession, *, kind: str, entity_ids: Sequence[UUID]) -> None:
     await SearchRepository(session).remove_many(kind, entity_ids)
+    await _touch(session, kind, entity_ids)
 
 
-__all__ = ["ISSUE", "PAGE", "index_document", "remove_document", "remove_documents"]
+async def _touch(session: AsyncSession, kind: str, entity_ids: Sequence[UUID]) -> None:
+    """미러를 쓰는 설치에서만 큐에 넣는다.
+
+    설정을 여기서 읽는 이유: 이 함수들은 모듈 경계의 계약이고, 부르는 쪽
+    (issues·wiki·desk)이 검색 백엔드가 무엇인지 알 이유가 없다. 인자로
+    받으면 그 지식이 다섯 모듈로 퍼진다.
+
+    **백엔드를 켠 순간부터** 큐가 쌓인다. 켜기 전에 있던 것은 큐에 없으므로
+    `ieum reindex` 로 한 번 채워야 한다 — 그 말을 운영 문서에 적어 뒀다.
+    """
+    if settings_source().search_backend != "opensearch":
+        return
+    await mirror.enqueue(session, kind=kind, entity_ids=entity_ids)
+
+
+__all__ = [
+    "ISSUE",
+    "PAGE",
+    "index_document",
+    "remove_document",
+    "remove_documents",
+    "settings_source",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,9 +138,11 @@ async def suggest_articles(
         # 빈 질의에 전부 내주지 않는다. 고객이 아직 아무 것도 안 적었는데
         # 문서 목록이 뜨면, 그건 추천이 아니라 스페이스 공개다.
         return []
-    rows = await SearchRepository(session).public_pages_in_space(
-        space_id=space_id, query=text, limit=limit
-    )
+    backend = backend_for(session)
+    try:
+        rows = await backend.public_pages_in_space(space_id=space_id, query=text, limit=limit)
+    finally:
+        await backend.aclose()
     return [
         Article(
             page_id=row.entity_id,

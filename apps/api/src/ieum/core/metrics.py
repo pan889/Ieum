@@ -46,6 +46,15 @@ OUTBOX_OLDEST_AGE = Gauge(
     "가장 오래된 미처리 아웃박스 이벤트의 나이. 밀리는 것은 개수보다 나이로 드러난다",
 )
 
+SEARCH_MIRROR_PENDING = Gauge(
+    "ieum_search_mirror_pending", "OpenSearch 로 아직 안 보낸 색인 키 수 (ADR-0015)"
+)
+
+SEARCH_MIRROR_OLDEST_AGE = Gauge(
+    "ieum_search_mirror_oldest_age_seconds",
+    "가장 오래 기다린 색인 키의 나이. 사람은 이것을 '새 문서가 검색에 없다' 로 만난다",
+)
+
 WORKER_LAST_RUN = Gauge(
     "ieum_worker_last_run_timestamp_seconds",
     "워커 작업이 마지막으로 끝난 시각 (epoch)",

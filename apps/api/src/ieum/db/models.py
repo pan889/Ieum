@@ -69,7 +69,7 @@ from ieum.modules.org.models import (
     Workspace,
 )
 from ieum.modules.plugins.models import App, AppPanel, AppSlot
-from ieum.modules.search.models import SearchDocument
+from ieum.modules.search.models import SearchDocument, SearchMirrorQueue
 from ieum.modules.vcs.models import ChangeLink, Repository
 from ieum.modules.wiki.models import (
     Page,
@@ -132,6 +132,7 @@ __all__ = [
     "RoleAssignment",
     "SavedFilter",
     "SearchDocument",
+    "SearchMirrorQueue",
     "SecurityLevel",
     "Space",
     "TicketExt",

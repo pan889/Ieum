@@ -28,6 +28,8 @@ from ieum.core.logging import configure_logging, get_logger
 from ieum.core.metrics import (
     OUTBOX_OLDEST_AGE,
     OUTBOX_PENDING,
+    SEARCH_MIRROR_OLDEST_AGE,
+    SEARCH_MIRROR_PENDING,
     WORKER_FAILING,
     WORKER_LAST_DURATION,
     WORKER_LAST_RUN,
@@ -77,6 +79,8 @@ from ieum.modules.notify.router import (
 )
 from ieum.modules.org.router import projects_router, roles_router, security_router
 from ieum.modules.plugins.router import apps_router
+from ieum.modules.search import mirror as search_mirror
+from ieum.modules.search.backends.opensearch import OpenSearchBackend
 from ieum.modules.search.router import router as unified_search_router
 from ieum.modules.vcs.router import repositories_router
 from ieum.modules.vcs.webhook_router import vcs_webhooks_router
@@ -159,6 +163,19 @@ async def _probe(settings: Settings) -> dict[str, str]:
     except Exception as exc:
         checks["storage"] = f"error: {type(exc).__name__}"
 
+    # **검색 백엔드로 쓸 때만 본다.** 안 쓰는 설치에서 이 줄이 붉으면
+    # 운영자가 상관없는 것을 좇는다.
+    if settings.search_backend == "opensearch":
+        try:
+            backend = OpenSearchBackend(settings)
+            try:
+                await backend.ping()
+                checks["search"] = "ok"
+            finally:
+                await backend.aclose()
+        except Exception as exc:
+            checks["search"] = f"error: {type(exc).__name__}"
+
     return checks
 
 
@@ -170,6 +187,9 @@ async def _sample_gauges() -> None:
             pending, oldest = await outbox_backlog(session)
             OUTBOX_PENDING.set(pending)
             OUTBOX_OLDEST_AGE.set(oldest)
+            waiting, waited = await search_mirror.backlog(session)
+            SEARCH_MIRROR_PENDING.set(waiting)
+            SEARCH_MIRROR_OLDEST_AGE.set(waited)
             now = utcnow()
             for row in await all_beats(session):
                 WORKER_LAST_RUN.labels(row.task).set(row.finished_at.timestamp())

@@ -51,6 +51,14 @@ def configure_logging(*, debug: bool = False, json_output: bool = True) -> None:
     for noisy in ("uvicorn.access", "sqlalchemy.engine.Engine"):
         logging.getLogger(noisy).handlers.clear()
 
+    # **디버그에서도 조용히 둔다.** `markdown_it` 은 블록 규칙마다 한 줄씩
+    # 찍는다 — 문서 하나를 파싱할 때 수십 줄이다. `IEUM_DEBUG=true` 인
+    # 설치에서 `ieum reindex` 를 돌리면 그 줄들이 명령의 출력("색인 완료:
+    # …")을 통째로 파묻는다. 우리 코드의 디버그 줄을 보려고 켠 스위치가
+    # 남의 파서 내부를 보여 주는 스위치가 되면, 결국 아무도 켜지 않는다.
+    for chatty in ("markdown_it",):
+        logging.getLogger(chatty).setLevel(logging.INFO)
+
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """모듈 로거. 이름을 직접 바인딩한다.

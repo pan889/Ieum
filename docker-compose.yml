@@ -24,6 +24,13 @@ x-api-env: &api-env
   IEUM_S3_BUCKET: ${IEUM_S3_BUCKET:-ieum-attachments}
   IEUM_S3_ACCESS_KEY: ${IEUM_S3_ACCESS_KEY:-minioadmin}
   IEUM_S3_SECRET_KEY: ${IEUM_S3_SECRET_KEY:-minioadmin}
+  # 검색 백엔드 (ADR-0015). 기본은 PGroonga 라 아무것도 안 띄운다.
+  # `--profile opensearch` 로 클러스터를 띄우고 이 둘을 주면 바뀐다:
+  #   IEUM_SEARCH_BACKEND=opensearch IEUM_OPENSEARCH_URL=http://opensearch:9200
+  # 주소는 **컴포즈 네트워크 안의 이름**이다 — API 가 부르는 것이고
+  # 브라우저는 이 주소를 모른다.
+  IEUM_SEARCH_BACKEND: ${IEUM_SEARCH_BACKEND:-postgres}
+  IEUM_OPENSEARCH_URL: ${IEUM_OPENSEARCH_URL:-}
   IEUM_SMTP_HOST: mailpit
   IEUM_SMTP_PORT: "1025"
   IEUM_SMTP_TLS: "false"
@@ -133,6 +140,39 @@ services:
     volumes:
       - ./deploy/compose/fake-idp:/app/fake-idp:ro
 
+  # **기본으로 뜨지 않는다** (`profiles`). 검색 기본값은 PGroonga 이고
+  # (ADR-0005), OpenSearch 는 고른 설치만 쓴다 — 늘 띄우면 개발 스택이
+  # 512MB 를 더 먹고, 안 쓰는 사람에게 그 값은 순손실이다.
+  #
+  #   docker compose --profile opensearch up -d opensearch
+  #   IEUM_SEARCH_BACKEND=opensearch IEUM_OPENSEARCH_URL=http://localhost:9200 ...
+  #
+  # 켠 뒤에 `ieum reindex` 를 한 번 돌린다 — 켜기 전에 쌓인 것은 미러 큐에
+  # 없다(ADR-0015).
+  opensearch:
+    profiles: ["opensearch"]
+    image: opensearchproject/opensearch:2.18.0
+    environment:
+      # 개발용 한 노드. 보안 플러그인을 끄면 `http://localhost:9200` 이
+      # 그대로 열린다 — **운영에서는 절대 이 설정이 아니다.**
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      bootstrap.memory_lock: "false"
+      # **디스크 임계값을 끈다.** 안 끄면 개발 기계의 디스크가 90% 를 넘은
+      # 날 색인 생성이 403 으로 막히고(`FORBIDDEN/10`), 그 오류는 검색이
+      # 아니라 "왜 색인이 안 만들어지지" 로 보인다. 실제로 그렇게 막혔다.
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    ports: ["9200:9200"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - ieum_opensearch:/usr/share/opensearch/data
+
   api:
     restart: unless-stopped
     build:
@@ -205,3 +245,4 @@ volumes:
   ieum_miniodata:
   ieum_node_modules:
   ieum_pnpm_store:
+  ieum_opensearch:
