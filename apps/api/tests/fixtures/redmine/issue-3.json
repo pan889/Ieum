@@ -1,0 +1,85 @@
+{
+    "issue": {
+        "id": 3,
+        "project": {
+            "id": 1,
+            "name": "\uc774\uad00 \uc2dc\ud5d8 \ud504\ub85c\uc81d\ud2b8"
+        },
+        "tracker": {
+            "id": 2,
+            "name": "Feature"
+        },
+        "status": {
+            "id": 1,
+            "name": "New",
+            "is_closed": false
+        },
+        "priority": {
+            "id": 2,
+            "name": "Normal"
+        },
+        "author": {
+            "id": 1,
+            "name": "Redmine Admin"
+        },
+        "assigned_to": {
+            "id": 6,
+            "name": "Dubi Park"
+        },
+        "subject": "\uac80\uc0c9 \uacb0\uacfc \uc815\ub82c\uc744 \ubc14\uafb8\uace0 \uc2f6\ub2e4",
+        "description": "\uae30\ub2a5 \uc694\uccad. \uc815\ub82c \uae30\uc900\uc744 \uc0ac\ub78c\uc774 \uace0\ub974\uac8c.",
+        "start_date": "2026-09-11",
+        "due_date": null,
+        "done_ratio": 0,
+        "is_private": false,
+        "estimated_hours": null,
+        "total_estimated_hours": null,
+        "spent_hours": 0.0,
+        "total_spent_hours": 0.0,
+        "created_on": "2026-09-11T10:37:56Z",
+        "updated_on": "2026-09-11T10:37:56Z",
+        "closed_on": null,
+        "relations": [
+            {
+                "id": 1,
+                "issue_id": 2,
+                "issue_to_id": 3,
+                "relation_type": "relates",
+                "delay": null
+            }
+        ],
+        "journals": [
+            {
+                "id": 3,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "\uc815\ub82c \uae30\uc900 \ud6c4\ubcf4: \uad00\ub828\ub3c4, \ucd5c\uc2e0\uc21c, \uc81c\ubaa9\uc21c.",
+                "created_on": "2026-09-11T10:37:56Z",
+                "updated_on": "2026-09-11T10:37:56Z",
+                "private_notes": false,
+                "details": []
+            },
+            {
+                "id": 7,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "",
+                "created_on": "2026-09-11T10:37:57Z",
+                "updated_on": "2026-09-11T10:37:57Z",
+                "private_notes": false,
+                "details": [
+                    {
+                        "property": "relation",
+                        "name": "relates",
+                        "old_value": null,
+                        "new_value": "2"
+                    }
+                ]
+            }
+        ]
+    }
+}

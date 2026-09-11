@@ -1,0 +1,63 @@
+{
+    "issue": {
+        "id": 4,
+        "project": {
+            "id": 1,
+            "name": "\uc774\uad00 \uc2dc\ud5d8 \ud504\ub85c\uc81d\ud2b8"
+        },
+        "tracker": {
+            "id": 3,
+            "name": "Support"
+        },
+        "status": {
+            "id": 1,
+            "name": "New",
+            "is_closed": false
+        },
+        "priority": {
+            "id": 1,
+            "name": "Low"
+        },
+        "author": {
+            "id": 1,
+            "name": "Redmine Admin"
+        },
+        "parent": {
+            "id": 2
+        },
+        "subject": "\uc124\uce58 \ubb38\uc11c\uac00 \uc624\ub798\ub410\ub2e4",
+        "description": "\uc9c0\uc6d0 \uc694\uccad\uc774\uace0 \uc774\ubbf8 \ub2eb\ud614\ub2e4.",
+        "start_date": "2026-09-11",
+        "due_date": null,
+        "done_ratio": 0,
+        "is_private": false,
+        "estimated_hours": null,
+        "total_estimated_hours": null,
+        "spent_hours": 0.0,
+        "total_spent_hours": 0.0,
+        "created_on": "2026-09-11T10:37:56Z",
+        "updated_on": "2026-09-11T10:37:56Z",
+        "closed_on": null,
+        "journals": [
+            {
+                "id": 4,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "",
+                "created_on": "2026-09-11T10:37:56Z",
+                "updated_on": "2026-09-11T10:37:56Z",
+                "private_notes": false,
+                "details": [
+                    {
+                        "property": "attr",
+                        "name": "parent_id",
+                        "old_value": null,
+                        "new_value": "2"
+                    }
+                ]
+            }
+        ]
+    }
+}

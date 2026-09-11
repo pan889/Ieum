@@ -1,0 +1,116 @@
+{
+    "issue": {
+        "id": 2,
+        "project": {
+            "id": 1,
+            "name": "\uc774\uad00 \uc2dc\ud5d8 \ud504\ub85c\uc81d\ud2b8"
+        },
+        "tracker": {
+            "id": 1,
+            "name": "Bug"
+        },
+        "status": {
+            "id": 1,
+            "name": "New",
+            "is_closed": false
+        },
+        "priority": {
+            "id": 1,
+            "name": "Low"
+        },
+        "author": {
+            "id": 1,
+            "name": "Redmine Admin"
+        },
+        "assigned_to": {
+            "id": 5,
+            "name": "\ud558\ub098 \uae40"
+        },
+        "subject": "\ub85c\uadf8\uc778\uc774 \uac00\ub054 \uc2e4\ud328\ud55c\ub2e4",
+        "description": "\ubcf8\ubb38\uc5d0 **\ub9c8\ud06c\ub2e4\uc6b4**\uc774 \uadf8\ub300\ub85c \ub4e4\uc5b4 \uc788\ub2e4.\r\n\r\n- \ubaa9\ub85d \ud558\ub098\r\n- \ubaa9\ub85d \ub458\r\n\r\n```python\r\nprint(\"\ucf54\ub4dc \ube14\ub85d\ub3c4\")\r\n```\r\n\r\n\ud45c\ub3c4 \uc788\ub2e4:\r\n\r\n| \uce78 | \uac12 |\r\n|---|---|\r\n| \ud558\ub098 | 1 |\r\n",
+        "start_date": "2026-09-11",
+        "due_date": null,
+        "done_ratio": 0,
+        "is_private": false,
+        "estimated_hours": null,
+        "total_estimated_hours": 0.0,
+        "spent_hours": 0.0,
+        "total_spent_hours": 0.0,
+        "created_on": "2026-09-11T10:37:56Z",
+        "updated_on": "2026-09-11T10:37:56Z",
+        "closed_on": null,
+        "relations": [
+            {
+                "id": 1,
+                "issue_id": 2,
+                "issue_to_id": 3,
+                "relation_type": "relates",
+                "delay": null
+            }
+        ],
+        "journals": [
+            {
+                "id": 1,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "\uc7ac\ud604\ud588\ub2e4. 2\ub2e8\uacc4 \uc778\uc99d\uc744 \ucf20 \uacc4\uc815\uc5d0\uc11c\ub9cc \ub09c\ub2e4.",
+                "created_on": "2026-09-11T10:37:56Z",
+                "updated_on": "2026-09-11T10:37:56Z",
+                "private_notes": false,
+                "details": []
+            },
+            {
+                "id": 2,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "\uc784\uc2dc\ub85c \uc138\uc158 \ub9cc\ub8cc\ub97c \ub298\ub824 \ub480\ub2e4.",
+                "created_on": "2026-09-11T10:37:56Z",
+                "updated_on": "2026-09-11T10:37:56Z",
+                "private_notes": false,
+                "details": []
+            },
+            {
+                "id": 5,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "",
+                "created_on": "2026-09-11T10:37:56Z",
+                "updated_on": "2026-09-11T10:37:56Z",
+                "private_notes": false,
+                "details": [
+                    {
+                        "property": "attr",
+                        "name": "child_id",
+                        "old_value": null,
+                        "new_value": "4"
+                    }
+                ]
+            },
+            {
+                "id": 6,
+                "user": {
+                    "id": 1,
+                    "name": "Redmine Admin"
+                },
+                "notes": "",
+                "created_on": "2026-09-11T10:37:57Z",
+                "updated_on": "2026-09-11T10:37:57Z",
+                "private_notes": false,
+                "details": [
+                    {
+                        "property": "relation",
+                        "name": "relates",
+                        "old_value": null,
+                        "new_value": "3"
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -1,0 +1,49 @@
+{
+    "users": [
+        {
+            "id": 1,
+            "login": "admin",
+            "admin": true,
+            "firstname": "Redmine",
+            "lastname": "Admin",
+            "mail": "admin@example.net",
+            "created_on": "2026-09-11T10:35:51Z",
+            "updated_on": "2026-09-11T10:36:28Z",
+            "last_login_on": null,
+            "passwd_changed_on": "2026-09-11T10:36:28Z",
+            "twofa_scheme": null,
+            "status": 1
+        },
+        {
+            "id": 6,
+            "login": "dubi",
+            "admin": false,
+            "firstname": "Dubi",
+            "lastname": "Park",
+            "mail": "dubi@example.com",
+            "created_on": "2026-09-11T10:37:13Z",
+            "updated_on": "2026-09-11T19:15:35Z",
+            "last_login_on": null,
+            "passwd_changed_on": "2026-09-11T10:37:13Z",
+            "twofa_scheme": null,
+            "status": 3
+        },
+        {
+            "id": 5,
+            "login": "hana",
+            "admin": false,
+            "firstname": "\ud558\ub098",
+            "lastname": "\uae40",
+            "mail": "hana@example.com",
+            "created_on": "2026-09-11T10:37:13Z",
+            "updated_on": "2026-09-11T10:37:13Z",
+            "last_login_on": null,
+            "passwd_changed_on": "2026-09-11T10:37:13Z",
+            "twofa_scheme": null,
+            "status": 1
+        }
+    ],
+    "total_count": 3,
+    "offset": 0,
+    "limit": 100
+}

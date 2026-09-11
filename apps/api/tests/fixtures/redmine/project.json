@@ -1,0 +1,14 @@
+{
+    "project": {
+        "id": 1,
+        "name": "\uc774\uad00 \uc2dc\ud5d8 \ud504\ub85c\uc81d\ud2b8",
+        "identifier": "migrate-probe",
+        "description": "\uc784\ud3ec\ud130\ub97c \uc2e4\uc81c\ub85c \ud655\uc778\ud558\ub824\uace0 \ub9cc\ub4e0 \ud504\ub85c\uc81d\ud2b8.",
+        "homepage": "",
+        "status": 1,
+        "is_public": false,
+        "inherit_members": false,
+        "created_on": "2026-09-11T10:37:13Z",
+        "updated_on": "2026-09-11T10:37:13Z"
+    }
+}
