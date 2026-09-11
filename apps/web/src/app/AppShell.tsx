@@ -1,14 +1,19 @@
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useAuthStore } from '@/features/auth/store'
 import { useUnreadCount } from '@/features/notifications/NotificationsScreen'
 import { authApi, usersApi } from '@/shared/api'
 import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/shared/i18n'
+import { GLOBAL_SHORTCUTS, type ShortcutId } from '@/shared/keys/catalog'
+import { useShortcuts } from '@/shared/keys/useHotkeys'
 import { Button } from '@/shared/ui/primitives'
+
+import { CommandPalette } from './CommandPalette'
+import { ShortcutHelp } from './ShortcutHelp'
 
 const NAV = [
   { to: '/', labelKey: 'common:nav.home' },
@@ -36,6 +41,29 @@ export function AppShell() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const unread = useUnreadCount()
+
+  // 어느 것이 떠 있는지. 둘이 같이 뜨면 초점이 갈라지므로 하나만 둔다.
+  const [overlay, setOverlay] = useState<'palette' | 'help' | null>(null)
+  const searchBox = useRef<HTMLInputElement>(null)
+
+  // 이미 뭔가 쳐 두었으면 골라 준다 — `/` 로 와서 바로 새 검색어를 친다.
+  const focusSearch = useCallback(() => {
+    searchBox.current?.focus()
+    searchBox.current?.select()
+  }, [])
+
+  /**
+   * 목록의 처리 함수. **`Record<ShortcutId, …>` 라서 빠뜨리면 타입이 막는다** —
+   * 도움말에만 있고 아무 일도 안 하는 키가 생길 수 없다.
+   */
+  const handlers: Record<ShortcutId, () => void> = {
+    // 토글이 아니라 열기다. 누르고 있어도 깜빡이지 않는다(`keys.ts` 참고).
+    palette: () => { setOverlay('palette') },
+    help: () => { setOverlay('help') },
+    createIssue: () => { void navigate({ to: '/issues/new' }) },
+    search: focusSearch,
+  }
+  useShortcuts(GLOBAL_SHORTCUTS, handlers)
 
   const signOut = useMutation({
     mutationFn: () => authApi.logout(),
@@ -93,6 +121,7 @@ export function AppShell() {
           }}
         >
           <input
+            ref={searchBox}
             type="search"
             aria-label={t('common:nav.search')}
             placeholder={t('common:nav.searchPlaceholder')}
@@ -170,6 +199,14 @@ export function AppShell() {
       <main className="flex-1 overflow-auto px-8 py-6">
         <Outlet />
       </main>
+
+      {overlay === 'palette' ? (
+        <CommandPalette
+          places={NAV.map((item) => ({ to: item.to, label: t(item.labelKey) }))}
+          onClose={() => { setOverlay(null) }}
+        />
+      ) : null}
+      {overlay === 'help' ? <ShortcutHelp onClose={() => { setOverlay(null) }} /> : null}
     </div>
   )
 }

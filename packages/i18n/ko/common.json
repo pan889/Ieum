@@ -78,5 +78,15 @@
   "action.add": "추가",
   "action.choose": "고르세요…",
   "state.matches": "맞는 항목",
-  "yes": "예"
+  "yes": "예",
+  "keys.palette": "명령 팔레트",
+  "keys.palettePlaceholder": "갈 곳, 할 일, 또는 찾을 말을 치세요",
+  "keys.search": "검색으로 이동",
+  "keys.createIssue": "새 이슈",
+  "keys.help": "키보드 단축키",
+  "keys.helpTypingNote": "글을 쓰는 중에는 한 글자 단축키가 꺼집니다.",
+  "keys.kindGo": "이동",
+  "keys.kindCreate": "만들기",
+  "keys.kindFind": "찾기",
+  "keys.searchFor": "“{query}” 찾기"
 }

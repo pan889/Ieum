@@ -78,5 +78,15 @@
   "action.add": "Add",
   "action.choose": "Choose…",
   "state.matches": "Matches",
-  "yes": "Yes"
+  "yes": "Yes",
+  "keys.palette": "Command palette",
+  "keys.palettePlaceholder": "Type a place, an action, or words to search",
+  "keys.search": "Focus search",
+  "keys.createIssue": "New issue",
+  "keys.help": "Keyboard shortcuts",
+  "keys.helpTypingNote": "Single-key shortcuts stay off while you are typing.",
+  "keys.kindGo": "Go",
+  "keys.kindCreate": "Create",
+  "keys.kindFind": "Search",
+  "keys.searchFor": "Search for “{query}”"
 }
