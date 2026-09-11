@@ -12,7 +12,15 @@
  * 재발급이 옛 토큰을 죽인다는 것이 그 약속을 지키는 방법이다.
  */
 
-import { API, expect, signInWithMfa, stepUpToken, test } from './fixtures'
+import {
+  API,
+  expect,
+  signInWithMfa,
+  stepUpToken,
+  test,
+  uniqueKey,
+  uniqueSlug,
+} from './fixtures'
 
 test.slow()
 
@@ -27,7 +35,7 @@ test.describe('SCIM 프로비저닝', () => {
     const listed = await page.request.get(`${API}/api/v1/admin/sso/providers`, { headers })
     const rows = (await listed.json()) as { id: string; issuer: string; name: string }[]
     const existing = rows.find((row) => row.issuer === SCIM_ISSUER)
-    const name = existing?.name ?? `SCIM E2E ${String(Date.now()).slice(-5)}`
+    const name = existing?.name ?? uniqueKey('SCIM E2E ')
     if (existing) {
       const on = await page.request.post(
         `${API}/api/v1/admin/sso/providers/${existing.id}/enable`,
@@ -70,7 +78,7 @@ test.describe('SCIM 프로비저닝', () => {
     expect(issued.length).toBeGreaterThan(20)
 
     // **이제 IdP 가 된다.** 화면이 준 글자 그대로 SCIM 문을 두드린다.
-    const email = `scim-e2e-${String(Date.now()).slice(-8)}@example.com`
+    const email = `${uniqueSlug('scim-e2e-')}@example.com`
     const scim = { Authorization: `Bearer ${issued}` }
     const before = await page.request.get(
       `${API}/scim/v2/Users?filter=${encodeURIComponent(`userName eq "${email}"`)}`,

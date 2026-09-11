@@ -44,6 +44,8 @@ export interface HotkeyOptions {
   whileTyping?: readonly string[]
   /** 꺼 두면 등록하지 않는다. 조건부 화면에서 쓴다. */
   enabled?: boolean
+  /** 떠 있는 동안 아래 스코프를 통째로 덮는다. 덮개(팔레트·도움말)용. */
+  modal?: boolean
 }
 
 /**
@@ -54,7 +56,7 @@ export interface HotkeyOptions {
  * 빠졌다 들어가며 순서가 뒤집힌다.
  */
 export function useHotkeys(bindings: Bindings, options: HotkeyOptions = {}): void {
-  const { enabled = true } = options
+  const { enabled = true, modal = false } = options
   const latest = useRef(bindings)
   // 렌더 중에 ref 를 쓰지 않는다. 렌더마다 도는 effect 로 갱신하면 다음
   // 키 입력이 최신 것을 본다 — 사람이 키를 누르는 시점은 항상 커밋 뒤다.
@@ -73,9 +75,10 @@ export function useHotkeys(bindings: Bindings, options: HotkeyOptions = {}): voi
         return latest.current
       },
       whileTyping: typingKey === '' ? [] : typingKey.split(','),
+      modal,
     }
     return attach(scope)
-  }, [enabled, typingKey])
+  }, [enabled, typingKey, modal])
 }
 
 /**

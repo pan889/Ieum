@@ -15,7 +15,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { expect, signIn, signInWithMfa, test } from './fixtures'
+import { expect, signIn, signInWithMfa, test, uniqueSlug } from './fixtures'
 
 test.slow()
 
@@ -48,7 +48,7 @@ test.describe('메일 채널', () => {
     await page.getByRole('textbox', { name: /^project$/i }).fill(portal.projectKey)
     await page.getByRole('button', { name: new RegExp(portal.projectKey) }).click()
 
-    const address = `help-${String(Date.now()).slice(-6)}@ours.example`
+    const address = `${uniqueSlug('help-')}@ours.example`
     await fillChannel(page, address)
 
     // **포털을 먼저 고른다.** 같은 이름의 폼이 여러 포털에 있을 수 있다.
@@ -68,7 +68,7 @@ test.describe('메일 채널', () => {
     // 서버도 거절한다. 여기서 막으면 여섯 칸 중 어디가 문제인지 그 자리에서
     // 보인다.
     await openChannels(page)
-    await fillChannel(page, `blocked-${String(Date.now()).slice(-6)}@ours.example`)
+    await fillChannel(page, `${uniqueSlug('blocked-')}@ours.example`)
     await expect(page.getByRole('button', { name: /^save$/i })).toBeDisabled()
   })
 
@@ -81,7 +81,7 @@ test.describe('메일 채널', () => {
     await page.getByRole('textbox', { name: /^project$/i }).fill(portal.projectKey)
     await page.getByRole('button', { name: new RegExp(portal.projectKey) }).click()
 
-    const address = `keep-${String(Date.now()).slice(-6)}@ours.example`
+    const address = `${uniqueSlug('keep-')}@ours.example`
     await fillChannel(page, address)
     // 픽스처가 포털 이름을 안 내주므로 순번으로 고른다(0 은 안내 항목).
     await page.getByLabel(/^portal$/i).selectOption({ index: 1 })

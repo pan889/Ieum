@@ -26,6 +26,17 @@ export function uniqueKey(prefix: string): string {
   return `${prefix}${when}${seq}${salt}`
 }
 
+/**
+ * 소문자만 쓰는 자리(메일 주소 같은 것)의 겹치지 않는 이름.
+ *
+ * 재료는 `uniqueKey` 와 같다. **잘린 시각만 쓰면 주기적으로 되돌아온다** —
+ * `String(Date.now()).slice(-6)` 은 16.7분마다 같은 값이고, 오래 쓴 개발 DB
+ * 에서는 그것이 실제로 겹친다.
+ */
+export function uniqueSlug(prefix: string): string {
+  return `${prefix}${uniqueKey('')}`.toLowerCase()
+}
+
 /** 테스트마다 자기 프로젝트를 만든다. */
 export function projectKey(): string {
   return uniqueKey('E')

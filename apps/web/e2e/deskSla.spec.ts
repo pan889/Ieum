@@ -13,9 +13,28 @@
 
 import type { Page } from '@playwright/test'
 
-import { createPortal, expect, signIn, signInWithMfa, signInAsCustomer, test } from './fixtures'
+import {
+  createPortal,
+  expect,
+  signIn,
+  signInWithMfa,
+  signInAsCustomer,
+  test,
+  uniqueKey,
+} from './fixtures'
 
 test.slow()
+
+/**
+ * 달력 이름은 **설치 전체에서 하나뿐**이라야 한다 — 겹치면 서버가 거절하고
+ * 폼이 안 닫힌다. 그러면 다음 폼을 열었을 때 "Save" 단추가 둘이 되어, 엉뚱한
+ * 자리에서 `strict mode violation` 으로 터진다.
+ *
+ * 잘린 시각(`String(Date.now()).slice(-6)`)을 쓰고 있었는데 그것은 16.7분마다
+ * 같은 값으로 **되돌아온다.** CI 는 매번 새 DB 라 안 보이고, 오래 쓴 개발
+ * 스택에서만 터진다.
+ */
+const calendarName = (): string => uniqueKey('Seoul ')
 
 const HOURS = '0 09:00-18:00\n1 09:00-18:00\n2 09:00-18:00\n3 09:00-18:00\n4 09:00-18:00'
 
@@ -39,7 +58,7 @@ async function addCalendar(page: Page, name: string, hours = HOURS): Promise<voi
 test.describe('업무 달력', () => {
   test('만들면 목록에 뜨고 업무 시간을 보여 준다', async ({ page }) => {
     await openSla(page)
-    const name = `Seoul ${String(Date.now()).slice(-6)}`
+    const name = calendarName()
     await addCalendar(page, name)
 
     await expect(page.getByText(name)).toBeVisible()
@@ -88,7 +107,7 @@ test('달력과 정책 폼을 함께 열어도 이름 칸이 섞이지 않는다
 test.describe('SLA 정책', () => {
   test('목표를 사람이 읽는 말로 적고, 어느 달력으로 재는지 보여 준다', async ({ page }) => {
     await openSla(page)
-    const calendar = `Seoul ${String(Date.now()).slice(-6)}`
+    const calendar = calendarName()
     await addCalendar(page, calendar)
 
     await page.getByRole('button', { name: /new policy/i }).click()
@@ -107,7 +126,7 @@ test.describe('SLA 정책', () => {
 
   test('읽을 수 없는 목표로는 저장을 막는다', async ({ page }) => {
     await openSla(page)
-    await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
+    await addCalendar(page, calendarName())
     await page.getByRole('button', { name: /new policy/i }).click()
     await page.getByLabel(/^policy name$/i).fill('틀린 목표')
     await page.getByLabel(/^targets$/i).fill('네 시간쯤')
@@ -119,7 +138,7 @@ test.describe('SLA 정책', () => {
     // 이미 걸린 시계가 다른 것을 재게 되므로 서버가 그 필드를 아예 받지
     // 않는다 — 화면도 손잡이를 그리지 않아야 한다.
     await openSla(page)
-    const calendar = `Seoul ${String(Date.now()).slice(-6)}`
+    const calendar = calendarName()
     await addCalendar(page, calendar)
     await page.getByRole('button', { name: /new policy/i }).click()
     await page.getByLabel(/^policy name$/i).fill('해결')
@@ -143,7 +162,7 @@ test.describe('SLA 정책', () => {
     // 그리고 **고른 것이 목록 줄에 보인다.** 안 보이면 멈춤을 걸어 뒀는지
     // 폼을 열어 봐야 알고, 안 걸린 정책과 구별되지 않는다.
     await openSla(page)
-    const calendar = `Seoul ${String(Date.now()).slice(-6)}`
+    const calendar = calendarName()
     await addCalendar(page, calendar)
 
     await page.getByRole('button', { name: /new policy/i }).click()
@@ -176,7 +195,7 @@ test.describe('SLA 정책', () => {
     // (누구에게 / 몇으로) — 자유 입력으로 두면 서버가 거절하는 조합을 만들 수
     // 있고, 관리자는 무엇이 틀렸는지 모른다.
     await openSla(page)
-    await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
+    await addCalendar(page, calendarName())
 
     await page.getByRole('button', { name: /new policy/i }).click()
     await page.getByLabel(/^policy name$/i).fill('에스컬레이션 확인용')
@@ -201,7 +220,7 @@ test.describe('SLA 정책', () => {
     // 서버도 거절한다. 여기서 막으면 어느 줄이 문제인지 그 자리에서 보인다 —
     // 저장을 눌러 거절당하고 나서 다섯 줄 중 어디인지 찾게 두지 않는다.
     await openSla(page)
-    await addCalendar(page, `Seoul ${String(Date.now()).slice(-6)}`)
+    await addCalendar(page, calendarName())
 
     await page.getByRole('button', { name: /new policy/i }).click()
     await page.getByLabel(/^policy name$/i).fill('사람 없는 규칙')
@@ -233,7 +252,7 @@ test.describe('티켓의 잔여 시간', () => {
     // **이 시험이 이 파일의 이유다.** 클럭은 워커가 건다 — 그 배선이
     // 끊기면 서버 시험은 통과하는데 화면의 SLA 칸은 영원히 비어 있다.
     await openSla(page)
-    const calendar = `Seoul ${String(Date.now()).slice(-6)}`
+    const calendar = calendarName()
     // 언제나 열린 달력으로 둔다. 업무 시간 계산은 서버 시험 26개가 이미
     // 본다 — 여기서 보는 것은 값이 화면까지 오는가다.
     await addCalendar(page, calendar, [0, 1, 2, 3, 4, 5, 6].map((d) => `${String(d)} 00:00-23:59`).join('\n'))

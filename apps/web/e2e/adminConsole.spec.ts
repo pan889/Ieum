@@ -9,7 +9,16 @@
  * 그게 이 제품에서 반복해 부딪힌 종류의 결함이다(IdP 끄기, SAML 인증서 회전).
  */
 
-import { API, expect, inviteUser, signIn, signInWithMfa, stepUpToken, test } from './fixtures'
+import {
+  API,
+  expect,
+  inviteUser,
+  signIn,
+  signInWithMfa,
+  stepUpToken,
+  test,
+  uniqueKey,
+} from './fixtures'
 
 /** 초대 메일을 기다린다. */
 test.slow()
@@ -99,7 +108,7 @@ test.describe('사람', () => {
 test.describe('그룹', () => {
   test('만들고, 사람을 넣고, 지운다', async ({ page }) => {
     const person = await inviteUser(page)
-    const name = `Platform ${Date.now().toString(36).slice(-5)}`
+    const name = uniqueKey('Platform ')
 
     await signIn(page)
     await page.goto('/settings/groups')

@@ -31,6 +31,28 @@ test.describe('전역 단축키', () => {
     await expect(help).toBeHidden()
   })
 
+  test('도움말은 **연 키로 닫히고**, 떠 있는 동안 뒤가 안 움직인다', async ({ page }) => {
+    await signIn(page)
+    const home = page.url()
+
+    await page.keyboard.press('?')
+    const help = page.getByRole('dialog', { name: /keyboard shortcuts|키보드 단축키/i })
+    await expect(help).toBeVisible()
+
+    // 초점이 덮개 안으로 들어와 있다. `aria-modal` 을 적어 두고 초점을 뒤에
+    // 남기면 화면 낭독기에는 **아무 일도 안 일어난 것**이다.
+    await expect(help).toBeFocused()
+
+    // 덮개가 떠 있는 동안 전역 키는 죽는다. 안 그러면 도움말을 띄운 채
+    // 새 이슈 화면으로 끌려가고 덮개는 그 위에 남는다.
+    await page.keyboard.press('c')
+    await expect(page).toHaveURL(home)
+    await expect(help).toBeVisible()
+
+    await page.keyboard.press('Escape')
+    await expect(help).toBeHidden()
+  })
+
   test('Cmd/Ctrl+K 로 팔레트를 열고 키보드만으로 옮겨 간다', async ({ page }) => {
     await signIn(page)
 
@@ -157,8 +179,8 @@ test.describe('목록에서', () => {
     let help = page.getByRole('dialog', { name: /keyboard shortcuts|키보드 단축키/i })
     await expect(help).toBeVisible()
     await expect(help.getByText(/next row|다음 줄/i)).toHaveCount(0)
-    await page.keyboard.press('Escape').catch(() => undefined)
-    await page.getByRole('button', { name: /close|닫기/i }).click()
+    await page.keyboard.press('Escape')
+    await expect(help).toBeHidden()
 
     await page.goto(`/issues?iql=${encodeURIComponent(`project = ${key}`)}`)
     await expect(page.getByRole('row').filter({ hasText: '엔터로 연다' })).toHaveCount(1)

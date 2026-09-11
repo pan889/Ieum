@@ -19,7 +19,25 @@ export interface Scope {
    * 브라우저의 기본 동작과 겹치지 않는다.
    */
   whileTyping?: readonly string[]
+  /**
+   * 떠 있는 동안 **아래를 통째로 덮는다.** 자기가 모르는 조합은 아무 일도
+   * 하지 않는다.
+   *
+   * 팔레트와 `?` 도움말이 이것이다. 없으면 도움말을 띄워 둔 채 `c` 를 눌러
+   * 새 이슈 화면으로 끌려가고, **덮개는 그 위에 그대로 남는다** — 사람이
+   * 보기에는 화면이 안 바뀌었는데 주소만 달라진 상태다.
+   */
+  modal?: boolean
 }
+
+/**
+ * 아무 일도 안 하지만 **브라우저 기본 동작으로 새어 나가지는 않게** 붙잡는다.
+ * 처리한 조합은 `useHotkeys` 가 `preventDefault` 해 주기 때문이다.
+ *
+ * 덮개가 떠 있는 동안의 `mod+k` 가 이것이다 — 이미 열려 있으니 다시 열 일이
+ * 없는데, 그냥 두면 크롬에서 **주소창이 열린다.**
+ */
+export const swallow = (): void => undefined
 
 /**
  * 이벤트를 조합 문자열로 바꾼다.
@@ -84,7 +102,12 @@ export function resolve(
     const scope = scopes[i]
     if (scope === undefined) continue
     const handler = scope.bindings[combo]
-    if (handler === undefined) continue
+    if (handler === undefined) {
+      // 덮개가 모르는 키는 **아래에도 닿지 않는다.** 화면을 덮고 있다는 것은
+      // 뒤에 있는 것을 잠깐 못 쓰게 한다는 뜻이다.
+      if (scope.modal === true) return null
+      continue
+    }
     if (typing && !(scope.whileTyping ?? []).includes(combo)) {
       // **여기서 멈춘다.** 아래 스코프로 안 내려간다 — 글을 쓰는 중이라는
       // 사실은 스코프마다 달라지지 않는다.

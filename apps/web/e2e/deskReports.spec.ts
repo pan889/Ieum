@@ -27,6 +27,7 @@ import {
   signInAsCustomer,
   signInWithMfa,
   test,
+  uniqueKey,
   type PortalFixture,
 } from './fixtures'
 
@@ -108,7 +109,7 @@ test('아직 안 알린 위반도 "지금 넘김" 으로 보이고, 어떻게 �
   await page.goto('/settings/sla')
   await expect(page.getByRole('heading', { name: /sla policies/i, level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /new calendar/i }).click()
-  await page.getByLabel(/^calendar name$/i).fill(`Always ${String(Date.now()).slice(-6)}`)
+  await page.getByLabel(/^calendar name$/i).fill(uniqueKey('Always '))
   await page.getByLabel(/^working hours$/i).fill(ALWAYS_OPEN)
   await page.getByRole('button', { name: /^save$/i }).click()
 

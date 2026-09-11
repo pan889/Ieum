@@ -144,6 +144,36 @@ describe('resolve', () => {
     expect(resolve(scopes, at(press('c'), box))).toBeNull()
   })
 
+  it('**모달 스코프는 자기가 모르는 키를 아래로 안 넘긴다**', () => {
+    // 도움말·팔레트가 이것이다. 덮개를 띄운 채 `c` 가 뒤에서 새 이슈 화면을
+    // 열면, 사람이 보기에는 화면이 그대로인데 주소만 달라진다.
+    const global = vi.fn()
+    const scopes: Scope[] = [
+      { bindings: { c: global } },
+      { bindings: { escape: vi.fn() }, modal: true },
+    ]
+    expect(resolve(scopes, at(press('c'), body))).toBeNull()
+  })
+
+  it('모달이 잡은 키는 모달이 처리한다', () => {
+    const close = vi.fn()
+    const scopes: Scope[] = [
+      { bindings: { escape: vi.fn() } },
+      { bindings: { escape: close }, modal: true },
+    ]
+    expect(resolve(scopes, at(press('Escape'), body))).toBe(close)
+  })
+
+  it('모달의 Esc 는 입력 칸 안에서도 산다 — 팔레트는 칸에 초점을 준 채로 열린다', () => {
+    const close = vi.fn()
+    const scopes: Scope[] = [
+      { bindings: { escape: close }, modal: true, whileTyping: ['escape'] },
+    ]
+    const box = document.createElement('input')
+    box.type = 'text'
+    expect(resolve(scopes, at(press('Escape'), box))).toBe(close)
+  })
+
   it('IME 조합 중에는 손대지 않는다', () => {
     const scopes: Scope[] = [{ bindings: { c: vi.fn() } }]
     const composing = press('c')

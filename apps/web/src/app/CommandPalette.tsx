@@ -15,6 +15,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { useId, useMemo, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { swallow } from '@/shared/keys/keys'
+import { useHotkeys } from '@/shared/keys/useHotkeys'
 import { Card } from '@/shared/ui/primitives'
 
 export interface Command {
@@ -37,6 +39,20 @@ export function CommandPalette({ onClose, places }: Props) {
   const [query, setQuery] = useState('')
   const [at, setAt] = useState(0)
   const listId = useId()
+
+  /**
+   * 덮개는 아래를 통째로 덮는다. 입력 칸에 초점이 있는 동안에는 한 글자 키가
+   * 어차피 죽지만, **상자 안 빈 곳을 누르면 초점이 칸 밖으로 나간다** — 그때
+   * 전역 `c` 가 되살아나 팔레트를 띄운 채 새 이슈 화면으로 끌려간다.
+   *
+   * `Esc` 도 여기서 갖는다 — 초점이 칸을 벗어나도 닫히게 하려면 한 군데여야
+   * 한다. `mod+k` 는 아무 일도 안 하지만 **주소창으로 새어 나가지 않게**
+   * 붙잡아 둔다. 둘 다 입력 칸 안에서 살아야 하므로 `whileTyping` 이다.
+   */
+  useHotkeys(
+    { escape: onClose, 'mod+k': swallow },
+    { modal: true, whileTyping: ['escape', 'mod+k'] },
+  )
 
   const commands = useMemo<Command[]>(() => {
     const typed = query.trim()
@@ -92,11 +108,8 @@ export function CommandPalette({ onClose, places }: Props) {
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose()
-      return
-    }
+    // `Esc` 는 위의 모달 스코프가 갖는다 — 초점이 이 칸을 벗어나도 닫히게
+    // 하려면 한 군데여야 한다.
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setAt(shown.length === 0 ? 0 : (cursor + 1) % shown.length)

@@ -4,6 +4,7 @@ import type {
   HTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  Ref,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from 'react'
@@ -176,7 +177,12 @@ export function Alert({
   )
 }
 
-export function Card({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
+// `ref` 를 받는다 — 덮개가 열릴 때 **초점을 자기 안으로** 옮겨야 하기
+// 때문이다. `aria-modal` 을 적어 두고 초점을 뒤에 남기면 화면 낭독기에는
+// 아무 일도 안 일어난 것이 된다.
+type CardProps = HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDivElement> }
+
+export function Card({ className, ...rest }: CardProps) {
   return (
     <div
       className={clsx(

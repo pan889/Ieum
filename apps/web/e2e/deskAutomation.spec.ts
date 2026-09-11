@@ -27,6 +27,7 @@ import {
   signInWithMfa,
   inviteUser,
   test,
+  uniqueKey,
 } from './fixtures'
 
 test.slow()
@@ -49,7 +50,7 @@ test.describe('자동화 규칙', () => {
     await openAutomation(page, portal.projectKey)
 
     await page.getByRole('button', { name: /add rule/i }).click()
-    const name = `긴급 올리기 ${String(Date.now()).slice(-5)}`
+    const name = uniqueKey('긴급 올리기 ')
     await page.getByLabel(/^name$/i).fill(name)
     await page.getByLabel(/^when$/i).selectOption({ label: 'A ticket comes in' })
 
@@ -139,7 +140,7 @@ test.describe('자동화 규칙', () => {
     await openAutomation(page, portal.projectKey)
 
     await page.getByRole('button', { name: /add rule/i }).click()
-    const name = `둘 중 하나 ${String(Date.now()).slice(-5)}`
+    const name = uniqueKey('둘 중 하나 ')
     await page.getByLabel(/^name$/i).fill(name)
     await page.getByRole('button', { name: /add condition/i }).click()
     await page.getByLabel(/^field$/i).selectOption({ label: 'Came in via' })
@@ -179,7 +180,7 @@ test.describe('자동화 규칙', () => {
     await openAutomation(page, portal.projectKey)
 
     await page.getByRole('button', { name: /add rule/i }).click()
-    const name = `잠깐 멈춤 ${String(Date.now()).slice(-5)}`
+    const name = uniqueKey('잠깐 멈춤 ')
     await page.getByLabel(/^name$/i).fill(name)
     await page.getByRole('button', { name: /^save$/i }).click()
 
