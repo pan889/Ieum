@@ -8,7 +8,7 @@ import { useAuthStore } from '@/features/auth/store'
 import { useUnreadCount } from '@/features/notifications/NotificationsScreen'
 import { authApi, usersApi } from '@/shared/api'
 import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/shared/i18n'
-import { GLOBAL_SHORTCUTS, type ShortcutId } from '@/shared/keys/catalog'
+import { GLOBAL_SHORTCUTS, type GlobalShortcutId } from '@/shared/keys/catalog'
 import { useShortcuts } from '@/shared/keys/useHotkeys'
 import { Button } from '@/shared/ui/primitives'
 
@@ -56,14 +56,14 @@ export function AppShell() {
    * 목록의 처리 함수. **`Record<ShortcutId, …>` 라서 빠뜨리면 타입이 막는다** —
    * 도움말에만 있고 아무 일도 안 하는 키가 생길 수 없다.
    */
-  const handlers: Record<ShortcutId, () => void> = {
+  const handlers: Record<GlobalShortcutId, () => void> = {
     // 토글이 아니라 열기다. 누르고 있어도 깜빡이지 않는다(`keys.ts` 참고).
     palette: () => { setOverlay('palette') },
     help: () => { setOverlay('help') },
     createIssue: () => { void navigate({ to: '/issues/new' }) },
     search: focusSearch,
   }
-  useShortcuts(GLOBAL_SHORTCUTS, handlers)
+  useShortcuts(GLOBAL_SHORTCUTS, handlers, 'keys.groupGlobal')
 
   const signOut = useMutation({
     mutationFn: () => authApi.logout(),

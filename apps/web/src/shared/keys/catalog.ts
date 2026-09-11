@@ -13,7 +13,14 @@
 
 import type { Bindings } from './keys'
 
-export type ShortcutId = 'palette' | 'search' | 'createIssue' | 'help'
+/**
+ * 묶음마다 id 를 따로 둔다. 그래야 각 화면이 **자기 묶음만** 빠짐없이
+ * 채우게 강제할 수 있다 — 하나로 합치면 앱셸이 목록 단축키까지 들고 있어야
+ * 한다.
+ */
+export type GlobalShortcutId = 'palette' | 'search' | 'createIssue' | 'help'
+export type ListShortcutId = 'listDown' | 'listUp' | 'listOpen'
+export type ShortcutId = GlobalShortcutId | ListShortcutId
 
 export interface Shortcut {
   id: ShortcutId
@@ -25,6 +32,13 @@ export interface Shortcut {
   whileTyping?: boolean
 }
 
+/** 한 화면이 내놓는 단축키 묶음. `?` 도움말이 이 단위로 보여 준다. */
+export interface ShortcutGroup {
+  /** `common` 의 번역 키. 도움말의 소제목. */
+  titleKey: string
+  shortcuts: readonly Shortcut[]
+}
+
 export const GLOBAL_SHORTCUTS: readonly Shortcut[] = [
   // 검색어를 치다가도 열 수 있어야 한다 — 그래서 이것만 입력 칸을 뚫는다.
   { id: 'palette', combo: 'mod+k', labelKey: 'keys.palette', whileTyping: true },
@@ -33,16 +47,30 @@ export const GLOBAL_SHORTCUTS: readonly Shortcut[] = [
   { id: 'help', combo: '?', labelKey: 'keys.help' },
 ]
 
+/**
+ * 목록 화면. `o` 와 `Enter` 는 같은 일을 한다 — `o` 는 손이 익은 사람용이고
+ * `Enter` 는 아무 설명 없이도 맞는 쪽이다.
+ */
+export const LIST_SHORTCUTS: readonly Shortcut[] = [
+  { id: 'listDown', combo: 'j', labelKey: 'keys.listDown' },
+  { id: 'listUp', combo: 'k', labelKey: 'keys.listUp' },
+  { id: 'listOpen', combo: 'o', labelKey: 'keys.listOpen' },
+  { id: 'listOpen', combo: 'enter', labelKey: 'keys.listOpen' },
+]
+
 /** 목록과 처리 함수를 맞붙인다. 빠진 것이 있으면 타입이 막는다. */
-export function bindingsFrom(
+export function bindingsFrom<Id extends ShortcutId>(
   shortcuts: readonly Shortcut[],
-  handlers: Record<ShortcutId, () => void>,
+  handlers: Record<Id, () => void>,
 ): Bindings {
   const bindings: Bindings = {}
   for (const shortcut of shortcuts) {
-    bindings[shortcut.combo] = () => {
-      handlers[shortcut.id]()
-    }
+    // 목록에는 이 묶음이 안 맡는 id 가 섞여 올 수 있다(다른 묶음의 것).
+    // 그래서 조회 결과를 **없을 수도 있는 것**으로 본다.
+    const lookup: Partial<Record<ShortcutId, () => void>> = handlers
+    const handler = lookup[shortcut.id]
+    if (handler === undefined) continue
+    bindings[shortcut.combo] = handler
   }
   return bindings
 }

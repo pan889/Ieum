@@ -1,13 +1,15 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { BulkEditResult } from '@ieum/api-client'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
-import { Fragment, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
+import { LIST_SHORTCUTS, type ListShortcutId } from '@/shared/keys/catalog'
+import { useShortcuts } from '@/shared/keys/useHotkeys'
 import { Alert, Badge, Button, Card, Chip } from '@/shared/ui/primitives'
 
 import { BulkBar } from './BulkBar'
@@ -52,6 +54,20 @@ export function IssuesScreen() {
   const [columns, setColumns] = useState<ColumnId[]>(loadColumns)
   const [cursors, setCursors] = useState<string[]>([])
   const [selected, setSelected] = useState<string[]>([])
+
+  /**
+   * `j`/`k` 가 짚고 있는 줄. **초점을 실제로 옮긴다** — 색만 칠하면 화면
+   * 낭독기를 쓰는 사람에게는 아무 일도 안 일어난 것이고, 목록이 길면 짚은
+   * 줄이 화면 밖에 있어도 모른다. 초점을 옮기면 스크롤도 브라우저가 한다.
+   */
+  //
+  // 목록이 바뀌면(질의·쪽 넘김·묶어 보기) 짚은 자리를 **버려야 한다.** 남겨
+  // 두면 다른 이슈를 짚은 채로 `o` 를 눌러 엉뚱한 것이 열린다. effect 로
+  // 되돌리는 대신 목록의 지문을 상태에 같이 넣어 **파생**으로 만든다 —
+  // 그러면 되돌리는 렌더가 한 번 더 돌지 않고, 한 프레임 동안 옛 자리가
+  // 짚힌 채로 그려지는 일도 없다.
+  const [picked, setPicked] = useState<{ of: string; at: number }>({ of: '', at: -1 })
+  const rowsRef = useRef<(HTMLTableRowElement | null)[]>([])
   const [bulkResult, setBulkResult] = useState<BulkEditResult | null>(null)
   /**
    * IQL 상자에 타이핑 중인 내용. URL 에 넣지 않는다 — 글자마다 히스토리가
@@ -83,6 +99,59 @@ export function IssuesScreen() {
   })
 
   const names = useUserNames((results.data?.items ?? []).map((i) => i.assignee_id))
+
+  // 화면에 그려지는 순서 그대로. 묶어 보기를 켜면 묶음 안 순서가 곧 이 순서다 —
+  // `j` 가 눈에 보이는 다음 줄로 가야 하므로 원본 배열 순서로는 안 된다.
+  const groups = useMemo(
+    () => groupRows(results.data?.items ?? [], groupBy),
+    [results.data, groupBy],
+  )
+  const order = useMemo(() => groups.flatMap((g) => g.rows.map((r) => r.id)), [groups])
+  const orderKey = order.join(',')
+  const rowAt = picked.of === orderKey ? picked.at : -1
+  const keyOf = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const group of groups) for (const row of group.rows) map.set(row.id, row.key)
+    return map
+  }, [groups])
+
+  const step = useCallback(
+    (by: number) => {
+      setPicked((now) => {
+        if (order.length === 0) return { of: orderKey, at: -1 }
+        const from = now.of === orderKey ? now.at : -1
+        // 아직 아무 데도 안 짚었으면 방향과 무관하게 첫 줄부터. 아래로 가려고
+        // `j` 를 눌렀는데 맨 끝으로 가면 놀란다.
+        if (from < 0) return { of: orderKey, at: 0 }
+        const next = Math.min(Math.max(from + by, 0), order.length - 1)
+        return { of: orderKey, at: next }
+      })
+    },
+    [order.length, orderKey],
+  )
+
+  const openCursor = useCallback(() => {
+    const id = order[rowAt]
+    if (id === undefined) return
+    const key = keyOf.get(id)
+    if (key === undefined) return
+    void navigate({ to: '/issues/$issueKey', params: { issueKey: key } })
+  }, [rowAt, keyOf, navigate, order])
+
+  const listHandlers: Record<ListShortcutId, () => void> = {
+    listDown: () => { step(1) },
+    listUp: () => { step(-1) },
+    listOpen: openCursor,
+  }
+  useShortcuts(LIST_SHORTCUTS, listHandlers, 'keys.groupList')
+
+  // 짚은 줄로 **초점을 옮긴다.** 스크롤은 브라우저가 알아서 한다.
+  useEffect(() => {
+    if (rowAt < 0) return
+    rowsRef.current[rowAt]?.focus()
+  }, [rowAt])
+
+
 
   /** CSV 는 스트리밍 응답이라 fetch 로 받아 blob 으로 저장한다. */
   const exporting = useMutation({
@@ -254,7 +323,7 @@ export function IssuesScreen() {
                 </tr>
               </thead>
               <tbody>
-                {groupRows(results.data.items, groupBy).map((group) => (
+                {groups.map((group) => (
                   <Fragment key={group.key || '__all__'}>
                     {groupBy === 'none' ? null : (
                       <tr className="border-b border-border bg-surface-raised">
@@ -272,8 +341,26 @@ export function IssuesScreen() {
                     )}
                     {group.rows.map((issue) => {
                   const key = issue.key
+                  const at = order.indexOf(issue.id)
                   return (
-                    <tr key={issue.id} className="border-b border-border last:border-0">
+                    <tr
+                      key={issue.id}
+                      ref={(el) => {
+                        rowsRef.current[at] = el
+                      }}
+                      // 초점을 받을 수 있게 하되 Tab 순서에는 넣지 않는다 —
+                      // Tab 으로 줄을 하나씩 지나가게 하면 그게 더 느리다.
+                      tabIndex={-1}
+                      aria-selected={at === rowAt}
+                      onFocus={() => {
+                        setPicked({ of: orderKey, at })
+                      }}
+                      className={
+                        at === rowAt
+                          ? 'border-b border-border bg-accent/10 outline-none last:border-0'
+                          : 'border-b border-border outline-none last:border-0'
+                      }
+                    >
                       <td className="px-2 align-top">
                         <input
                           type="checkbox"

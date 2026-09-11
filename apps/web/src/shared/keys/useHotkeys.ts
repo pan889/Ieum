@@ -6,9 +6,9 @@
  * 쌓아 두고 하나의 리스너가 **위에서부터** 훑는다.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
-import { bindingsFrom, type Shortcut, type ShortcutId } from './catalog'
+import { bindingsFrom, type Shortcut, type ShortcutGroup, type ShortcutId } from './catalog'
 import { resolve, type Bindings, type Scope } from './keys'
 
 const scopes: Scope[] = []
@@ -86,9 +86,11 @@ export function useHotkeys(bindings: Bindings, options: HotkeyOptions = {}): voi
  * `react-hooks/refs` 가 막는다 — 규칙이 옳다. 실제로 부르는 시점은 키를 누른
  * 뒤이므로, 붙이는 일도 effect 안으로 미룬다.
  */
-export function useShortcuts(
+export function useShortcuts<Id extends ShortcutId>(
   shortcuts: readonly Shortcut[],
-  handlers: Record<ShortcutId, () => void>,
+  handlers: Record<Id, () => void>,
+  /** 도움말에 이 묶음을 보여 줄 소제목. 없으면 도움말에 안 뜬다. */
+  titleKey?: string,
 ): void {
   const latest = useRef(handlers)
   useEffect(() => {
@@ -108,8 +110,50 @@ export function useShortcuts(
       },
       whileTyping: typing === '' ? [] : typing.split(','),
     }
-    return attach(scope)
+    const detach = attach(scope)
+    if (titleKey === undefined) return detach
+
+    const group: ShortcutGroup = { titleKey, shortcuts }
+    groups.push(group)
+    republish()
+    return () => {
+      detach()
+      const at = groups.indexOf(group)
+      if (at !== -1) groups.splice(at, 1)
+      republish()
+    }
     // 목록은 상수다. 조합이 그대로면 다시 붙이지 않는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combos, typing])
+  }, [combos, typing, titleKey])
+}
+
+// ── `?` 도움말이 읽는 자리 ────────────────────────────────────────
+//
+// **도움말은 지금 실제로 살아 있는 것만 보여야 한다.** 목록 화면에서만 도는
+// `j`/`k` 를 어디서나 보여 주면, 그것이 이 계층이 이미 한 번 저지른 잘못
+// (없는 키를 있는 것처럼 적어 두기)의 화면판이 된다.
+
+const groups: ShortcutGroup[] = []
+const watchers = new Set<() => void>()
+let snapshot: readonly ShortcutGroup[] = []
+
+function republish(): void {
+  snapshot = [...groups]
+  for (const notify of watchers) notify()
+}
+
+function subscribe(notify: () => void): () => void {
+  watchers.add(notify)
+  return () => {
+    watchers.delete(notify)
+  }
+}
+
+/** 지금 살아 있는 단축키 묶음들. 등록 순서대로. */
+export function useActiveShortcutGroups(): readonly ShortcutGroup[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => snapshot,
+    () => snapshot,
+  )
 }

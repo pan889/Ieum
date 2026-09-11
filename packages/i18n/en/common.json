@@ -88,5 +88,10 @@
   "keys.kindGo": "Go",
   "keys.kindCreate": "Create",
   "keys.kindFind": "Search",
-  "keys.searchFor": "Search for “{query}”"
+  "keys.searchFor": "Search for “{query}”",
+  "keys.groupGlobal": "Anywhere",
+  "keys.groupList": "In a list",
+  "keys.listDown": "Next row",
+  "keys.listUp": "Previous row",
+  "keys.listOpen": "Open"
 }

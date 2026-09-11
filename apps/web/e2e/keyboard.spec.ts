@@ -10,7 +10,7 @@
  * 그게 튀면 사람은 쓰던 것을 잃고, 왜 그랬는지도 모른다.
  */
 
-import { expect, signIn, test } from './fixtures'
+import { createIssue, createProject, expect, signIn, test, uniqueKey } from './fixtures'
 
 test.describe('전역 단축키', () => {
   test('? 를 누르면 도움말이 뜨고, 거기 적힌 것이 실제로 도는 것이다', async ({ page }) => {
@@ -102,5 +102,75 @@ test.describe('전역 단축키', () => {
     // 그런데 팔레트는 열려야 한다 — 검색어를 치다가도 부를 수 있어야 하니까.
     await page.keyboard.press('ControlOrMeta+k')
     await expect(page.getByRole('dialog', { name: /command palette|명령 팔레트/i })).toBeVisible()
+  })
+})
+
+test.describe('목록에서', () => {
+  test.slow()
+
+  test('j·k 로 줄을 옮기고 o 로 연다', async ({ page }) => {
+    await signIn(page)
+    const key = uniqueKey('KB')
+    await createProject(page, key)
+    await createIssue(page, key, '첫째 줄')
+    await createIssue(page, key, '둘째 줄')
+
+    // 이 프로젝트만 보이게 좁힌다 — 시드에 남의 이슈가 잔뜩 있다.
+    await page.goto(`/issues?iql=${encodeURIComponent(`project = ${key} ORDER BY created ASC`)}`)
+    // 이슈 줄에만 `aria-selected` 가 있다(묶음 머리글에는 없다). 줄 전체
+    // 글자로 거르면 안 된다 — 한 줄에 키·상태·날짜가 같이 들어 있어서
+    // 제목으로 끝나지 않는다. 처음에 그렇게 써서 0개를 받았다.
+    const rows = page.locator('tbody tr[aria-selected]')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.first()).toContainText('첫째 줄')
+    await expect(rows.nth(1)).toContainText('둘째 줄')
+
+    // 아직 아무 데도 안 짚었다.
+    await expect(page.locator('tr[aria-selected="true"]')).toHaveCount(0)
+
+    await page.keyboard.press('j')
+    await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
+
+    await page.keyboard.press('j')
+    await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true')
+
+    // 끝에서 더 눌러도 넘어가지 않는다.
+    await page.keyboard.press('j')
+    await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true')
+
+    await page.keyboard.press('k')
+    await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
+
+    await page.keyboard.press('o')
+    await expect(page).toHaveURL(new RegExp(`/issues/${key}-`))
+    await expect(page.getByRole('heading', { name: '첫째 줄' })).toBeVisible()
+  })
+
+  test('Enter 도 같은 일을 하고, 도움말이 목록 키를 그때만 보여 준다', async ({ page }) => {
+    await signIn(page)
+    const key = uniqueKey('KB')
+    await createProject(page, key)
+    await createIssue(page, key, '엔터로 연다')
+
+    // 목록 밖(첫 화면)에서는 목록 키가 도움말에 없다.
+    await page.keyboard.press('?')
+    let help = page.getByRole('dialog', { name: /keyboard shortcuts|키보드 단축키/i })
+    await expect(help).toBeVisible()
+    await expect(help.getByText(/next row|다음 줄/i)).toHaveCount(0)
+    await page.keyboard.press('Escape').catch(() => undefined)
+    await page.getByRole('button', { name: /close|닫기/i }).click()
+
+    await page.goto(`/issues?iql=${encodeURIComponent(`project = ${key}`)}`)
+    await expect(page.getByRole('row').filter({ hasText: '엔터로 연다' })).toHaveCount(1)
+
+    // 목록에 오면 도움말에 목록 묶음이 생긴다.
+    await page.keyboard.press('?')
+    help = page.getByRole('dialog', { name: /keyboard shortcuts|키보드 단축키/i })
+    await expect(help.getByText(/next row|다음 줄/i)).toBeVisible()
+    await page.getByRole('button', { name: /close|닫기/i }).click()
+
+    await page.keyboard.press('j')
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(new RegExp(`/issues/${key}-`))
   })
 })
