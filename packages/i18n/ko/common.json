@@ -93,5 +93,10 @@
   "keys.groupList": "목록에서",
   "keys.listDown": "다음 줄",
   "keys.listUp": "이전 줄",
-  "keys.listOpen": "열기"
+  "keys.listOpen": "열기",
+  "keys.groupDetail": "이슈에서",
+  "keys.detailEdit": "제목·본문 편집",
+  "keys.detailAssignee": "담당자 바꾸기",
+  "keys.detailStatus": "상태 전이로",
+  "keys.detailPriority": "우선순위로"
 }

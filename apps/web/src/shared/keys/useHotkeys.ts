@@ -113,7 +113,7 @@ export function useShortcuts<Id extends ShortcutId>(
     const detach = attach(scope)
     if (titleKey === undefined) return detach
 
-    const group: ShortcutGroup = { titleKey, shortcuts }
+    const group = { titleKey, shortcuts }
     groups.push(group)
     republish()
     return () => {
@@ -133,12 +133,28 @@ export function useShortcuts<Id extends ShortcutId>(
 // `j`/`k` 를 어디서나 보여 주면, 그것이 이 계층이 이미 한 번 저지른 잘못
 // (없는 키를 있는 것처럼 적어 두기)의 화면판이 된다.
 
-const groups: ShortcutGroup[] = []
+const groups: { titleKey: string; shortcuts: readonly Shortcut[] }[] = []
 const watchers = new Set<() => void>()
 let snapshot: readonly ShortcutGroup[] = []
 
 function republish(): void {
-  snapshot = [...groups]
+  // **소제목이 같으면 한 묶음으로 합친다.** 한 화면의 단축키가 그 상태를
+  // 가진 컴포넌트마다 흩어져 등록되기 때문이다(편집은 편집기가, 담당자는
+  // 옆 칸이 안다). 도움말에서는 그것이 "이 화면에서" 하나로 보여야 한다.
+  const merged: ShortcutGroup[] = []
+  for (const group of groups) {
+    const found = merged.find((m) => m.titleKey === group.titleKey)
+    if (found === undefined) {
+      merged.push({ titleKey: group.titleKey, shortcuts: [...group.shortcuts] })
+      continue
+    }
+    const combos = new Set(found.shortcuts.map((s) => s.combo))
+    found.shortcuts = [
+      ...found.shortcuts,
+      ...group.shortcuts.filter((s) => !combos.has(s.combo)),
+    ]
+  }
+  snapshot = merged
   for (const notify of watchers) notify()
 }
 

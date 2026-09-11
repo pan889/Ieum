@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { AgentTicket, SlaStanding } from '@ieum/api-client'
@@ -21,6 +21,9 @@ import { CustomField } from './CustomField'
 import { changedFields, type FieldValue } from './customFields'
 import { Relations } from './Relations'
 import { TimeTracking } from './TimeTracking'
+import { pick } from '@/shared/keys/catalog'
+import { useShortcuts } from '@/shared/keys/useHotkeys'
+
 import { categoryTone, formatDateTime, priorityLabel } from './format'
 import { useFieldDefinitions, useUserNames, useUserSearch } from './hooks'
 
@@ -116,11 +119,38 @@ export function IssueDetailScreen() {
 
 type Issue = Awaited<ReturnType<typeof issuesApi.getByKey>>
 
+const EDIT_KEYS = pick(['detailEdit'])
+const ASSIGN_KEYS = pick(['detailAssignee', 'detailPriority'])
+const STATUS_KEYS = pick(['detailStatus'])
+const DETAIL_GROUP = 'keys.groupDetail'
+
 function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
   const { t } = useTranslation(['issues', 'common'])
   const [editing, setEditing] = useState(false)
+
   const [summary, setSummary] = useState(issue.summary)
   const [description, setDescription] = useState(issue.description ?? '')
+
+  /**
+   * 편집을 연다. **단추와 `e` 가 같은 길을 쓴다.**
+   *
+   * 처음엔 `e` 가 `setEditing(true)` 만 했는데, 그러면 고치다 취소한 뒤
+   * `e` 를 누른 사람이 **버린 초안을 다시 본다** — 단추는 그때 원본으로
+   * 되돌리는데 키는 안 되돌렸기 때문이다. 같은 동작에 두 길을 두면 한 길만
+   * 고쳐지는 날이 온다.
+   */
+  const startEditing = useCallback(() => {
+    setSummary(issue.summary)
+    setDescription(issue.description ?? '')
+    setEditing(true)
+  }, [issue.summary, issue.description])
+
+  // 이미 편집 중이어도 원본으로 되돌릴 뿐이라 눌러 두고 있어도 멀쩡하다.
+  useShortcuts(
+    EDIT_KEYS,
+    { detailEdit: startEditing } satisfies Record<'detailEdit', () => void>,
+    DETAIL_GROUP,
+  )
 
   const save = useMutation({
     mutationFn: () =>
@@ -134,11 +164,7 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
       <Card className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted">{t('issues:detail.description')}</h2>
-          <Button variant="ghost" onClick={() => {
-            setSummary(issue.summary)
-            setDescription(issue.description ?? '')
-            setEditing(true)
-          }}>
+          <Button variant="ghost" onClick={startEditing}>
             {t('issues:detail.edit')}
           </Button>
         </div>
@@ -182,6 +208,18 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
 }
 
 function Transitions({ issue, onMoved }: { issue: Issue; onMoved: () => void }) {
+  // 값을 고르지 않고 **첫 전이 단추로 데려간다.** 어느 상태로 갈지는
+  // 워크플로가 정하므로 키 하나가 대신 고를 수 있는 것이 아니다.
+  const firstMove = useRef<HTMLDivElement>(null)
+  useShortcuts(
+    STATUS_KEYS,
+    {
+      detailStatus: () => {
+        firstMove.current?.querySelector('button')?.focus()
+      },
+    } satisfies Record<'detailStatus', () => void>,
+    DETAIL_GROUP,
+  )
   const { t } = useTranslation(['issues'])
   const transitions = useQuery({
     queryKey: ['issues', 'transitions', issue.id, issue.version],
@@ -202,7 +240,7 @@ function Transitions({ issue, onMoved }: { issue: Issue; onMoved: () => void }) 
       {transitions.data.length === 0 ? (
         <p className="text-sm text-muted">{t('issues:transition.none')}</p>
       ) : (
-        <div className="flex flex-wrap gap-2">
+        <div ref={firstMove} className="flex flex-wrap gap-2">
           {transitions.data.map((transition) => {
             const blocked = transition.blocked_by.length > 0
             return (
@@ -235,6 +273,18 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
   const names = useUserNames([issue.assignee_id, issue.reporter_id])
   const [assigning, setAssigning] = useState(false)
   const [search, setSearch] = useState('')
+  const priorityBox = useRef<HTMLSelectElement>(null)
+
+  useShortcuts(
+    ASSIGN_KEYS,
+    {
+      detailAssignee: () => { setAssigning(true) },
+      // 다섯 갈래라 키 하나가 못 고른다. 상자로 데려가면 그 다음은
+      // 화살표·글자로 고르는 표준 동작이다.
+      detailPriority: () => { priorityBox.current?.focus() },
+    } satisfies Record<'detailAssignee' | 'detailPriority', () => void>,
+    DETAIL_GROUP,
+  )
   const candidates = useUserSearch(search)
 
   const assign = useMutation({
@@ -340,6 +390,7 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
             연결돼 있지 않다 — 화면 낭독기는 이 상자를 이름 없는 콤보박스로
             읽는다. 체크박스에서 이미 겪은 것과 같은 결함이다. */}
         <Select
+          ref={priorityBox}
           aria-label={t('issues:detail.priority')}
           className="w-full py-1 text-xs"
           value={String(issue.priority)}

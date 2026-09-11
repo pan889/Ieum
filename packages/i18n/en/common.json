@@ -93,5 +93,10 @@
   "keys.groupList": "In a list",
   "keys.listDown": "Next row",
   "keys.listUp": "Previous row",
-  "keys.listOpen": "Open"
+  "keys.listOpen": "Open",
+  "keys.groupDetail": "On an issue",
+  "keys.detailEdit": "Edit summary and description",
+  "keys.detailAssignee": "Change assignee",
+  "keys.detailStatus": "Go to transitions",
+  "keys.detailPriority": "Go to priority"
 }

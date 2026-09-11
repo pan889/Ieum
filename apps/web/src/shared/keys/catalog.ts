@@ -20,7 +20,12 @@ import type { Bindings } from './keys'
  */
 export type GlobalShortcutId = 'palette' | 'search' | 'createIssue' | 'help'
 export type ListShortcutId = 'listDown' | 'listUp' | 'listOpen'
-export type ShortcutId = GlobalShortcutId | ListShortcutId
+export type DetailShortcutId =
+  | 'detailEdit'
+  | 'detailAssignee'
+  | 'detailStatus'
+  | 'detailPriority'
+export type ShortcutId = GlobalShortcutId | ListShortcutId | DetailShortcutId
 
 export interface Shortcut {
   id: ShortcutId
@@ -57,6 +62,27 @@ export const LIST_SHORTCUTS: readonly Shortcut[] = [
   { id: 'listOpen', combo: 'o', labelKey: 'keys.listOpen' },
   { id: 'listOpen', combo: 'enter', labelKey: 'keys.listOpen' },
 ]
+
+/**
+ * 이슈 상세. **여기 넷은 각자 자기 상태를 가진 컴포넌트가 등록한다** —
+ * 편집은 편집기가, 담당자·우선순위는 옆 칸이, 상태는 전이 줄이 안다.
+ * 도움말은 소제목이 같은 묶음을 합쳐 하나로 보여 준다.
+ *
+ * `s`·`p` 는 값을 **바꾸지 않고 그 자리로 데려간다.** 어느 상태로 갈지는
+ * 워크플로가 정하고 우선순위는 다섯 갈래라, 키 하나가 고를 수 있는 것이
+ * 아니다 — 고르는 일은 사람이 하고 키는 거기까지 가는 시간을 없앤다.
+ */
+export const DETAIL_SHORTCUTS: readonly Shortcut[] = [
+  { id: 'detailEdit', combo: 'e', labelKey: 'keys.detailEdit' },
+  { id: 'detailAssignee', combo: 'a', labelKey: 'keys.detailAssignee' },
+  { id: 'detailStatus', combo: 's', labelKey: 'keys.detailStatus' },
+  { id: 'detailPriority', combo: 'p', labelKey: 'keys.detailPriority' },
+]
+
+/** 상세 묶음에서 몇 개만 골라 온다. 등록하는 쪽이 자기 것만 가져간다. */
+export function pick(ids: readonly ShortcutId[]): readonly Shortcut[] {
+  return DETAIL_SHORTCUTS.filter((s) => ids.includes(s.id))
+}
 
 /** 목록과 처리 함수를 맞붙인다. 빠진 것이 있으면 타입이 막는다. */
 export function bindingsFrom<Id extends ShortcutId>(

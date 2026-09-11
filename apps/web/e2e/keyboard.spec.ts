@@ -174,3 +174,115 @@ test.describe('목록에서', () => {
     await expect(page).toHaveURL(new RegExp(`/issues/${key}-`))
   })
 })
+
+test.describe('이슈에서', () => {
+  test.slow()
+
+  /**
+   * 상세 화면이 **다 그려질 때까지** 기다린다.
+   *
+   * `createIssue` 는 URL 이 바뀌면 돌아온다. 그 시점엔 아직 데이터가 오는
+   * 중이고 단축키를 등록하는 컴포넌트가 안 붙어 있다 — 곧바로 누르면 아무
+   * 일도 안 난다. 목록의 `/` 에서 이미 같은 것에 걸렸다.
+   */
+  async function openIssue(page: import('@playwright/test').Page, key: string, summary: string) {
+    await createIssue(page, key, summary)
+    await expect(page.getByRole('button', { name: /^(edit|편집)$/i })).toBeVisible()
+  }
+
+  test('e·a·p·s 가 각 자리로 데려간다', async ({ page }) => {
+    await signIn(page)
+    const key = uniqueKey('KD')
+    await createProject(page, key)
+    await openIssue(page, key, '단축키로 고친다')
+
+    // e — 편집을 연다.
+    await page.keyboard.press('e')
+    await expect(page.getByRole('button', { name: /^(save|저장)$/i })).toBeVisible()
+    await page.getByRole('button', { name: /^(cancel|취소)$/i }).click()
+    await expect(page.getByRole('button', { name: /^(edit|편집)$/i })).toBeVisible()
+
+    // a — 담당자 고르는 칸이 뜬다.
+    await page.keyboard.press('a')
+    await expect(page.getByLabel(/^(assignee|담당자)$/i)).toBeVisible()
+
+    // p — 우선순위 상자로 초점이 간다.
+    const priority = page.getByRole('combobox', { name: /^(priority|우선순위)$/i })
+    await page.keyboard.press('p')
+    await expect(priority).toBeFocused()
+
+    // **상자 안에서는 `s` 가 안 먹는다.** 선택 상자는 글자로 항목을 고르므로
+    // 억제 대상이다 — 여기서 단축키가 튀면 그 표준 동작이 죽는다.
+    // (처음엔 이걸 모르고 `p` 다음에 곧바로 `s` 를 눌러 시험이 붉었다.
+    //  제품이 맞았고 시험이 틀렸다.)
+    await page.keyboard.press('s')
+    await expect(priority).toBeFocused()
+
+    // 상자에서 나오면 s 가 전이 단추로 데려간다.
+    await page.getByRole('heading', { name: '단축키로 고친다' }).click()
+    await page.keyboard.press('s')
+    await expect(priority).not.toBeFocused()
+    await expect(page.locator('button:focus')).toHaveCount(1)
+  })
+
+  test('고치다 취소한 뒤 e 를 눌러도 **버린 초안이 되살아나지 않는다**', async ({ page }) => {
+    await signIn(page)
+    const key = uniqueKey('KD')
+    await createProject(page, key)
+    await openIssue(page, key, '원래 제목')
+
+    // 단추로 열어 고치다 취소한다.
+    await page.getByRole('button', { name: /^(edit|편집)$/i }).click()
+    const summary = page.getByLabel(/^(summary|제목)$/i)
+    await summary.fill('버릴 제목')
+    await page.getByRole('button', { name: /^(cancel|취소)$/i }).click()
+    await expect(page.getByRole('button', { name: /^(edit|편집)$/i })).toBeVisible()
+
+    // 이번엔 키로 연다. 단추와 같은 길을 써야 원본이 보인다 —
+    // 처음엔 `e` 가 `setEditing(true)` 만 해서 버린 초안이 되살아났다.
+    await page.keyboard.press('e')
+    await expect(page.getByLabel(/^(summary|제목)$/i)).toHaveValue('원래 제목')
+  })
+
+  test('도움말이 이슈 화면에서만 상세 키를 보여 준다', async ({ page }) => {
+    await signIn(page)
+    const key = uniqueKey('KD')
+    await createProject(page, key)
+    await openIssue(page, key, '도움말 확인')
+
+    await page.keyboard.press('?')
+    const help = page.getByRole('dialog', { name: /keyboard shortcuts|키보드 단축키/i })
+    // 네 개가 **한 묶음**으로 합쳐져 보인다. 각자 다른 컴포넌트가 등록한 것이다.
+    await expect(help.getByText(/on an issue|이슈에서/i)).toBeVisible()
+    await expect(help.getByText(/change assignee|담당자 바꾸기/i)).toBeVisible()
+    await expect(help.getByText(/go to priority|우선순위로/i)).toBeVisible()
+    await page.getByRole('button', { name: /close|닫기/i }).click()
+
+    // 첫 화면으로 가면 사라진다.
+    await page.goto('/')
+    await expect(page.getByRole('searchbox')).toBeVisible()
+    await page.keyboard.press('?')
+    await expect(
+      page.getByRole('dialog').getByText(/change assignee|담당자 바꾸기/i),
+    ).toHaveCount(0)
+  })
+
+  test('**코멘트를 쓰는 중에는 상세 단축키가 튀지 않는다**', async ({ page }) => {
+    await signIn(page)
+    const key = uniqueKey('KD')
+    await createProject(page, key)
+    await openIssue(page, key, '코멘트 중 안 튄다')
+
+    // 코멘트 칸은 서식 편집기라 `contenteditable` 이다 — `input` 이 아니라서
+    // 억제에서 제일 놓치기 쉬운 갈래이고, 그래서 여기를 고른다.
+    const box = page.locator('[contenteditable="true"]').first()
+    await box.click()
+    // `please paste` 에 `e`·`a`·`s`·`p` 가 다 들어 있다.
+    await page.keyboard.type('please paste')
+
+    // 편집이 열리지 않았고, 담당자 칸도 안 떴고, 친 글자가 그대로 있다.
+    await expect(page.getByRole('button', { name: /^(save|저장)$/i })).toHaveCount(0)
+    await expect(page.getByLabel(/^(assignee|담당자)$/i)).toHaveCount(0)
+    await expect(box).toContainText('please paste')
+  })
+})
