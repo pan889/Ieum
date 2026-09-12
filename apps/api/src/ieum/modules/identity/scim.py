@@ -287,7 +287,9 @@ def service_provider_config(location: str) -> dict[str, Any]:
     """
     return {
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
-        "documentationUri": "https://github.com/pan889/ieum-docs",
+        # **IdP 관리자가 화면에서 눌러 보는 링크다.** 비공개 저장소를 적으면
+        # 그 사람에게는 404 다.
+        "documentationUri": "https://github.com/pan889/Ieum",
         "patch": {"supported": True},
         # 여러 요청을 한 번에 보내는 것. 안 받는다 — 부분 실패의 의미를
         # 정의해야 하고, 그 답은 언제나 "절반만 반영됐다" 가 된다.
