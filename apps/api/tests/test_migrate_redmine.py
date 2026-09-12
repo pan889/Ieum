@@ -18,7 +18,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ieum.migrate.redmine import _issue, _people
+import pytest
+
+from ieum.migrate.redmine import Client, RedmineError, _issue, _people
 
 FIXTURES = Path(__file__).parent / "fixtures" / "redmine"
 
@@ -135,3 +137,24 @@ class TestPeople:
         """Redmine 은 이름을 두 칸으로 들고 있다. 한글도 그대로 와야 한다."""
         people = _people(_Recorded(_load("users")), log=None)  # type: ignore[arg-type]
         assert {p.name for p in people} >= {"하나 김"}
+
+
+class TestTheAddressIsCheckedBeforeAnythingIsOpened:
+    """`urlopen` 은 스킴을 안 가린다. `file://` 을 주면 파일을 연다.
+
+    관리자의 기계에서 도는 도구라 지금은 위험이 작지만, 주소가 늘 사람 손에서
+    오는 것은 아니고(스크립트·CI 변수) 이 코드가 서버 쪽으로 옮겨 붙는 날
+    그대로 SSRF 가 된다 — ADR-0016 이 그 걱정 위에 서 있다.
+    """
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["file:///etc/passwd", "ftp://example.com", "redmine.example.com", "http://", ""],
+        ids=["file", "ftp", "no-scheme", "no-host", "empty"],
+    )
+    def test_it_refuses_before_reaching_the_network(self, bad: str) -> None:
+        with pytest.raises(RedmineError):
+            Client(bad, "key")
+
+    def test_a_plain_https_address_is_fine(self) -> None:
+        assert Client("https://redmine.example.com/", "key")._base == "https://redmine.example.com"

@@ -53,22 +53,41 @@ class RedmineError(RuntimeError):
     """소스를 읽다가 멈췄다. 메시지에 **키를 담지 않는다.**"""
 
 
+def _http_url(base_url: str) -> str:
+    """`--url` 을 http/https 로 못 박는다.
+
+    `urlopen` 은 스킴을 가리지 않는다 — `file:///etc/passwd` 를 주면 파일을
+    연다. 이 도구는 관리자의 기계에서 돌지만 **주소는 사람이 치는 값이
+    아닐 수도 있다**(스크립트·설정 파일·CI 변수). 그리고 이 코드는 언젠가
+    서버 쪽으로 옮겨 붙는 종류다 — 그때 이 검사가 없으면 SSRF 통로가 된다.
+    ADR-0016 이 통째로 그 걱정 위에 서 있다.
+    """
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise RedmineError(f"http 또는 https 주소여야 한다: {base_url!r}")
+    return base_url.rstrip("/")
+
+
 class Client:
     """Redmine REST 를 읽기만 한다. 쓰기는 없다 — 이관은 소스를 건드리지 않는다."""
 
     def __init__(self, base_url: str, api_key: str, *, timeout: int = TIMEOUT) -> None:
-        self._base = base_url.rstrip("/")
+        self._base = _http_url(base_url)
         self._key = api_key
         self._timeout = timeout
 
     def get(self, path: str, **params: str | int) -> dict[str, Any]:
         query = urllib.parse.urlencode({k: str(v) for k, v in params.items()})
         url = f"{self._base}{path}" + (f"?{query}" if query else "")
-        request = urllib.request.Request(  # noqa: S310 - 관리자가 적은 자기 서버다
+        # 스킴은 `_http_url` 이 http/https 로 못 박았다 — 그래서 `urlopen` 이
+        # 파일이나 다른 스킴을 열 길이 없다.
+        request = urllib.request.Request(  # noqa: S310  # nosec B310
             url, headers={"X-Redmine-API-Key": self._key, "Accept": "application/json"}
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:  # noqa: S310
+            with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                request, timeout=self._timeout
+            ) as response:
                 body = json.loads(response.read())
         except urllib.error.HTTPError as exc:
             raise RedmineError(_explain(exc, path)) from None
