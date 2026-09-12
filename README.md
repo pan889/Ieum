@@ -65,7 +65,34 @@ Jira + Confluence + JSM(서비스데스크)를 대체하는 **셀프호스팅** 
 
 ---
 
-## 띄워 보기
+## 깔아 보기
+
+Docker 와 Compose(v2)만 있으면 한 줄로 섭니다.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.0.0/deploy/install/install.sh
+sh install.sh --url https://ieum.example.com
+```
+
+물어보는 것은 **주소 하나**입니다. 비밀 키·DB 비밀번호·스토리지 열쇠는 그
+자리에서 만들어 `.env`(0600)에 넣고, 스키마를 올리고 관리자를 만든 다음 주소와
+첫 비밀번호를 찍어 줍니다. 판을 올릴 때도 같은 명령입니다
+(`sh install.sh --version 1.1.0`) — 비밀은 다시 만들지 않습니다.
+
+**밖으로 여는 포트는 하나**입니다. 화면도 API 도 첨부도 같은 오리진으로
+나가서, 앞에 TLS 를 세울 때 붙일 곳이 한 군데입니다.
+
+이미지는 **빌드하지 않고 당깁니다**(`ghcr.io/pan889/ieum-api`,
+`ieum-web`). 깐 사람과 우리가 같은 바이트를 돌아야 "무엇이 돌고 있냐" 에
+답할 수 있기 때문입니다.
+
+→ **[설치 안내](deploy/install/README.md)** — 프록시 뒤에 두기, 판 올리기,
+백업할 것, 이 설치본이 **하지 않는 것**.
+→ 여러 대로 늘리려면 [Helm 차트](deploy/helm/ieum/)를 봅니다.
+
+## 고쳐 보기
+
+소스에서 띄우는 쪽입니다. 코드가 마운트되고 고치면 바로 반영됩니다.
 
 ```bash
 git clone https://github.com/pan889/Ieum.git && cd Ieum
@@ -76,13 +103,6 @@ make dev             # Postgres·Redis·MinIO·API·워커·웹이 함께 뜹니
 
 <http://localhost:5173> 을 열고 `.env` 에 적은 관리자 계정으로 들어갑니다.
 
-운영 설치는 주소 셋(`IEUM_BASE_URL`·`IEUM_WEB_ORIGINS`·
-`IEUM_S3_PUBLIC_ENDPOINT_URL`)을 실제 값으로 바꿔야 합니다. **비워 두면 기동을
-거부합니다** — 조용히 개발 기본값으로 뜨는 것보다 안 뜨는 쪽이 낫기 때문입니다.
-
-→ **[설치 안내](https://pan889.github.io/ieum-docs/install/)** 에 비밀 키 백업,
-메일, 쿠버네티스(Helm), 백업·복구가 있습니다.
-
 ## 처음 할 일
 
 | | |
@@ -92,8 +112,8 @@ make dev             # Postgres·Redis·MinIO·API·워커·웹이 함께 뜹니
 | 위키 스페이스를 연다 | **위키** → 새 스페이스. `.md` 묶음을 그대로 올려도 됩니다 |
 | 고객 창구를 연다 | **설정 → 포털**. 요청 유형이 곧 폼이고, 들어온 요청은 **서비스데스크** 의 큐에 담깁니다 |
 
-→ **[쓰는 법](https://pan889.github.io/ieum-docs/guide/)** — 이슈·위키·검색·
-데스크를 사람 순서로 설명합니다.
+화면 안에서 `?` 를 누르면 **그 화면에서 실제로 도는 단축키**가 나옵니다.
+막히는 곳이 있으면 이슈로 알려 주세요.
 
 ## 옮겨 오기
 
@@ -107,7 +127,7 @@ uv run --project apps/api python -m ieum.migrate.redmine \
 ```
 
 Jira·Confluence·Zammad 어댑터는 아직 없습니다. 받는 쪽(묶음을 적재하는 화면)도
-만드는 중입니다 — [로드맵](https://github.com/pan889/ieum-docs/blob/main/docs/roadmap.md).
+만드는 중입니다 — [CHANGELOG](CHANGELOG.md) 의 "빠진 것" 에 지금 상태가 있습니다.
 
 ## 만드는 사람에게
 
@@ -116,20 +136,19 @@ make test            # API 2,761개 + 웹 단위 555개
 pnpm --filter @ieum/web exec playwright test    # 브라우저 265개
 ```
 
-개발 규칙과 아키텍처 판단은 **문서 저장소가 단독으로 소유**합니다. 이 저장소에
-사본을 두지 않습니다 — 두 벌을 두면 한 벌만 고쳐지는 날이 오기 때문입니다.
-
 | | |
 |---|---|
-| 개발 규칙 | [CLAUDE.md](https://github.com/pan889/ieum-docs/blob/main/CLAUDE.md) |
-| 로컬 실행 | [dev-setup.md](https://github.com/pan889/ieum-docs/blob/main/docs/contributing/dev-setup.md) |
-| 아키텍처 | [overview.md](https://github.com/pan889/ieum-docs/blob/main/docs/architecture/overview.md) |
-| 설계 판단(ADR) | [adr/](https://github.com/pan889/ieum-docs/tree/main/docs/adr) |
-| 기능 전수 목록 | [feature-map.md](https://github.com/pan889/ieum-docs/blob/main/docs/product/feature-map.md) |
-| 로드맵 | [roadmap.md](https://github.com/pan889/ieum-docs/blob/main/docs/roadmap.md) |
+| 명령 목록 | `make help` |
+| 커밋 전 전체 검사 | `make check` (ruff · mypy --strict · bandit · 시험 · i18n) |
+| 로컬 스택 | `make dev` · `make infra` · `make reset-db` |
+| 배포 | [`deploy/install/`](deploy/install/) (한 줄) · [`deploy/compose/`](deploy/compose/) (소스 빌드) · [`deploy/helm/`](deploy/helm/ieum/) |
 
 판마다 바뀐 것과 **어디까지 실제로 확인했는지**는 [CHANGELOG.md](CHANGELOG.md)
-에 있습니다. 기능 목록보다 그쪽이 중요합니다.
+에 있습니다. 기능 목록보다 그쪽이 중요합니다 — "구현했다" 와 "실제로 그렇게
+돈다" 는 다르고, 그 차이가 이 프로젝트에서 고장을 가장 많이 냈습니다.
+
+설계 판단(ADR)과 로드맵은 **비공개 저장소**에서 관리합니다. 무엇을 왜 그렇게
+했는지 궁금하면 이슈로 물어봐 주세요 — 답이 필요한 것은 여기로 옮겨 적겠습니다.
 
 위 사진은 `node tools/screenshots.mjs` 가 실제로 도는 앱에서 찍습니다. 화면이
 바뀌면 손으로 고치지 말고 다시 돌리세요.

@@ -58,10 +58,20 @@ security: ## bandit 정적 분석 (medium 이상만 실패)
 	$(UV) bandit -q -ll -r deploy
 
 .PHONY: lint
-lint: ## ruff + eslint
+lint: shellcheck ## ruff + eslint + shellcheck
 	$(UV) ruff check $(API)/src $(API)/tests deploy
 	$(UV) ruff format --check $(API)/src $(API)/tests deploy
 	pnpm -r --if-present lint
+
+# **없으면 건너뛰되 크게 말한다.** shellcheck 는 로컬 필수 도구가 아니지만
+# CI 는 무조건 돌린다 — 조용히 건너뛰면 "통과했다" 가 거짓이 된다.
+.PHONY: shellcheck
+shellcheck: ## 설치 스크립트 정적 분석
+	@if command -v shellcheck > /dev/null 2>&1; then \
+		shellcheck -s sh deploy/install/install.sh && echo "shellcheck: 통과"; \
+	else \
+		echo "shellcheck 가 없어 건너뛴다 — CI 가 본다 (apt install shellcheck)"; \
+	fi
 
 .PHONY: fmt
 fmt: ## 자동 포맷

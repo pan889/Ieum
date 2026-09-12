@@ -1,0 +1,233 @@
+# Ieum 한 노드 설치본.
+#
+# **여기서는 아무것도 빌드하지 않는다.** 판을 붙여 낸 이미지를 레지스트리에서
+# 당겨 쓴다. 그래야 설치한 사람과 우리가 **같은 바이트**를 돌린다 — 각자
+# 빌드하면 같은 태그가 기계마다 다른 것을 뜻하게 되고, "무엇이 돌고 있냐" 를
+# 물었을 때 답할 수가 없다.
+#
+# 소스 체크아웃이 필요 없다. 이 파일과 `.env` 만 있으면 된다.
+#
+#   ./install.sh              처음 설치·판 올리기
+#   docker compose up -d      직접 다루고 싶을 때
+#
+# 밖으로 여는 포트는 **하나**다. 첨부까지 같은 오리진으로 나간다 —
+# `web` 안의 nginx 가 버킷 경로를 스토리지로 넘긴다(아래 `ieum-attachments`
+# 설정). 그래서 앞에 TLS 를 세울 때 붙일 곳이 한 군데다.
+name: ieum
+
+x-api-env: &api-env
+  IEUM_ENV: production
+  IEUM_DEBUG: "false"
+  # 없으면 **기동 전에** 멈춘다. 조용히 개발 기본값으로 뜨는 것보다 낫다.
+  IEUM_SECRET_KEY: ${IEUM_SECRET_KEY:?IEUM_SECRET_KEY 가 없다. install.sh 가 만들어 준다}
+  IEUM_BASE_URL: ${IEUM_PUBLIC_URL:?IEUM_PUBLIC_URL 이 없다. 예) https://ieum.example.com}
+  # 화면·API·첨부가 **한 오리진**이다. 셋을 따로 두면 한쪽만 고쳐 두고
+  # CORS 나 presigned 링크가 조용히 깨진다.
+  IEUM_API_URL: ${IEUM_PUBLIC_URL}
+  IEUM_CORS_ORIGINS: ${IEUM_PUBLIC_URL}
+  IEUM_S3_PUBLIC_ENDPOINT_URL: ${IEUM_PUBLIC_URL}
+  IEUM_DATABASE_URL: postgresql+asyncpg://postgres:${IEUM_DB_PASSWORD:?}@postgres:5432/ieum
+  IEUM_REDIS_URL: redis://redis:6379/0
+  IEUM_S3_ENDPOINT_URL: http://minio:9000
+  # **`web` 의 nginx 가 이 이름으로 자리를 연다.** 바꾸면 첨부 링크가 404 가
+  # 된다 — `attachments.conf` 의 경로와 같은 값이어야 한다.
+  IEUM_S3_BUCKET: ieum-attachments
+  IEUM_S3_ACCESS_KEY: ${IEUM_S3_ACCESS_KEY:?}
+  IEUM_S3_SECRET_KEY: ${IEUM_S3_SECRET_KEY:?}
+  # 메일은 **고르는 것**이다. 안 주면 초대·알림 메일이 안 나간다(앱은 뜬다).
+  IEUM_SMTP_HOST: ${IEUM_SMTP_HOST:-}
+  IEUM_SMTP_PORT: ${IEUM_SMTP_PORT:-587}
+  IEUM_SMTP_TLS: ${IEUM_SMTP_TLS:-true}
+  IEUM_SMTP_USER: ${IEUM_SMTP_USER:-}
+  IEUM_SMTP_PASSWORD: ${IEUM_SMTP_PASSWORD:-}
+  IEUM_MAIL_FROM: ${IEUM_MAIL_FROM:-ieum@example.com}
+
+services:
+  postgres:
+    # PGroonga 가 든 이미지. 한국어 검색이 이것 위에 선다(ADR-0005) —
+    # 맨 postgres 로 바꾸면 마이그레이션이 색인을 못 만든다.
+    image: groonga/pgroonga:4.0.1-alpine-16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${IEUM_DB_PASSWORD:?}
+      POSTGRES_DB: ieum
+      LANG: ko_KR.UTF-8
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    configs:
+      - source: postgres-extensions
+        target: /docker-entrypoint-initdb.d/01-extensions.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ieum"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${IEUM_S3_ACCESS_KEY:?}
+      MINIO_ROOT_PASSWORD: ${IEUM_S3_SECRET_KEY:?}
+      # 브라우저가 여기로 **직접** 올린다. 프리플라이트가 막히면 업로드가
+      # 통째로 죽는다. MinIO 는 S3 의 CORS API 를 구현하지 않아 `mc cors set`
+      # 이 안 통한다 — 이 환경변수가 유일한 경로다.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${IEUM_PUBLIC_URL}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # 버킷을 만들고 끝난다.
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MC_USER" "$$MC_PASSWORD"
+        mc mb --ignore-existing local/ieum-attachments
+    environment:
+      MC_USER: ${IEUM_S3_ACCESS_KEY:?}
+      MC_PASSWORD: ${IEUM_S3_SECRET_KEY:?}
+    restart: "no"
+
+  # 스키마를 올리고 끝난다. **앱보다 먼저** 돈다 — 판을 올릴 때 새 코드가
+  # 옛 스키마를 보고 뜨면 그 몇 초 동안 오류가 사용자에게 보인다.
+  migrate:
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?IEUM_VERSION 이 없다. 예) 1.0.0}
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: *api-env
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    restart: "no"
+
+  # 관리자·기본 역할·워크플로우. 두 번 돌려도 안전하다(있으면 지나간다).
+  seed:
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    environment:
+      <<: *api-env
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+    command: ["python", "-m", "ieum.cli", "seed"]
+    restart: "no"
+
+  api:
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?}
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+      # **시드까지 끝난 뒤에 뜬다.** 안 그러면 로그인 화면이 먼저 보이고
+      # 계정은 아직 없는 몇 초가 생긴다 — 처음 깐 사람이 정확히 그때 친다.
+      seed: {condition: service_completed_successfully}
+    environment: *api-env
+    command: ["uvicorn", "ieum.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  worker:
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?}
+    # **죽으면 되살아난다.** Redis 가 잠깐 끊기면 arq 가 그대로 빠져나가고,
+    # 그러면 아웃박스가 조용히 쌓인다 — 알림·메일·웹훅·SLA 가 다 멈추는데
+    # 화면은 멀쩡하다.
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_started}
+    environment: *api-env
+    command: ["arq", "ieum.worker.settings.WorkerSettings"]
+    healthcheck:
+      # **api 이미지를 그대로 쓰므로 이미지의 HEALTHCHECK 를 물려받는다** —
+      # 그것은 `/healthz` 를 두드리는데 워커는 HTTP 를 안 연다. 덮어쓰지 않으면
+      # 워커는 영원히 unhealthy 이고, `up --wait` 은 멀쩡한 스택에서 실패한다.
+      #
+      # arq 가 Redis 에 남기는 기록을 읽는다. 기록은 30초마다 갱신되고
+      # (`WorkerSettings.health_check_interval`) 수명이 31초라, 멈춰 선
+      # 워커는 여기서 붉어진다.
+      test: ["CMD", "arq", "--check", "ieum.worker.settings.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  web:
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-web:${IEUM_VERSION:?}
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    # 이미지 안의 nginx 가 `/etc/nginx/ieum-extra/*.conf` 를 include 한다.
+    # 첨부를 같은 오리진으로 붙이는 자리다 — 이것 때문에 포트가 하나로 끝난다.
+    configs:
+      - source: attachments-proxy
+        target: /etc/nginx/ieum-extra/attachments.conf
+    ports:
+      - "${IEUM_HTTP_BIND:-0.0.0.0}:${IEUM_HTTP_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+configs:
+  postgres-extensions:
+    # 최초 기동 1회. 확장은 마이그레이션이 아니라 여기서 깐다 —
+    # 마이그레이션은 슈퍼유저 권한을 가정하지 않는다.
+    content: |
+      CREATE EXTENSION IF NOT EXISTS citext;
+      CREATE EXTENSION IF NOT EXISTS pg_trgm;
+      CREATE EXTENSION IF NOT EXISTS ltree;
+      CREATE EXTENSION IF NOT EXISTS pgroonga;
+
+  attachments-proxy:
+    # **경로를 고쳐 쓰지 않는다.** presigned 서명에 경로가 들어가므로 한 글자만
+    # 달라져도 스토리지가 403 을 낸다. MinIO 는 path-style 이라 URL 의 첫 칸이
+    # 곧 버킷 이름이고(`/ieum-attachments/<키>`), 그래서 그 이름 그대로 자리를
+    # 열면 아무것도 안 고치고 넘길 수 있다.
+    #
+    # **`$$host` 가 아니라 `$$http_host` 다.** SigV4 는 Host 헤더까지 서명하는데
+    # (`X-Amz-SignedHeaders=...;host`), nginx 의 `$$host` 는 **포트를 뗀다.**
+    # `localhost:8080` 으로 서명한 것이 MinIO 에는 `localhost` 로 도착해서
+    # `SignatureDoesNotMatch` 403 이 난다 — 재어 보고 알았다. 받은 Host 를
+    # 글자 그대로 넘겨야 한다.
+    content: |
+      location /ieum-attachments/ {
+          proxy_pass http://minio:9000;
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          # 첨부 상한이 25MB(`core/attachments.py`). 여유를 둔다.
+          client_max_body_size 64m;
+          # 큰 파일을 다 받아 두고 보내지 않는다. 디스크로 새고 첫 바이트가 늦다.
+          proxy_request_buffering off;
+          proxy_read_timeout 300s;
+          proxy_send_timeout 300s;
+      }
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

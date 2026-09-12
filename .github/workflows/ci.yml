@@ -78,6 +78,11 @@ jobs:
           uv run --project apps/api ruff check apps/api/src apps/api/tests deploy
           uv run --project apps/api ruff format --check apps/api/src apps/api/tests deploy
 
+      - name: shellcheck (설치 스크립트)
+        # ubuntu-latest 에 이미 깔려 있다. **로컬에서는 없으면 건너뛰므로**
+        # (Makefile) 여기가 이 파일을 실제로 보는 유일한 자리다.
+        run: shellcheck -s sh deploy/install/install.sh
+
       - name: mypy --strict
         # --config-file 없이 워크스페이스 루트에서 돌리면 루트 pyproject.toml 이
         # 잡혀 strict 설정이 통째로 무시된다.

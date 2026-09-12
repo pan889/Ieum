@@ -1,9 +1,20 @@
-# 배포 (Docker Compose)
+# 배포 (Docker Compose) — **소스에서 빌드해 올리는 쪽**
+
+> 그냥 깔고 싶으면 여기가 아니다. **[`deploy/install/`](../install/)** 이
+> 판을 붙여 낸 이미지를 당겨서 한 줄로 세운다. 이 디렉터리는 **소스를 고쳐
+> 자기 이미지로 올리는** 사람을 위한 것이다.
 
 `docker-compose.yml`(루트)이 개발용, 여기 파일들이 운영 오버라이드다.
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/compose/prod.yml up -d
+```
+
+이 경로는 **마이그레이션을 대신 돌려 주지 않는다.** 띄운 뒤에 한 번 친다:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/compose/prod.yml \
+    run --rm api alembic -c alembic.ini upgrade head
 ```
 
 | 파일 | 용도 |
@@ -30,4 +41,5 @@ docker compose -f docker-compose.yml -f deploy/compose/prod.yml up -d
 MinIO 의 CORS 는 `mc cors set` 으로 못 바꾼다 — MinIO 가 S3 의 CORS API 를
 구현하지 않는다. `MINIO_API_CORS_ALLOW_ORIGIN` 환경변수가 유일한 경로다.
 
-Helm 차트는 M6. 그 전까지 Compose 가 유일한 공식 배포 경로다.
+여러 대로 늘리려면 Helm 차트(`deploy/helm/ieum/`)를 본다. 한 노드면
+Compose 로 충분하다 — 그것이 이 프로젝트의 1급 배포 경로다(D-11).
