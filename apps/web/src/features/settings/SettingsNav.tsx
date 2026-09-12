@@ -31,6 +31,7 @@ const ORG = [
   { to: '/settings/repositories', labelKey: 'vcs:title' },
   { to: '/settings/assets', labelKey: 'desk:asset.title' },
   { to: '/settings/apps', labelKey: 'plugins:title' },
+  { to: '/settings/imports', labelKey: 'imports:title' },
   { to: '/settings/portals', labelKey: 'desk:portals.title' },
   { to: '/settings/customers', labelKey: 'desk:customers.title' },
   { to: '/settings/sla', labelKey: 'desk:sla.policies' },
@@ -42,7 +43,7 @@ const ORG = [
 ] as const
 
 export function SettingsNav() {
-  const { t } = useTranslation(['auth', 'admin', 'desk', 'vcs'])
+  const { t } = useTranslation(['auth', 'admin', 'desk', 'vcs', 'imports'])
 
   return (
     <div className="flex flex-col gap-1">
@@ -59,7 +60,7 @@ function Group({
   label: string
   tabs: readonly { readonly to: string; readonly labelKey: string }[]
 }) {
-  const { t } = useTranslation(['auth', 'admin', 'desk', 'vcs'])
+  const { t } = useTranslation(['auth', 'admin', 'desk', 'vcs', 'imports'])
 
   return (
     <nav className="flex flex-wrap items-baseline gap-1 border-b border-border" aria-label={label}>

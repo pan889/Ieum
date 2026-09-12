@@ -145,6 +145,17 @@ export {
   type SlotKind,
 } from './plugins'
 export {
+  createImportsApi,
+  type ImportChoice,
+  type ImportCounted,
+  type ImportLoaded,
+  type ImportMatch,
+  type ImportOverrides,
+  type ImportPerson,
+  type ImportPreview,
+  type ImportsApi,
+} from './imports'
+export {
   createAssetsApi,
   type Asset,
   type AssetPage,

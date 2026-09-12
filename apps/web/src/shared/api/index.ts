@@ -14,6 +14,7 @@ import {
   createGanttApi,
   createGroupsApi,
   createIdpApi,
+  createImportsApi,
   createIssuesApi,
   createNotificationsApi,
   createProjectsApi,
@@ -66,3 +67,4 @@ export const repositoriesApi = createRepositoriesApi(apiClient)
 export const approvalsApi = createApprovalsApi(apiClient)
 export const assetsApi = createAssetsApi(apiClient)
 export const pluginsApi = createPluginsApi(apiClient)
+export const importsApi = createImportsApi(apiClient)

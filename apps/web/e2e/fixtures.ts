@@ -622,3 +622,68 @@ export const test = base.extend<{ consoleErrors: string[] }>({
 })
 
 export { expect }
+
+/**
+ * 눌러 담지 않는(stored) ZIP 을 만든다. 시험이 올릴 묶음을 짓는 데 쓴다.
+ *
+ * 라이브러리를 안 붙인 이유: 시험 하나 때문에 의존성을 늘리면 그 의존성이
+ * 언젠가 CI 를 멈춘다. 눌러 담지 않는 ZIP 은 규격이 짧고, 파이썬 `zipfile`
+ * 이 그대로 읽는다(그것을 실제로 확인하고 쓴다).
+ */
+export function zip(files: [string, string | Buffer][]): Buffer {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+
+  for (const [name, content] of files) {
+    const nameBytes = Buffer.from(name, 'utf-8')
+    const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf-8')
+    const crc = crc32(data)
+
+    const local = Buffer.alloc(30 + nameBytes.length)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4) // 필요 버전
+    local.writeUInt16LE(0x0800, 6) // 이름이 UTF-8 이다
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(data.length, 18)
+    local.writeUInt32LE(data.length, 22)
+    local.writeUInt16LE(nameBytes.length, 26)
+    nameBytes.copy(local, 30)
+    locals.push(local, data)
+
+    const central = Buffer.alloc(46 + nameBytes.length)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4) // 만든 버전
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0x0800, 8)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(data.length, 20)
+    central.writeUInt32LE(data.length, 24)
+    central.writeUInt16LE(nameBytes.length, 28)
+    central.writeUInt32LE(offset, 42)
+    nameBytes.copy(central, 46)
+    centrals.push(central)
+
+    offset += local.length + data.length
+  }
+
+  const directory = Buffer.concat(centrals)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(files.length, 8)
+  end.writeUInt16LE(files.length, 10)
+  end.writeUInt32LE(directory.length, 12)
+  end.writeUInt32LE(offset, 16)
+  return Buffer.concat([...locals, directory, end])
+}
+
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff
+  for (const byte of data) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}

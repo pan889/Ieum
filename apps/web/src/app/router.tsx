@@ -28,6 +28,7 @@ import { SecurityScreen } from '@/features/settings/SecurityScreen'
 import { PasskeysScreen } from '@/features/settings/PasskeysScreen'
 import { GroupsScreen } from '@/features/settings/GroupsScreen'
 import { FieldsScreen } from '@/features/settings/FieldsScreen'
+import { ImportsScreen } from '@/features/settings/ImportsScreen'
 import { AppsScreen } from '@/features/settings/AppsScreen'
 import { AssetsScreen } from '@/features/settings/AssetsScreen'
 import { RepositoriesScreen } from '@/features/settings/RepositoriesScreen'
@@ -202,6 +203,16 @@ const appsRoute = createRoute({
   component: AppsScreen,
 })
 
+/**
+ * 옮겨 오기. `/settings/` 아래에 둔다 — 한 번 하고 마는 일이지만, 하는
+ * 사람은 관리자이고 고르는 것이 이 설치본의 어휘다.
+ */
+const importsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/imports',
+  component: ImportsScreen,
+})
+
 const assetsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/assets',
@@ -368,6 +379,7 @@ const routeTree = rootRoute.addChildren([
   repositoriesRoute,
   assetsRoute,
   appsRoute,
+  importsRoute,
   portalsRoute,
   customerOrgsRoute,
   deskRoute,

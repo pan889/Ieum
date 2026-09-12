@@ -85,6 +85,18 @@ export class ApiClient {
     return this.request<T>(path, { method: 'POST', body: form })
   }
 
+  /**
+   * 파일과 다른 칸을 **함께** 올린다. 이관 묶음이 그렇다 — 파일 옆에 어느
+   * 프로젝트로 넣을지와 사람이 지어 준 짝이 같이 가야 한다.
+   *
+   * `postFile` 과 나눈 이유: 저쪽은 칸이 하나라는 것이 계약이고, 여기에
+   * 선택 칸을 얹으면 부르는 쪽마다 무엇이 필수인지 달라진다. 여기서는
+   * `FormData` 를 부르는 쪽이 통째로 만든다.
+   */
+  postForm<T>(path: string, form: FormData): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: form })
+  }
+
   /** JSON 이 아니라 파일을 받는 GET. ZIP·마크다운 내보내기에 쓴다. */
   async getBlob(path: string): Promise<Blob> {
     let response = await this.send(path, { method: 'GET' })
