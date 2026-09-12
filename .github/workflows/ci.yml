@@ -247,7 +247,7 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=ieum -e MINIO_ROOT_PASSWORD=ieum-secret \
             -e MINIO_API_CORS_ALLOW_ORIGIN=http://127.0.0.1:5173,http://localhost:5173 \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
           # **못 뜨면 여기서 실패해야 한다.** 그냥 빠져나오면 다음 단계가
           # 연결 오류로 터지고, 로그에는 버킷 만들기가 실패한 것만 남는다 —
           # 원인이 "스토리지가 안 떴다" 라는 것을 알 방법이 없다.

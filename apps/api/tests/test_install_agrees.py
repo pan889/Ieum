@@ -35,6 +35,8 @@ INSTALL_SCRIPT = REPO / "deploy" / "install" / "install.sh"
 PROD_COMPOSE = REPO / "deploy" / "compose" / "prod.yml"
 WEB_NGINX = REPO / "apps" / "web" / "nginx.conf"
 RELEASE_WORKFLOW = REPO / ".github" / "workflows" / "release.yml"
+DEV_COMPOSE = REPO / "docker-compose.yml"
+CI_WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
 
 
 def _compose(path: Path) -> dict[str, Any]:
@@ -401,3 +403,50 @@ class TestTheInstallerPullsWhatTheReleasePushes:
         release_step = workflow["jobs"]["notes"]["steps"][-1]["with"]
         assert release_step["tag_name"] == "${{ needs.guard.outputs.tag }}"
         assert release_step["name"] == "${{ needs.guard.outputs.tag }}"
+
+
+class TestTheStorageImageComesFromSomewhereWeCanActuallyPull:
+    """**MinIO 는 도커 허브에서 못 받는다.**
+
+    2026-09-12, CI 의 E2E 잡이 첫 줄에서 죽었다:
+
+        docker: Error response from daemon: pull access denied for minio/minio,
+        repository does not exist or may require 'docker login'
+
+    MinIO 가 도커 허브 저장소의 익명 받기를 닫았다. 같은 태그가 quay.io 에는
+    그대로 있고 **다이제스트까지 같다** — 레지스트리만 바뀐 것이다.
+
+    이게 왜 게이트인가: 우리 화면에는 아무 일도 안 일어난다. 우리 이미지는
+    ghcr 에 있고 우리가 받아 본 적도 있다. 깨지는 것은 **처음 까는 사람의
+    `docker compose up`** 이고, 그 사람은 우리에게 말해 주지 않는다. 그리고
+    이미 받아 둔 기계에서는 몇 달이고 멀쩡해 보인다.
+
+    그래서 여기서 세 가지를 붙잡는다 — 레지스트리, 파일들 사이의 일치,
+    그리고 CI 가 compose 와 같은 것을 쓰는가.
+    """
+
+    @staticmethod
+    def _images(path: Path) -> dict[str, str]:
+        return {
+            name: spec["image"]
+            for name, spec in _compose(path)["services"].items()
+            if "minio" in spec.get("image", "")
+        }
+
+    @pytest.mark.parametrize("path", [DEV_COMPOSE, INSTALL_COMPOSE], ids=["dev", "install"])
+    def test_it_is_not_docker_hub(self, path: Path) -> None:
+        found = self._images(path)
+        assert found, f"{path.name} 에 minio 서비스가 없다 — 시험이 헛돌고 있다"
+        for name, image in found.items():
+            assert image.startswith("quay.io/minio/"), f"{path.name}:{name} = {image}"
+
+    def test_the_installer_and_the_dev_stack_agree(self) -> None:
+        """둘이 갈라지면 **까는 사람 쪽만** 깨지고 우리는 모른다."""
+        assert self._images(DEV_COMPOSE) == self._images(INSTALL_COMPOSE)
+
+    def test_ci_starts_the_same_image(self) -> None:
+        """CI 는 서비스 컨테이너가 아니라 `docker run` 으로 띄운다(command 를
+        바꿔야 해서). 그래서 이미지 이름이 **한 번 더 손으로** 적힌다 —
+        갈라지면 CI 에서만 통과하거나 CI 에서만 죽는다."""
+        server = _compose(DEV_COMPOSE)["services"]["minio"]["image"]
+        assert server in CI_WORKFLOW.read_text(encoding="utf-8"), server
