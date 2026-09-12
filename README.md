@@ -135,8 +135,8 @@ Jira·Confluence·Zammad 어댑터는 아직 없습니다. 받는 쪽(묶음을 
 ## 만드는 사람에게
 
 ```bash
-make test            # API 2,822개 + 웹 단위 555개
-pnpm --filter @ieum/web exec playwright test    # 브라우저 265개
+make test            # API 2,888개 + 웹 단위 565개
+pnpm --filter @ieum/web exec playwright test    # 브라우저 267개
 ```
 
 | | |
