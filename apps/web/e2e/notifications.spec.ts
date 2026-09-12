@@ -112,6 +112,49 @@ test('문서도 따로 구독한다', async ({ page, consoleErrors }) => {
   expect(consoleErrors).toEqual([])
 })
 
+test('프로젝트도 목록에서 구독한다 — 그리고 한 번만 묻는다', async ({
+  page,
+  consoleErrors,
+}) => {
+  /**
+   * **프로젝트 구독은 오래 저장만 되고 있었다.** 서버가 안 읽었고(고쳤다),
+   * 화면에는 손잡이가 없었다.
+   *
+   * 목록에 달면서 조심한 것: 행마다 구독 상태를 물으면 한 페이지에 스무
+   * 번이다. 그래서 한 번에 묻는 문을 먼저 냈고, **이 시험이 그것을
+   * 지킨다** — `/watches/status`(하나짜리)가 한 번도 안 불려야 한다.
+   */
+  const key = uniqueKey('V')
+  await signIn(page)
+  await createProject(page, key)
+
+  const single: string[] = []
+  const bulk: string[] = []
+  page.on('request', (request) => {
+    const url = request.url()
+    if (url.includes('/api/v1/watches/statuses')) bulk.push(url)
+    else if (url.includes('/api/v1/watches/status')) single.push(url)
+  })
+
+  await page.goto('/projects')
+  await page.getByLabel(/find a project/i).fill(key)
+  const row = page.getByTestId('projects').locator('li').filter({ hasText: key })
+  await expect(row).toHaveCount(1)
+
+  // 눌러서 구독하고, 새로고침해도 남는지 본다.
+  await row.getByRole('button', { name: /^watch$/i }).click()
+  await expect(row.getByRole('button', { name: /^watching$/i })).toBeVisible()
+  await page.reload()
+  await page.getByLabel(/find a project/i).fill(key)
+  await expect(row.getByRole('button', { name: /^watching$/i })).toBeVisible()
+
+  // **하나짜리 질의는 한 번도 안 나갔다.** 목록은 통째로 묻는다.
+  expect(single).toEqual([])
+  expect(bulk.length).toBeGreaterThan(0)
+
+  expect(consoleErrors).toEqual([])
+})
+
 test('내가 한 일은 나에게 알리지 않는다', async ({ page, consoleErrors }) => {
   const key = spaceKey()
   await signIn(page)

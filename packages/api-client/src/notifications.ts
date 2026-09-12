@@ -3,6 +3,11 @@ import type { ApiClient } from './client'
 /** 워치할 수 있는 것. 서버의 `WATCH_TARGETS` 와 같아야 한다. */
 export type WatchTarget = 'issue' | 'project' | 'page' | 'space'
 
+/** 물어본 것 중 **구독 중인 것만**. 없는 것은 안 적는다. */
+export interface WatchStatuses {
+  watching: string[]
+}
+
 export interface Notification {
   id: string
   /** `issue.created`·`wiki.page.updated`… 목록에서 아이콘을 고를 때 쓴다. */
@@ -66,6 +71,19 @@ export function createNotificationsApi(client: ApiClient) {
         client.get<WatchStatus>(
           `${WATCHES}/status?target_type=${target}&target_id=${encodeURIComponent(id)}`,
         ),
+      /**
+       * 여러 개를 **한 번에** 묻는다. 구독 중인 것만 돌아온다.
+       *
+       * 목록 화면이 행마다 `status` 를 부르면 한 페이지에 스무 번이다.
+       * 그 무름은 `ProjectPicker` 머리에 세 번 데고 적어 둔 것과 같은
+       * 종류라, 목록에 토글을 달기 전에 이 문을 먼저 냈다.
+       */
+      statuses: (target: WatchTarget, ids: string[]) => {
+        if (ids.length === 0) return Promise.resolve({ watching: [] } as WatchStatuses)
+        const query = new URLSearchParams({ target_type: target })
+        for (const id of ids) query.append('target_ids', id)
+        return client.get<WatchStatuses>(`${WATCHES}/statuses?${query.toString()}`)
+      },
       start: (target: WatchTarget, id: string) =>
         client.post<WatchStatus>(WATCHES, { target_type: target, target_id: id }),
       stop: (target: WatchTarget, id: string) =>

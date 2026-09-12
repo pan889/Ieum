@@ -22,6 +22,7 @@ from ieum.modules.notify.schemas import (
     PreferenceResponse,
     PreferenceUpdateRequest,
     WatchRequest,
+    WatchStatusesResponse,
     WatchStatusResponse,
     WebhookCreateRequest,
     WebhookResponse,
@@ -119,6 +120,23 @@ async def watch_status(
 ) -> WatchStatusResponse:
     watching = await WatchService(session).is_watching(actor, target_type, target_id)
     return WatchStatusResponse(watching=watching)
+
+
+@watches_router.get("/statuses", response_model=WatchStatusesResponse)
+async def watch_statuses(
+    actor: CurrentActor,
+    session: DbSession,
+    target_type: str,
+    target_ids: Annotated[list[UUID], Query()] = [],  # noqa: B006
+) -> WatchStatusesResponse:
+    """여러 개를 **한 번에** 묻는다.
+
+    `/status` 를 목록에서 행마다 부르면 한 페이지에 스무 번이다. 그 무름은
+    이미 세 번 데고 적어 둔 것이라(`ProjectPicker`), 목록에 구독 토글을 달기
+    전에 이 문을 먼저 냈다.
+    """
+    watching = await WatchService(session).watching_among(actor, target_type, target_ids)
+    return WatchStatusesResponse(watching=sorted(watching))
 
 
 # ── 웹훅 ────────────────────────────────────────────────────────

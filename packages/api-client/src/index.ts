@@ -255,6 +255,7 @@ export {
   type NotificationPreferences,
   type NotificationsApi,
   type WatchStatus,
+  type WatchStatuses,
   type WatchTarget,
 } from './notifications'
 export {

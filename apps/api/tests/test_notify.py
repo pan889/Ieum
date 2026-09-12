@@ -44,6 +44,7 @@ from ieum.modules.notify.models import (
 )
 from ieum.modules.notify.repository import DeliveryRepository
 from ieum.modules.notify.service import (
+    MAX_WATCH_TARGETS,
     NotificationRequest,
     NotificationService,
     WatchService,
@@ -395,6 +396,81 @@ class TestWatch:
             people["korean"].id,
             people["english"].id,
         }
+
+    async def test_watching_among_answers_many_at_once(
+        self, session: AsyncSession, people: dict[str, User]
+    ) -> None:
+        """**목록 화면이 행마다 묻지 않게 한다.**
+
+        한 페이지가 스무 줄이면 `/status` 로는 질의가 스무 번이다. 그 무름은
+        `ProjectPicker` 에 세 번 데고 적어 둔 것과 같은 종류다.
+        """
+        mine, theirs, untouched = new_id(), new_id(), new_id()
+        me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
+        service = WatchService(session)
+        await service.watch(me, "project", mine)
+        await service.watch(me, "project", theirs)
+        await session.flush()
+
+        assert await service.watching_among(me, "project", [mine, untouched]) == {mine}
+        assert await service.watching_among(me, "project", [mine, theirs]) == {mine, theirs}
+
+    async def test_watching_among_does_not_leak_other_people(
+        self, session: AsyncSession, people: dict[str, User]
+    ) -> None:
+        """**남이 구독한 것을 내 것으로 돌려주지 않는다.**
+
+        `WHERE user_id` 를 빠뜨리면 화면은 "구독 중" 이라고 그리는데 알림은
+        그 사람에게 가고 나에게는 안 온다 — 화면과 서버가 갈린다.
+        """
+        target = new_id()
+        service = WatchService(session)
+        await service.watch(
+            Actor(user_id=people["english"].id, email=people["english"].email, is_active=True),
+            "project",
+            target,
+        )
+        await session.flush()
+
+        me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
+        assert await service.watching_among(me, "project", [target]) == set()
+
+    async def test_watching_among_does_not_cross_target_kinds(
+        self, session: AsyncSession, people: dict[str, User]
+    ) -> None:
+        """같은 id 가 이슈에도 프로젝트에도 있을 수 있다. 종류를 안 보면
+        이슈를 구독한 사람이 프로젝트도 구독한 것이 된다."""
+        target = new_id()
+        me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
+        service = WatchService(session)
+        await service.watch(me, "issue", target)
+        await session.flush()
+
+        assert await service.watching_among(me, "project", [target]) == set()
+
+    async def test_watching_among_refuses_too_many_at_once(
+        self, session: AsyncSession, people: dict[str, User]
+    ) -> None:
+        """**상한이 없으면 주소 줄과 `IN (...)` 이 같이 길어진다.**
+
+        이 검사는 라우터가 아니라 서비스에 있다 — "한 번에 너무 많이 묻지
+        마라" 는 HTTP 의 관심사가 아니고, 라우터에 두면 다른 호출자는 그냥
+        지나간다.
+        """
+        me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
+        service = WatchService(session)
+        just_enough = [new_id() for _ in range(MAX_WATCH_TARGETS)]
+        assert await service.watching_among(me, "project", just_enough) == set()
+
+        with pytest.raises(ValidationError):
+            await service.watching_among(me, "project", [*just_enough, new_id()])
+
+    async def test_watching_among_rejects_an_unknown_kind(
+        self, session: AsyncSession, people: dict[str, User]
+    ) -> None:
+        me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
+        with pytest.raises(ValidationError):
+            await WatchService(session).watching_among(me, "sprint", [new_id()])
 
 
 class TestWebhookService:

@@ -271,6 +271,7 @@
   "notify.invalid_watch_target": "You can't watch that.",
   "notify.invalid_webhook_url": "Webhook URLs must be http or https.",
   "notify.no_events_selected": "Choose at least one event to subscribe to.",
+  "notify.too_many_targets": "You can ask about at most 100 at a time.",
   "notify.unknown_event_type": "Unknown event type.",
   "notify.webhook_secret_too_short": "Use a secret of at least 16 characters.",
   "org.cannot_drop_own_role_manage": "This role is your only way to manage roles. Give someone else that permission first.",

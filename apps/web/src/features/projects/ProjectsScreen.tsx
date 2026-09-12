@@ -1,8 +1,11 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { projectsApi } from '@/shared/api'
+import type { Project } from '@ieum/api-client'
+
+import { WatchButton } from '@/features/notifications/WatchButton'
+import { notificationsApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 
@@ -81,23 +84,7 @@ export function ProjectsScreen() {
           )}
         </Card>
       ) : (
-        <ul className="mt-6 flex flex-col gap-2">
-          {items.map((project) => (
-            <li key={project.id}>
-              <Card className="flex items-baseline gap-3 py-3">
-                <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-muted">
-                  {project.key}
-                </code>
-                <span className="font-medium">{project.name}</span>
-                {project.archived_at ? (
-                  <span className="ml-auto text-xs text-muted">
-                    {t('projects:detail.archived')}
-                  </span>
-                ) : null}
-              </Card>
-            </li>
-          ))}
-        </ul>
+        <ProjectRows items={items} />
       )}
 
       {projects.hasNextPage ? (
@@ -111,6 +98,54 @@ export function ProjectsScreen() {
         </Button>
       ) : null}
     </section>
+  )
+}
+
+/**
+ * 프로젝트 줄들. **구독 상태는 한 번만 묻는다.**
+ *
+ * 행마다 `watches.status` 를 부르면 한 페이지에 스무 번이다. 그 무름은
+ * `ProjectPicker` 머리에 세 번 데고 적어 둔 것과 같은 종류라, 서버에
+ * 한 번에 묻는 문(`/watches/statuses`)을 먼저 내고 그 위에 얹었다.
+ *
+ * 훅은 조건부로 못 부르므로 컴포넌트를 나눴다 — 목록이 빌 때도 이 자리는
+ * 돌아야 한다.
+ */
+function ProjectRows({ items }: { items: Project[] }) {
+  const { t } = useTranslation(['projects'])
+  const ids = items.map((row) => row.id)
+  const watched = useQuery({
+    // `'many'` 를 키에 둔다. 개별 질의와 접두사(`['watch']`)를 공유해서
+    // 한쪽을 누르면 다른 쪽도 다시 돈다.
+    queryKey: ['watch', 'project', 'many', ids],
+    queryFn: () => notificationsApi.watches.statuses('project', ids),
+    enabled: ids.length > 0,
+  })
+  // 아직 답이 없으면 단추를 그리지 않는다. `false` 로 그리면 구독 중인
+  // 사람에게 잠깐 "구독" 이라고 말하게 된다.
+  const watching = watched.data ? new Set(watched.data.watching) : null
+
+  return (
+    <ul className="mt-6 flex flex-col gap-2" data-testid="projects">
+      {items.map((project) => (
+        <li key={project.id}>
+          <Card className="flex items-baseline gap-3 py-3">
+            <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-muted">
+              {project.key}
+            </code>
+            <span className="font-medium">{project.name}</span>
+            {project.archived_at ? (
+              <span className="text-xs text-muted">{t('projects:detail.archived')}</span>
+            ) : null}
+            <span className="ml-auto shrink-0">
+              {watching ? (
+                <WatchButton target="project" id={project.id} known={watching.has(project.id)} />
+              ) : null}
+            </span>
+          </Card>
+        </li>
+      ))}
+    </ul>
   )
 }
 

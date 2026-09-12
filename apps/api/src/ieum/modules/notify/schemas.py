@@ -62,6 +62,13 @@ class WatchStatusResponse(BaseModel):
     watching: bool
 
 
+class WatchStatusesResponse(BaseModel):
+    """이 중에 구독 중인 것만. **없는 것은 안 적는다** — 목록이 길어질수록
+    "구독 안 함" 을 세는 것이 낭비다."""
+
+    watching: list[UUID]
+
+
 class WebhookCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     url: str = Field(min_length=1, max_length=2000)

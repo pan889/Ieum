@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -32,6 +33,14 @@ from ieum.modules.notify.repository import (
 )
 
 log = get_logger(__name__)
+
+#: 한 번에 물을 수 있는 구독 대상의 개수. 목록 한 페이지가 스무 줄이라
+#: 넉넉하지만, 상한이 없으면 주소 줄과 `IN (...)` 이 같이 길어진다.
+#:
+#: **라우터가 아니라 여기 있다.** "한 번에 너무 많이 묻지 마라" 는 HTTP 의
+#: 관심사가 아니라 이 서비스의 규칙이고, 라우터에 두면 다른 호출자는 그냥
+#: 지나간다.
+MAX_WATCH_TARGETS = 100
 
 WATCH_TARGET_ISSUE = "issue"
 WATCH_TARGET_PROJECT = "project"
@@ -177,6 +186,19 @@ class WatchService:
 
     async def is_watching(self, actor: Actor, target_type: str, target_id: UUID) -> bool:
         return await self._watches.is_watching(actor.user_id, target_type, target_id)
+
+    async def watching_among(
+        self, actor: Actor, target_type: str, target_ids: Sequence[UUID]
+    ) -> set[UUID]:
+        """이 중에 내가 구독 중인 것. 목록 화면이 한 번만 묻게 한다."""
+        self._validate_target(target_type)
+        if len(target_ids) > MAX_WATCH_TARGETS:
+            raise ValidationError(
+                f"한 번에 {MAX_WATCH_TARGETS}개까지 물을 수 있다.",
+                code="notify.too_many_targets",
+                details={"max": MAX_WATCH_TARGETS},
+            )
+        return await self._watches.watching_among(actor.user_id, target_type, target_ids)
 
     async def watchers_of(self, target_type: str, target_id: UUID) -> set[UUID]:
         return await self._watches.watchers_of(target_type, target_id)
@@ -332,6 +354,7 @@ class WebhookService:
 
 
 __all__ = [
+    "MAX_WATCH_TARGETS",
     "WATCH_TARGET_ISSUE",
     "WATCH_TARGET_PAGE",
     "WATCH_TARGET_PROJECT",

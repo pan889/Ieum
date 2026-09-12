@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -104,6 +105,32 @@ class WatchRepository:
             .where(Watch.target_id == target_id)
         )
         return bool((await self._s.execute(stmt)).scalar_one())
+
+    async def watching_among(
+        self, user_id: UUID, target_type: str, target_ids: Sequence[UUID]
+    ) -> set[UUID]:
+        """이 중에 구독 중인 것만. **목록 화면이 행마다 묻지 않게 한다.**
+
+        한 페이지가 스무 줄이면 질의도 스무 번이 된다. 그 무름은 이 저장소에
+        이미 세 번 데고 적어 둔 것(`ProjectPicker`)과 같은 종류라, 목록을
+        만들기 전에 이 문을 먼저 낸다.
+        """
+        # **이 줄은 결과를 바꾸지 않는다** — SQLAlchemy 는 빈 `IN ()` 도
+        # 안전하게 컴파일해서 빈 집합을 준다. 아끼는 것은 DB 왕복 한 번이고,
+        # 목록이 비었을 때(프로젝트가 하나도 없을 때) 그렇다.
+        #
+        # 그래서 이 줄을 지키는 시험은 두지 않았다. 써 봤는데 되돌려도
+        # 초록이었다 — 한 줄을 고쳐서 깨뜨릴 수 없는 것을 지키는 시험은
+        # 있으나 마나 하고, 있으면 지켜지는 줄 알게 된다.
+        if not target_ids:
+            return set()
+        stmt = (
+            select(Watch.target_id)
+            .where(Watch.user_id == user_id)
+            .where(Watch.target_type == target_type)
+            .where(Watch.target_id.in_(list(target_ids)))
+        )
+        return set((await self._s.execute(stmt)).scalars().all())
 
     async def add(self, user_id: UUID, target_type: str, target_id: UUID) -> bool:
         """이미 있으면 False. 중복 요청이 에러가 되면 UI 가 번거로워진다."""
