@@ -242,9 +242,27 @@ test.describe('이슈에서', () => {
 
     // 상자에서 나오면 s 가 전이 단추로 데려간다.
     await page.getByRole('heading', { name: '단축키로 고친다' }).click()
+
+    // **단추가 실제로 눌릴 수 있게 된 뒤에 누른다.**
+    //
+    // 전이 목록은 따로 받아 오고, 받아 오는 동안 그 카드는 통째로 렌더되지
+    // 않는다(`return null`). 그 사이에 `s` 를 누르면 초점을 옮길 대상이
+    // 없어서 **조용히 아무 일도 안 일어나고**, 단축키는 다시 안 눌린다.
+    // 조건에 걸린 전이는 `disabled` 라 초점 자체를 못 받는 것도 같다.
+    //
+    // 40분짜리 전체 스위트에서 한 번 이렇게 붉었다(10초를 기다려도 0개).
+    // 이 파일만 돌리면 늘 초록이라 재현하지 못했고, 원인을 끝까지 좁히지는
+    // 못했다. 다만 여기서 **기다리지 않고 누르고 있었다**는 것은 분명하므로
+    // 그것부터 없앤다.
+
+    const moves = page.getByTestId('issue-transitions')
+    await expect(moves.getByRole('button').first()).toBeEnabled()
+
     await page.keyboard.press('s')
     await expect(priority).not.toBeFocused()
-    await expect(page.locator('button:focus')).toHaveCount(1)
+    // **이 카드 안**이어야 한다. 화면 아무 데나 초점이 있는 것으로는
+    // "전이 단추로 데려갔다" 를 못 말한다.
+    await expect(moves.locator('button:focus')).toHaveCount(1)
   })
 
   test('고치다 취소한 뒤 e 를 눌러도 **버린 초안이 되살아나지 않는다**', async ({ page }) => {

@@ -249,7 +249,10 @@ function Transitions({ issue, onMoved }: { issue: Issue; onMoved: () => void }) 
       {transitions.data.length === 0 ? (
         <p className="text-sm text-muted">{t('issues:transition.none')}</p>
       ) : (
-        <div ref={firstMove} className="flex flex-wrap gap-2">
+        // `s` 단축키가 초점을 옮기는 자리다. 시험이 **이 카드 안**을 집어
+        // 볼 수 있어야 한다 — "아무 단추나 초점을 받았나" 로 보면, 전이
+        // 목록이 아직 안 왔을 때도 엉뚱한 단추로 통과할 수 있다.
+        <div ref={firstMove} data-testid="issue-transitions" className="flex flex-wrap gap-2">
           {transitions.data.map((transition) => {
             const blocked = transition.blocked_by.length > 0
             return (
