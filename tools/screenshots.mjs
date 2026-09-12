@@ -98,14 +98,26 @@ const PAGES = [
       '## 이번 분기에 남은 일\n\n' +
       '::issues{query="project = WEB AND status != Done" columns="key,summary,assignee,status"}\n',
   },
-  {
+  // 온보딩 문서는 **사람을 지목해야** 첫 화면의 "내 할 일" 에 뜬다. id 는
+  // 실행할 때 알게 되므로 본문을 그때 만든다.
+  null,
+]
+
+/** `- [ ] 할 일 [@이름](user:<id>) due:YYYY-MM-DD` */
+function onboarding(me) {
+  const due = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const who = `[@${me.display_name}](user:${me.id})`
+  return {
     title: '온보딩 첫 주',
     body:
-      '새로 온 사람이 첫 주에 하는 것.\n\n' +
-      '- [x] 계정 만들고 2단계 인증 켜기\n- [x] 개발 스택 띄우기\n- [ ] 작은 이슈 하나 끝내기\n\n' +
+      '새로 온 사람이 첫 주에 하는 것. 체크박스에 사람을 지목하면 그 사람의\n' +
+      '첫 화면에 뜹니다.\n\n' +
+      `- [x] 계정 만들고 2단계 인증 켜기 ${who}\n` +
+      `- [ ] 개발 스택 띄우고 이슈 하나 끝내기 ${who} due:${due}\n` +
+      `- [ ] 팀 위키 훑어보기 ${who} due:${due}\n\n` +
       '막히면 `#팀-웹` 에 물어보세요.\n',
-  },
-]
+  }
+}
 
 /**
  * 이미 있으면 그것을 쓴다.
@@ -118,6 +130,9 @@ async function reuse(find, make) {
   const found = await find()
   return found ?? (await make())
 }
+
+/** 목록 응답은 맨 배열일 때도 `{ items }` 일 때도 있다. */
+const asList = (body) => (Array.isArray(body) ? body : (body.items ?? []))
 
 async function seedDemo() {
   const signedIn = await call('POST', '/api/v1/auth/login', { email: EMAIL, password: PASSWORD })
@@ -144,6 +159,27 @@ async function seedDemo() {
       }),
   )
   const types = await call('GET', `/api/v1/issues/types?project_id=${project.id}`)
+
+  /*
+   * **알림 제목은 만들어질 때의 언어로 굳는다.** 나중에 화면 언어를 바꿔도
+   * 이미 만들어진 알림은 안 바뀐다 — 사진에 영어 알림이 찍혀서 알았다.
+   * 그래서 이벤트를 만들기 **전에** 계정 언어를 정한다.
+   */
+  await call('PATCH', '/api/v1/users/me', { locale: 'ko' })
+
+  /*
+   * **알림은 남이 움직여야 생긴다.** 기본값은 자기 행동을 안 알리므로, 혼자
+   * 만드는 데모에서는 알림 칸이 영영 빈다.
+   *
+   * 두 번째 사람을 진짜로 만들어 그 사람이 코멘트하게 하는 길도 있지만
+   * (초대 메일 → 수락 → 역할 부여), 역할 API 는 step-up 2FA 뒤에 있어서
+   * 사진 한 칸에 비해 장치가 너무 커진다. 대신 **제품이 실제로 가진 설정**을
+   * 켠다 — 알림 자체는 지어낸 것이 아니라 아래 작업들이 만든 진짜 이벤트다.
+   */
+  await call('PATCH', '/api/v1/notifications/preferences', {
+    in_app: true,
+    notify_own_actions: true,
+  })
 
   // 배정할 사람. 초대만 된 계정도 담당자로 붙는다.
   const everyone = (await call('GET', '/api/v1/users?limit=50')).items ?? []
@@ -187,23 +223,75 @@ async function seedDemo() {
     })
   }
 
+  /*
+   * **알림은 워치하는 사람에게 간다.** 설정만 켜 두고 아무것도 안 보고
+   * 있으면 받을 사람이 없어서 아무 일도 안 난다 — 아웃박스는 다 처리됐는데
+   * 알림이 0인 것을 보고 알았다.
+   *
+   * 프로젝트를 워치하면 그 안의 이슈 변화를 받는다. 실제로 팀에서 하는 것도
+   * 이것이다.
+   */
+  await call('POST', '/api/v1/watches', {
+    target_type: 'project',
+    target_id: project.id,
+  }).catch(() => undefined)
+
+  // 워치한 뒤에 일어난 일만 알림이 된다. 이슈는 위에서 이미 만들었으므로
+  // 여기서 한 번 더 움직여 준다 — 코멘트 하나와 전이 하나.
+  if (made[0]) {
+    await call('POST', `/api/v1/issues/${made[0].id}/comments`, {
+      body: '위젯을 묶는 쪽으로 고쳐서 올렸다. 다음 판에서 다시 재 본다.',
+    })
+  }
+  // 전이는 **다른 이슈**에 건다. `made[0]` 에 걸었더니 In Progress 였던 것이
+  // 한 칸 더 가서 Open 으로 돌아왔고, 목록 사진에서 상태 변화가 사라졌다.
+  if (made[6]) {
+    const next = asList(await call('GET', `/api/v1/issues/${made[6].id}/transitions`))
+    if (next[0]) {
+      await call('POST', `/api/v1/issues/${made[6].id}/transition`, {
+        transition_id: next[0].id,
+      })
+    }
+  }
+
+  // 스프린트. 첫 화면의 "내 일이 든 스프린트" 가 이것을 읽는다.
+  const sprints = await call('GET', `/api/v1/sprints?project_id=${project.id}`).catch(() => [])
+  if (asList(sprints).length === 0) {
+    const today = new Date()
+    const later = new Date(today.getTime() + 12 * 24 * 60 * 60 * 1000)
+    const sprint = await call('POST', '/api/v1/sprints', {
+      project_id: project.id,
+      name: '9월 둘째 주',
+      goal: '첫 화면을 빠르게, 첨부를 조용히 실패하지 않게.',
+      starts_at: today.toISOString().slice(0, 10),
+      ends_at: later.toISOString().slice(0, 10),
+    })
+    await call('POST', '/api/v1/sprints/issues', {
+      project_id: project.id,
+      sprint_id: sprint.id,
+      issue_ids: made.slice(0, 4).map((i) => i.id),
+    })
+    // 시작하지 않으면 백로그다 — 첫 화면은 도는 스프린트를 본다.
+    await call('POST', `/api/v1/sprints/${sprint.id}/start`, {}).catch(() => undefined)
+  }
+
   const space = await reuse(
     () => call('GET', '/api/v1/spaces/by-key/WEB').catch(() => null),
     () => call('POST', '/api/v1/spaces', { key: 'WEB', name: '웹 서비스 팀' }),
   )
   // **트리는 맨 배열로 온다.** `{ items }` 로 읽었더니 늘 비어 보였고,
   // 돌릴 때마다 문서가 한 벌씩 더 생겼다(사진에 트리가 두 벌로 찍혔다).
-  const asList = (body) => (Array.isArray(body) ? body : (body.items ?? []))
   let pages = asList(await call('GET', `/api/v1/spaces/${space.id}/tree`).catch(() => []))
   if (pages.length === 0) {
     pages = []
     for (const page of PAGES) {
+      const body = page ?? onboarding(me)
       pages.push(
         await call('POST', '/api/v1/pages', {
           space_id: space.id,
           publish: true,
           ...(pages.length === 0 ? {} : { parent_id: pages[0].id }),
-          ...page,
+          ...body,
         }),
       )
     }
@@ -237,6 +325,17 @@ async function main() {
   })
   const context = await browser.newContext({ viewport: VIEWPORT, locale: 'ko-KR' })
   const page = await context.newPage()
+
+  // **알림은 워커가 아웃박스를 훑은 뒤에 생긴다**(15초 주기). 바로 찍으면
+  // 방금 만든 이벤트가 아직 알림이 아니라 첫 화면이 비어 보인다.
+  process.stdout.write('알림이 도착하길 기다린다')
+  for (let tick = 0; tick < 40; tick += 1) {
+    const unread = asList(await call('GET', '/api/v1/notifications?only_unread=true&limit=5'))
+    if (unread.length > 0) break
+    process.stdout.write('.')
+    await new Promise((done) => setTimeout(done, 3000))
+  }
+  console.log('')
 
   console.log('찍는다…')
   // 로그인 폼은 `/` 에 있다. 들어가 있지 않으면 셸 대신 그것이 그려진다.
