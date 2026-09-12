@@ -42,4 +42,4 @@ MinIO 의 CORS 는 `mc cors set` 으로 못 바꾼다 — MinIO 가 S3 의 CORS 
 구현하지 않는다. `MINIO_API_CORS_ALLOW_ORIGIN` 환경변수가 유일한 경로다.
 
 여러 대로 늘리려면 Helm 차트(`deploy/helm/ieum/`)를 본다. 한 노드면
-Compose 로 충분하다 — 그것이 이 프로젝트의 1급 배포 경로다(D-11).
+Compose 로 충분하다 — 그것이 이 프로젝트의 1급 배포 경로다.

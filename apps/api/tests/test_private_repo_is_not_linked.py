@@ -25,8 +25,13 @@ REPO = Path(__file__).resolve().parents[3]
 #: 이 조각이 들어 있으면 비공개 저장소를 가리키는 것이다.
 NEEDLES = ("ieum-docs", "pan889.github.io")
 
-#: 가리켜도 되는 유일한 자리.
-ALLOWED = frozenset({"CLAUDE.md"})
+#: 가리켜도 되는 자리.
+#
+#: - `CLAUDE.md` — 그 파일이 존재하는 이유가 "규칙 정본이 어디 있는지" 를
+#:   알리는 것이다. 가리키지 않으면 파일이 뜻을 잃는다.
+#: - 이 파일 자신 — 찾을 문자열을 들고 있어야 찾을 수 있다. **커밋하고 나서야
+#:   붉어졌다**: `git ls-files` 가 추적 전에는 이 파일을 안 보여 줬다.
+ALLOWED = frozenset({"CLAUDE.md", "apps/api/tests/test_private_repo_is_not_linked.py"})
 
 #: 사람이 읽거나 앱이 내보내는 것만 본다. 잠금 파일·바이너리는 뺀다.
 SUFFIXES = frozenset({".md", ".py", ".ts", ".tsx", ".js", ".mjs", ".yml", ".yaml", ".json", ".sh"})
@@ -44,6 +49,15 @@ def _tracked_files() -> list[Path]:
         check=True,
     )
     return [REPO / name for name in result.stdout.decode().split("\0") if name]
+
+
+def test_the_exemptions_still_point_at_real_files() -> None:
+    """면제 목록이 **없는 파일**을 가리키면, 그 자리는 아무도 안 보는 채로 열린다.
+
+    파일 이름이 바뀌었을 때 면제가 조용히 넓어지는 것을 막는다.
+    """
+    missing = sorted(name for name in ALLOWED if not (REPO / name).is_file())
+    assert missing == [], f"면제 목록이 없는 파일을 가리킨다: {missing}"
 
 
 def test_there_is_something_to_look_at() -> None:

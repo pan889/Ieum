@@ -118,7 +118,10 @@ make dev             # Postgres·Redis·MinIO·API·워커·웹이 함께 뜹니
 ## 옮겨 오기
 
 Redmine 에서 프로젝트를 옮기는 어댑터가 있습니다. **우리 서버는 소스 쪽으로
-나가지 않습니다**(ADR-0016) — 관리자가 자기 기계에서 묶음을 뽑아 올립니다.
+나가지 않습니다** — 관리자가 자기 기계에서 묶음을 뽑아 올립니다. 서버가 남의
+Redmine 으로 나가려면 그 주소와 API 키를 우리가 들고 있어야 하는데, 그건
+SSRF 통로이자 **남의 열쇠를 우리 DB 에 두는 일**입니다. 어댑터는 표준
+라이브러리만 씁니다 — 관리자 기계에 우리 서버도 서드파티도 없기 때문입니다.
 
 ```bash
 export REDMINE_API_KEY=...      # 명령줄 인자는 프로세스 목록에 남습니다
@@ -132,7 +135,7 @@ Jira·Confluence·Zammad 어댑터는 아직 없습니다. 받는 쪽(묶음을 
 ## 만드는 사람에게
 
 ```bash
-make test            # API 2,761개 + 웹 단위 555개
+make test            # API 2,822개 + 웹 단위 555개
 pnpm --filter @ieum/web exec playwright test    # 브라우저 265개
 ```
 

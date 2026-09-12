@@ -16,11 +16,11 @@ helm install ieum ./deploy/helm/ieum \
    무게가 아니다.
 2. **운영 DB 는 백업과 이중화를 따로 받아야 한다.** 그것은 차트가 줄 수 있는
    것이 아니고, 줄 수 있는 척하면 안 받고 지나간다.
-3. **Postgres 는 PGroonga 확장이 필요하다** (한국어 전문검색, ADR-0005).
+3. **Postgres 는 PGroonga 확장이 필요하다** (한국어 전문검색).
    흔한 Postgres 차트로는 안 되고, 되는 것처럼 기본값을 두면 검색이 조용히
    안 되는 설치가 생긴다.
 
-OpenSearch 도 같은 이유로 안 만든다(ADR-0015). 기본 검색 백엔드는 PGroonga
+OpenSearch 도 같은 이유로 안 만든다. 기본 검색 백엔드는 PGroonga
 이므로 **아무것도 더 필요 없다** — `search.backend` 를 `opensearch` 로 바꿀
 때만 클러스터 주소를 준다.
 
@@ -88,8 +88,7 @@ search:
 큐에 없다. 빼먹으면 옛 문서가 검색에 하나도 안 나오고, 오류는 없다.
 
 되돌리는 것은 `backend: postgres` 하나다 — 색인은 그동안 계속 Postgres 에
-쓰이고 있었다. 대가와 확인하지 못한 것은 `docs/contributing/operations.md`
-7절에 있다.
+쓰이고 있었다.
 
 ## 프로브를 나눠 쓴다
 
