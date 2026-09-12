@@ -32,6 +32,7 @@ INSTALL_COMPOSE = REPO / "deploy" / "install" / "compose.yml"
 INSTALL_SCRIPT = REPO / "deploy" / "install" / "install.sh"
 PROD_COMPOSE = REPO / "deploy" / "compose" / "prod.yml"
 WEB_NGINX = REPO / "apps" / "web" / "nginx.conf"
+RELEASE_WORKFLOW = REPO / ".github" / "workflows" / "release.yml"
 
 
 def _compose(path: Path) -> dict[str, Any]:
@@ -167,3 +168,70 @@ class TestTheScriptDefaultsToADeclaredVersion:
         found = re.search(r'^VERSION_DEFAULT="([^"]+)"', text, re.M)
         assert found is not None
         assert found.group(1) == declared
+
+
+class TestTheInstallerPullsWhatTheReleasePushes:
+    """**한 방 설치의 전부가 이 한 줄에 걸려 있다.**
+
+    릴리스 워크플로가 올리는 이미지 이름과 설치본이 당기는 이름은 서로 다른
+    파일에 손으로 적혀 있다. 어긋나면 판을 내는 날에는 아무도 모르고, **처음
+    깐 사람이** `denied` 나 `not found` 를 본다 — 우리 화면에는 안 나타난다.
+    """
+
+    def _release_images(self) -> set[str]:
+        text = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        # `ghcr.io/${{ github.repository_owner }}/ieum-api:${{ ... }}` 에서
+        # 이름만 뽑는다. 판과 소유자는 양쪽 다 변수라 견줄 것이 이름이다.
+        #
+        # 소유자 자리에 **공백이 있다**(`${{ github.repository_owner }}`).
+        # 처음에 `\S*?` 로 썼다가 하나도 못 잡았고, 아래 "둘이어야 한다"
+        # 시험이 그것을 붙잡았다 — 0개를 0개와 견주면 늘 초록이다.
+        return set(re.findall(r"ghcr\.io/.*?/(ieum-[a-z]+):", text))
+
+    def _installer_images(self) -> set[str]:
+        services = _compose(INSTALL_COMPOSE)["services"]
+        found = set()
+        for spec in services.values():
+            match = re.search(r"ghcr\.io/.*?/(ieum-[a-z]+):", spec.get("image", ""))
+            if match:
+                found.add(match.group(1))
+        return found
+
+    def test_the_two_lists_are_the_same(self) -> None:
+        assert self._release_images() == self._installer_images()
+
+    def test_there_are_two_of_them(self) -> None:
+        """0개를 0개와 견주면서 통과하는 것을 막는다."""
+        assert self._release_images() == {"ieum-api", "ieum-web"}
+
+    def test_the_owner_is_the_same_on_both_sides(self) -> None:
+        """워크플로는 `github.repository_owner`, 설치본은 기본값을 적는다.
+
+        포크한 사람은 `--owner` 로 바꾸지만, **기본값이 우리 소유자여야**
+        아무 옵션 없이 친 사람이 우리 이미지를 받는다.
+        """
+        script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+        found = re.search(r'^IMAGE_OWNER_DEFAULT="([^"]+)"', script, re.M)
+        assert found is not None
+        compose_text = INSTALL_COMPOSE.read_text(encoding="utf-8")
+        assert f"IEUM_IMAGE_OWNER:-{found.group(1)}" in compose_text
+
+    def test_the_release_can_run_without_pushing_a_tag(self) -> None:
+        """**태그를 밀 수 없는 자리가 있다.** 이 저장소를 다루는 자동화
+        환경에서 git 게이트웨이가 태그 ref 를 403 으로 거절한다(브랜치는
+        통과한다). 손으로 돌리는 길이 없으면 판을 낼 때마다 사람 하나를
+        반드시 거쳐야 한다.
+        """
+        workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        # PyYAML 이 `on:` 을 불리언 True 로 읽는다 (YAML 1.1).
+        triggers = workflow[True] if True in workflow else workflow["on"]
+        assert "workflow_dispatch" in triggers
+        assert "version" in triggers["workflow_dispatch"]["inputs"]
+
+    def test_the_release_names_itself_from_the_guard_not_the_ref(self) -> None:
+        """손으로 돌리면 `github.ref_name` 은 `main` 이다. 그것을 제목으로
+        쓰면 릴리스가 `main` 이라는 이름으로 나가고 태그는 안 붙는다."""
+        workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        release_step = workflow["jobs"]["notes"]["steps"][-1]["with"]
+        assert release_step["tag_name"] == "${{ needs.guard.outputs.tag }}"
+        assert release_step["name"] == "${{ needs.guard.outputs.tag }}"
