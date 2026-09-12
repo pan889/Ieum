@@ -166,7 +166,12 @@ test('내 일이 든 스프린트가 프로젝트와 남은 양까지 보인다'
   await expect(rows.first()).toBeVisible()
   for (const row of await rows.all()) {
     // 프로젝트 키 · 주기 이름 · 남은 양. 셋이 다 있어야 이 칸이 쓸모 있다.
-    await expect(row).toContainText(/^[A-Z0-9]{6,}/)
+    //
+    // **길이는 키 규칙(2~16자)대로 본다.** 전에는 `{6,}` 이었는데, 그건
+    // 시험이 짓는 키(`uniqueKey`)의 길이였지 제품의 규칙이 아니다. 사람이
+    // 손으로 만든 짧은 키(`WEB`)가 든 DB 에서는 제품이 멀쩡한데 이 줄만
+    // 붉어졌다 — 개발 스택에 스크린샷용 프로젝트를 만들자 바로 그랬다.
+    await expect(row).toContainText(/^[A-Z0-9]{2,}/)
     await expect(row).toContainText(/\d+ of \d+ left/i)
   }
 
