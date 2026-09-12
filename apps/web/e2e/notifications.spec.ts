@@ -6,7 +6,18 @@
  * 그리고 **자기 행동이 자기에게 오지 않는가**.
  */
 
-import { createSpace, expect, signIn, test, uniqueKey, writeBody } from './fixtures'
+import {
+  API,
+  createIssue,
+  createProject,
+  createSpace,
+  expect,
+  plainAdminToken,
+  signIn,
+  test,
+  uniqueKey,
+  writeBody,
+} from './fixtures'
 
 function spaceKey(): string {
   return uniqueKey('B')
@@ -51,6 +62,39 @@ test('스페이스 구독은 새로고침해도 남는다', async ({ page, conso
   expect(consoleErrors).toEqual([])
 })
 
+test('이슈도 상세 화면에서 구독한다', async ({ page, consoleErrors }) => {
+  /**
+   * **이 단추가 없어서 이슈를 지켜볼 방법이 없었다.**
+   *
+   * 이슈 알림은 담당자·보고자·지목된 사람에게 간다 — 전부 이벤트에 실려 오는
+   * 값이다. 그래서 남의 이슈를 지켜보려면 코멘트를 하나 달아 그 자리에
+   * 들어가는 수밖에 없었는데, 그건 구독이 아니라 남의 이슈에 글을 쓰는 일이다.
+   * 문서에는 처음부터 이 단추가 있었다.
+   *
+   * 알림이 실제로 오는지는 서버 시험이 본다(`test_notify.py`). 여기서 보는
+   * 것은 **화면에 손잡이가 있고, 누른 것이 서버에 남는가** 다.
+   */
+  const key = uniqueKey('W')
+  await signIn(page)
+  await createProject(page, key)
+  const issueKey = await createIssue(page, key, '디스크가 찼다')
+  await page.goto(`/issues/${issueKey}`)
+
+  const watch = page.getByRole('button', { name: /^watch$/i })
+  await expect(watch).toBeVisible()
+  await watch.click()
+  // 눌린 상태를 낙관적으로 그리지 않는다 — 서버가 그렇다고 해야 그렇다.
+  await expect(page.getByRole('button', { name: /^watching$/i })).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByRole('button', { name: /^watching$/i })).toBeVisible()
+
+  await page.getByRole('button', { name: /^watching$/i }).click()
+  await expect(page.getByRole('button', { name: /^watch$/i })).toBeVisible()
+
+  expect(consoleErrors).toEqual([])
+})
+
 test('문서도 따로 구독한다', async ({ page, consoleErrors }) => {
   const key = spaceKey()
   await signIn(page)
@@ -71,6 +115,24 @@ test('문서도 따로 구독한다', async ({ page, consoleErrors }) => {
 test('내가 한 일은 나에게 알리지 않는다', async ({ page, consoleErrors }) => {
   const key = spaceKey()
   await signIn(page)
+
+  /**
+   * **이 시험이 기대는 환경설정을 스스로 맞춘다.**
+   *
+   * `notify_own_actions` 가 켜져 있으면 이 알림은 **와야 맞다**(그게 그
+   * 스위치가 하는 일이다). 시드 DB 를 공유하는데 이 시험은 그 값을 안 정하고
+   * 껐다고 가정하고 있었다 — 어쩌다 켜진 DB 에서는 제품이 맞게 동작하는데
+   * 시험만 붉어졌다. 실제로 그렇게 붉어진 것을 붙잡고 여기까지 왔다.
+   *
+   * 화면에는 이 스위치가 없어서(카탈로그에 낱말만 있다) API 로 맞춘다.
+   */
+  const token = await plainAdminToken(page)
+  const set = await page.request.patch(`${API}/api/v1/notifications/preferences`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { notify_own_actions: false },
+  })
+  expect(set.ok(), await set.text()).toBe(true)
+
   await createSpace(page, key)
   await page.goto(`/wiki/${key}`)
   await page.getByRole('button', { name: /^watch$/i }).click()

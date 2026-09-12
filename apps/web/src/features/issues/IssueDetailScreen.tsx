@@ -9,6 +9,7 @@ import { deskApi, issuesApi, sprintsApi } from '@/shared/api'
 import { describeError, fieldOfError } from '@/shared/api/errors'
 import { RichText } from '@/shared/markdown/RichText'
 import { MarkdownEditor } from '@/shared/markdown/MarkdownEditor'
+import { WatchButton } from '@/features/notifications/WatchButton'
 import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
 
 import { Approvals } from './Approvals'
@@ -82,6 +83,14 @@ export function IssueDetailScreen() {
         <h1 className="flex-1 text-xl font-semibold">{data.summary}</h1>
         {data.archived_at ? <Badge>{t('issues:detail.archived')}</Badge> : null}
         <Badge tone={categoryTone(data.state_category)}>{data.state_name}</Badge>
+        {/*
+          **이슈를 구독하면 이 이슈가 움직일 때 알림이 온다.**
+
+          여기 손잡이가 없어서, 남의 이슈를 지켜보려면 코멘트를 하나 달아
+          담당자·보고자 자리에 들어가는 수밖에 없었다 — 그건 구독이 아니라
+          남의 이슈에 글을 쓰는 일이다. 문서에는 처음부터 이 단추가 있었다.
+        */}
+        <WatchButton target="issue" id={data.id} />
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[1fr_18rem]">
