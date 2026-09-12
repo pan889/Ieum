@@ -66,6 +66,13 @@ export function UsersScreen() {
     onSuccess: () => { void refresh() },
   })
 
+  // 초대 토큰은 `invited` 인 계정만 받는다. 그래서 비밀번호를 잊은 사람을
+  // 되돌리는 길은 이것 하나다 — 세션이 끊기고 옛 비밀번호가 지워진다.
+  const reinvite = useMutation({
+    mutationFn: (id: string) => usersApi.reinvite(id),
+    onSuccess: () => { void refresh() },
+  })
+
   const rows = users.data?.items ?? []
 
   return (
@@ -135,7 +142,12 @@ export function UsersScreen() {
           <li key={user.id}>
             <UserCard
               user={user}
-              busy={status.isPending || requireMfa.isPending || revoke.isPending}
+              busy={
+                status.isPending ||
+                requireMfa.isPending ||
+                revoke.isPending ||
+                reinvite.isPending
+              }
               onSuspend={() => {
                 status.mutate({ id: user.id, suspend: user.status !== 'suspended' })
               }}
@@ -143,6 +155,7 @@ export function UsersScreen() {
                 requireMfa.mutate({ id: user.id, required: !user.require_mfa })
               }}
               onRevoke={() => { revoke.mutate(user.id) }}
+              onReinvite={() => { reinvite.mutate(user.id) }}
             />
           </li>
         ))}
@@ -161,12 +174,14 @@ function UserCard({
   onSuspend,
   onRequireMfa,
   onRevoke,
+  onReinvite,
 }: {
   user: CurrentUser
   busy: boolean
   onSuspend: () => void
   onRequireMfa: () => void
   onRevoke: () => void
+  onReinvite: () => void
 }) {
   const { t } = useTranslation('admin')
   const suspended = user.status === 'suspended'
@@ -214,6 +229,20 @@ function UserCard({
         >
           {t('users.revokeSessions')}
         </Button>
+        {/* 정지된 계정에는 안 띄운다. 먼저 되살려야 한다 — 서버도 그렇게
+            답하는데, 누를 수 있는 버튼이 409 만 돌려주면 화면이 거짓말이다.
+            SSO 계정도 마찬가지지만 여기서는 알 수 없어서 서버가 막는다. */}
+        {user.status === 'suspended' ? null : (
+          <Button
+            variant="ghost"
+            className="text-xs"
+            aria-label={t('users.reinviteLabel', { name: user.display_name })}
+            loading={busy}
+            onClick={onReinvite}
+          >
+            {t('users.reinvite')}
+          </Button>
+        )}
         <Button
           variant={suspended ? 'primary' : 'secondary'}
           className="text-xs"

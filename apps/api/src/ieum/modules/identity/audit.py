@@ -40,6 +40,7 @@ MFA_BACKUP_CODES_ISSUED = "auth.mfa.backup_codes_issued"
 # ── 계정 ────────────────────────────────────────────────────────
 USER_INVITED = "identity.user.invited"
 USER_ACTIVATED = "identity.user.activated"
+USER_REINVITED = "identity.user.reinvited"
 USER_LOCALE_CHANGED = "identity.user.locale_changed"
 USER_PASSWORD_CHANGED = "identity.user.password_changed"  # noqa: S105 - 행동 이름이다
 USER_SUSPENDED = "identity.user.suspended"
@@ -86,6 +87,7 @@ ACTIONS = (
     MFA_BACKUP_CODES_ISSUED,
     USER_INVITED,
     USER_ACTIVATED,
+    USER_REINVITED,
     USER_LOCALE_CHANGED,
     USER_PASSWORD_CHANGED,
     USER_SUSPENDED,
@@ -226,6 +228,7 @@ __all__ = [
     "USER_MFA_REQUIRED_CHANGED",
     "USER_PASSWORD_CHANGED",
     "USER_REACTIVATED",
+    "USER_REINVITED",
     "USER_SUSPENDED",
     "stream_csv",
 ]

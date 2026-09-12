@@ -157,14 +157,33 @@ class SearchService:
         stmt: Select[Any] = compiled.apply(select(Issue))
         if extra_where is not None:
             stmt = stmt.where(extra_where)
-        payload = request.cursor_payload
-        if payload:
-            # 정렬 키가 자유롭기 때문에 커서는 id 기준으로만 잡는다.
-            # 정렬 결과 안에서의 정확한 이어보기는 M5 의 과제다.
+        payload = request.cursor_payload or {}
+        offset = 0
+        if compiled.order_by:
+            # **정렬이 붙으면 자리 수로 센다.** id 커서(`WHERE id > X`)는 정렬이
+            # id 순일 때만 맞다. `ORDER BY priority` 같은 것이 붙으면 1페이지
+            # 마지막 행의 id 는 정렬 안에서 아무 자리도 아니어서, 다음 페이지가
+            # 아직 안 보여 준 행 중 id 가 그보다 작은 것을 **통째로 버리고**
+            # 이미 보여 준 행 중 id 가 큰 것을 다시 싣는다. 큐를 끝까지 넘겨도
+            # 자기 티켓의 절반을 영영 못 보는 상태였다.
+            #
+            # 정렬 키를 전부 커서에 담는 방법(keyset)이 더 정확하지만, 키마다
+            # 방향과 NULL 순서가 다르고 값을 실어 나르며 형을 되살려야 해서
+            # 조용히 틀릴 자리가 많다. 자리 수는 정렬이 전순서(마지막이 id)라
+            # 같은 스냅샷에서 결정적이다. 대신 **페이지를 넘기는 사이에 앞쪽
+            # 행이 늘거나 줄면 한 건을 두 번 보거나 건너뛸 수 있다** — 행을
+            # 절반씩 잃는 것과는 비교가 안 된다.
+            offset = int(payload.get("offset", 0))
+            stmt = stmt.offset(offset)
+        elif "id" in payload:
+            # 정렬이 id 하나뿐이면 id 커서가 정확하고 깊은 페이지에서도 빠르다.
             stmt = stmt.where(Issue.id > UUID(payload["id"]))
         stmt = stmt.limit(min(request.fetch_limit, MAX_RESULTS))
 
         rows = list((await self._s.execute(stmt)).scalars().all())
+        if compiled.order_by:
+            next_offset = offset + request.limit
+            return Page.from_rows(rows, request, lambda _row: {"offset": next_offset})
         return Page.from_rows(rows, request, lambda i: {"id": str(i.id)})
 
     async def scan(
@@ -177,10 +196,9 @@ class SearchService:
     ) -> tuple[list[Issue], bool]:
         """한 번에 긁는다. `(행, 잘렸나)` 를 준다.
 
-        `search` 와 달리 커서를 쓰지 않는다. 커서는 `id` 기준이라 IQL 에
-        `ORDER BY` 가 붙으면 이어보기가 어긋나는데(그 문제는 아직 남아 있다),
-        달력·간트처럼 **창 안의 것을 전부** 원하는 화면은 순서가 필요 없다.
-        페이지를 돌려 가며 모으면 그 어긋남을 그대로 물려받는다.
+        `search` 와 달리 커서를 쓰지 않는다. 달력·간트처럼 **창 안의 것을
+        전부** 원하는 화면은 순서도 이어보기도 필요 없다 — 페이지를 돌려 가며
+        모으면 그 사이에 들어온 변경 때문에 한 건을 두 번 싣거나 놓친다.
 
         대신 상한이 있고, **넘었다는 사실을 숨기지 않는다** — 부르는 쪽이
         화면에 적을 수 있어야 한다. 잘린 달력을 다 그린 달력으로 읽으면 없는

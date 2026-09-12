@@ -442,8 +442,16 @@ def _truthy(value: Any) -> bool:
 
 
 def _set_active(row: User, active: bool) -> None:
-    """`active` 를 우리 상태로. **삭제가 아니다.**"""
+    """`active` 를 우리 상태로. **삭제가 아니다.**
+
+    IdP 가 미는 계정은 언제나 `active` 아니면 `suspended` 다 — 초대 흐름을
+    거치지 않으므로 `invited` 가 될 일이 없다. 그래서 `pre_suspend_status`
+    를 볼 것도 없이 바로 정한다. 다만 **비워는 둔다** — 관리 콘솔에서 정지해
+    그 열이 채워진 계정을 IdP 가 되살릴 수 있고, 남겨 두면 다음 복구 때
+    지나간 값을 읽는다.
+    """
     row.status = "active" if active else "suspended"
+    row.pre_suspend_status = "active" if not active else None
 
 
 def stamp(value: datetime | None) -> str:

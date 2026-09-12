@@ -1009,6 +1009,76 @@ class TestSecurityLevel:
 
         assert await IssueService(session, permissions).get(actor_for(user), view.issue.id)
 
+    async def test_hidden_from_the_list_too(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**단건은 403 인데 목록에는 요약이 보였다.**
+
+        관문(`SecurityLevelGuard`)은 `subject=` 를 준 호출에서만 돈다. 목록은
+        subject 가 없어서 그 관문을 지나지 않았고, 스코프만 맞으면 제한 이슈가
+        목록 한가운데 그대로 실려 나갔다.
+        """
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        plain = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="보이는 것")
+        )
+        secret = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="감춘 것")
+        )
+
+        insider = User(email=f"i-{new_id()}@e.com", display_name="I", status="active")
+        session.add(insider)
+        await session.flush()
+        level = SecurityLevel(
+            project_id=project.id,
+            name="Restricted",
+            grantees=[{"kind": "user", "id": str(insider.id)}],
+        )
+        session.add(level)
+        await session.flush()
+        secret.issue.security_level_id = level.id
+        await session.flush()
+
+        page = await IssueService(session, permissions).list_for(
+            actor_for(user), PageRequest(limit=50), project_id=project.id
+        )
+        assert {row.id for row in page.items} == {plain.issue.id}
+
+    async def test_the_grantee_still_sees_it_in_the_list(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """거르는 것이 지나쳐 허용된 사람까지 못 보면 기능이 죽는다."""
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        view = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="내 것")
+        )
+        level = SecurityLevel(
+            project_id=project.id,
+            name="Restricted",
+            grantees=[{"kind": "user", "id": str(user.id)}],
+        )
+        session.add(level)
+        await session.flush()
+        view.issue.security_level_id = level.id
+        await session.flush()
+
+        page = await IssueService(session, permissions).list_for(
+            actor_for(user), PageRequest(limit=50), project_id=project.id
+        )
+        assert {row.id for row in page.items} == {view.issue.id}
+
     async def test_deleting_level_restores_visibility(
         self,
         session: AsyncSession,

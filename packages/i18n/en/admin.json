@@ -235,6 +235,8 @@
   "users.neverSignedIn": "never signed in",
   "users.reactivate": "Reactivate",
   "users.reactivateLabel": "Reactivate {name}",
+  "users.reinvite": "Resend invitation",
+  "users.reinviteLabel": "Resend the invitation to {name} and clear their password",
   "users.revokeLabel": "Sign {name} out of every device",
   "users.revokeSessions": "Sign out everywhere",
   "users.search": "Search by name or email",

@@ -221,6 +221,114 @@ class TestInvite:
                 user_id=new_id(), password=PASSWORD
             )
 
+    async def test_an_accepted_invite_cannot_be_used_again(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """**계정 탈취 경로였다.**
+
+        초대 토큰은 DB 행 없이 암호화만 해서 준다 — 만료 전까지 몇 번이든
+        통한다. 상태를 안 보면 3일 전 초대 메일 한 통을 손에 넣은 사람이
+        이미 활성화된 계정의 비밀번호를 자기 것으로 갈아 끼울 수 있다.
+        본인 세션은 끊기지도 않아 당한 쪽은 눈치채지 못한다.
+        """
+        service = UserService(session, settings)
+        invited = await service.invite(email="alice@example.com", display_name="Alice")
+        token = encode_invite_token(invited.id, settings)
+
+        await service.activate_with_password(user_id=invited.id, password=PASSWORD)
+        hashed = invited.password_hash
+
+        with pytest.raises(ConflictError) as exc:
+            await service.activate_with_password(
+                user_id=decode_invite_token(token, settings), password="attacker-pass-1234"
+            )
+        assert exc.value.code == "identity.invite_already_accepted"
+        assert invited.password_hash == hashed
+        assert hasher(settings).verify(invited.password_hash or "", PASSWORD)
+
+    async def test_reinvite_opens_the_door_again(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """비밀번호를 잊은 사람이 돌아오는 길. 관리자만 열 수 있다."""
+        service = UserService(session, settings)
+        admin = await make_user(session, settings)
+        user = await service.invite(email="bob@example.com", display_name="Bob")
+        await service.activate_with_password(user_id=user.id, password=PASSWORD)
+
+        again = await service.reinvite(actor_id=admin.id, user_id=user.id)
+        assert again.status == "invited"
+        assert again.password_hash is None
+
+        token = encode_invite_token(user.id, settings)
+        restored = await service.activate_with_password(
+            user_id=decode_invite_token(token, settings), password="brand-new-password"
+        )
+        assert restored.status == "active"
+
+    async def test_reinvite_refuses_an_sso_account(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """IdP 계정을 `invited` 로 내리면 SSO 로그인까지 막힌다."""
+        admin = await make_user(session, settings)
+        sso = await make_user(session, settings, password=None)
+        with pytest.raises(ConflictError) as exc:
+            await UserService(session, settings).reinvite(actor_id=admin.id, user_id=sso.id)
+        assert exc.value.code == "identity.sso_account_cannot_be_reinvited"
+        assert sso.status == "active"
+
+
+class TestSuspendAndReactivate:
+    """되살릴 때 **정지 직전 상태로** 돌아간다."""
+
+    async def test_an_sso_account_comes_back_active(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """**두 달 휴직이 영구 퇴사가 됐다.**
+
+        IdP 로 들어오는 계정은 설계상 비밀번호가 없다. 되살릴 상태를
+        비밀번호 유무로 갈랐더니 그 계정이 `invited` 로 떨어졌고, SSO 버튼은
+        401 을 돌려줬다. 관리자가 다시 눌러도 이미 정지가 아니라 아무 일도
+        안 났고, 다시 초대하려 하면 이메일이 있다고 409 였다.
+        """
+        service = UserService(session, settings)
+        admin = await make_user(session, settings)
+        sso = await make_user(session, settings, password=None)
+
+        await service.set_status(actor_id=admin.id, user_id=sso.id, suspend=True)
+        assert sso.status == "suspended"
+
+        back = await service.set_status(actor_id=admin.id, user_id=sso.id, suspend=False)
+        assert back.status == "active"
+        assert back.pre_suspend_status is None
+
+    async def test_an_unaccepted_invite_comes_back_invited(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """수락 안 한 사람을 `active` 로 두면 들어올 수단이 없는 활성 계정이 된다."""
+        service = UserService(session, settings)
+        admin = await make_user(session, settings)
+        pending = await service.invite(email="pending-suspend@example.com", display_name="P")
+
+        await service.set_status(actor_id=admin.id, user_id=pending.id, suspend=True)
+        back = await service.set_status(actor_id=admin.id, user_id=pending.id, suspend=False)
+        assert back.status == "invited"
+
+    async def test_an_old_row_with_nothing_remembered_comes_back_active(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """이 판이 올라오기 전에 정지된 행은 그 열이 비어 있다.
+
+        `active` 로 본다 — 틀렸으면 `reinvite` 로 되돌릴 수 있지만, 반대로
+        틀리면(`invited`) IdP 계정은 되돌릴 길이 없다.
+        """
+        service = UserService(session, settings)
+        admin = await make_user(session, settings)
+        legacy = await make_user(session, settings, status="suspended", password=None)
+        assert legacy.pre_suspend_status is None
+
+        back = await service.set_status(actor_id=admin.id, user_id=legacy.id, suspend=False)
+        assert back.status == "active"
+
 
 class TestInviteToken:
     def test_roundtrip(self, settings: Settings) -> None:

@@ -131,6 +131,14 @@ class Acl:
     project_ids: frozenset[UUID] = frozenset()
     space_ids: frozenset[UUID] = frozenset()
     queue_ids: frozenset[UUID] = frozenset()
+    #: 액터 본인 + 소속 그룹. **스코프가 아니라 객체 수준 제한에 쓴다.**
+    #:
+    #: 스코프 권한을 통과한 뒤 한 번 더 걸리는 관문(`ObjectGuard`)은 단건
+    #: 조회에서만 돈다 — `subject=` 를 줘야 호출되기 때문이다. 목록·검색·
+    #: 내보내기는 subject 가 없어서 그 관문을 지나지 않는다. 같은 규칙을
+    #: SQL 로 한 번 더 쓰려면 주체 집합이 필요하고, ACL 이 이미 "이 사람이
+    #: 무엇을 볼 수 있나" 를 담고 있으므로 여기 얹는다.
+    principal_ids: frozenset[UUID] = frozenset()
 
     @property
     def is_empty(self) -> bool:

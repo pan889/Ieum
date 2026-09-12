@@ -272,7 +272,7 @@ class OrgPermissionResolver:
 
         is_global = any(kind == ScopeKind.GLOBAL.value for kind, _ in rows)
         if is_global:
-            return Acl(permission=permission, is_global=True)
+            return Acl(permission=permission, is_global=True, principal_ids=actor.principal_ids)
 
         direct_projects = {sid for kind, sid in rows if kind == ScopeKind.PROJECT.value and sid}
         # 상위 프로젝트 할당은 하위에도 유효하므로 자손까지 펼친다.
@@ -283,6 +283,7 @@ class OrgPermissionResolver:
 
         return Acl(
             permission=permission,
+            principal_ids=actor.principal_ids,
             project_ids=frozenset(projects),
             space_ids=frozenset(sid for kind, sid in rows if kind == ScopeKind.SPACE.value and sid),
             queue_ids=frozenset(sid for kind, sid in rows if kind == ScopeKind.QUEUE.value and sid),

@@ -235,6 +235,8 @@
   "users.neverSignedIn": "로그인한 적 없음",
   "users.reactivate": "복구",
   "users.reactivateLabel": "{name} 복구",
+  "users.reinvite": "초대 다시 보내기",
+  "users.reinviteLabel": "{name} 에게 초대장을 다시 보내고 비밀번호를 지운다",
   "users.revokeLabel": "{name} 을 모든 기기에서 로그아웃",
   "users.revokeSessions": "모든 기기에서 로그아웃",
   "users.search": "이름·이메일로 검색",

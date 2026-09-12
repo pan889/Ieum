@@ -10,6 +10,7 @@ import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import cast
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -30,6 +31,7 @@ from ieum.modules.issues.iql.suggest import Suggestion
 from ieum.modules.issues.models import (
     FieldDefinition,
     IssueType,
+    SecurityLevel,
     Workflow,
     WorkflowState,
 )
@@ -167,6 +169,25 @@ class TestValidation:
             compile_only("assignee = currentUsr()")
         assert exc.value.code == "iql.unknown_function"
         assert "currentUser" in exc.value.details["suggestions"]
+
+    def test_a_date_literal_and_a_date_function_can_share_a_window(self) -> None:
+        """**여기서 500 이 났다.**
+
+        `2026-01-01` 은 `date` 로, `now()` 는 tz 가 붙은 `datetime` 으로 온다.
+        둘을 그대로 견주면 파이썬이 `TypeError` 를 내는데 그건 `IQLError` 가
+        아니라서 400 이 아니라 500 이 됐다 — 문법도 필드도 맞는 질의인데
+        에디터는 어디가 틀렸는지 못 보여 주고, 저장 필터에 넣어 두면 열
+        때마다 터진다.
+        """
+        compile_only("status CHANGED DURING (2026-01-01, now())")
+        compile_only("status CHANGED DURING (now(), 2099-01-01)")
+        compile_only("status CHANGED DURING (startOfDay(), 2099-01-01)")
+
+    def test_a_backwards_window_is_still_rejected(self) -> None:
+        """앞뒤 검사를 없애서 통과시킨 것이 아니다."""
+        with pytest.raises(iql_errors.IQLError) as exc:
+            compile_only("status CHANGED DURING (2026-01-01, 2025-01-01)")
+        assert exc.value.code == "iql.invalid_value"
 
     def test_operator_not_allowed_for_type(self) -> None:
         """상태 이름에 부등호는 의미가 없다."""
@@ -644,6 +665,110 @@ class TestAclEnforcement:
             mfa_satisfied_at=utcnow(),
         )
         assert await run(session, permissions, actor, "") == set()
+
+
+@pytest.mark.integration
+class TestSecurityLevelIsAlsoAFilter:
+    """객체 수준 제한이 **검색·내보내기·보드로 통째로 샜다.**
+
+    단건 조회는 관문(`SecurityLevelGuard`)에 막히는데, 그 관문은 `subject=` 를
+    준 호출에서만 돈다. IQL 검색·저장 필터·CSV 내보내기·보드·간트·캘린더·
+    리포트·데스크 큐는 subject 가 없어서 전부 지나쳤다. 같은 모듈의 검색
+    색인은 `restricted_to` 로 이미 막고 있었는데 SQL 경로만 빠져 있었다.
+    """
+
+    async def _restrict(
+        self, session: AsyncSession, fixture_set: dict[str, object], grantee_id: UUID | None
+    ) -> None:
+        project = fixture_set["project"]
+        level = SecurityLevel(
+            project_id=project.id,  # type: ignore[union-attr]
+            name=f"Restricted-{secrets.token_hex(3)}",
+            grantees=[] if grantee_id is None else [{"kind": "user", "id": str(grantee_id)}],
+        )
+        session.add(level)
+        await session.flush()
+        issues = cast(dict[str, object], fixture_set["issues"])
+        issues["a"].issue.security_level_id = level.id  # type: ignore[union-attr]
+        await session.flush()
+
+    async def test_restricted_issue_drops_out_of_search(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        other = fixture_set["other"]
+        await self._restrict(session, fixture_set, other.id)  # type: ignore[union-attr]
+
+        actor = fixture_set["actor"]  # owner — 허용 목록에 없다
+        found = await run(session, permissions, actor, "")  # type: ignore[arg-type]
+        assert "로그인 실패" not in found
+        assert "느린 검색" in found  # 나머지는 그대로 나온다
+
+    async def test_the_grantee_still_finds_it(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        owner = fixture_set["owner"]
+        await self._restrict(session, fixture_set, owner.id)  # type: ignore[union-attr]
+
+        actor = fixture_set["actor"]
+        assert "로그인 실패" in await run(session, permissions, actor, "")  # type: ignore[arg-type]
+
+    async def test_a_level_with_nobody_on_it_hides_from_everyone(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """관문이 내리는 것과 같은 답이다 — 빈 허용 목록은 아무도 아니다."""
+        await self._restrict(session, fixture_set, None)
+        actor = fixture_set["actor"]
+        assert "로그인 실패" not in await run(session, permissions, actor, "")  # type: ignore[arg-type]
+
+
+@pytest.mark.integration
+class TestPagingKeepsEveryRow:
+    async def test_an_order_by_query_yields_each_issue_exactly_once(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """**2페이지부터 행이 조용히 사라졌다.**
+
+        커서가 `WHERE id > X` 인데 정렬은 IQL 이 정했다. 1페이지 마지막 행의
+        id 는 정렬 안에서 아무 자리도 아니어서, 다음 페이지가 아직 안 보여 준
+        행 중 id 가 그보다 작은 것을 통째로 버리고 이미 보여 준 행 중 id 가
+        큰 것을 다시 실었다. 상담원은 큐를 끝까지 넘겨도 자기 티켓의 절반을
+        영영 못 봤다.
+        """
+        project = fixture_set["project"]
+        service = SearchService(session, permissions)
+        actor = fixture_set["actor"]
+        iql = f"project = {project.key} ORDER BY priority ASC"  # type: ignore[union-attr]
+
+        seen: list[str] = []
+        cursor: str | None = None
+        for _ in range(10):  # 무한 루프 방지
+            page = await service.search(
+                actor,  # type: ignore[arg-type]
+                iql,
+                PageRequest(limit=2, cursor=cursor),
+            )
+            seen.extend(row.summary for row in page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+
+        assert cursor is None, "페이지가 끝나지 않았다"
+        assert sorted(seen) == sorted(["로그인 실패", "느린 검색", "담당자 없음", "완료 예정"])
+        assert len(seen) == len(set(seen)), f"같은 이슈가 두 번 나왔다: {seen}"
+        # 정렬도 지켜진다 — priority 1, 2, 3, 5.
+        assert seen == ["로그인 실패", "완료 예정", "느린 검색", "담당자 없음"]
 
 
 @pytest.mark.integration

@@ -676,6 +676,26 @@ async def reactivate_user(
     return UserResponse.model_validate(user)
 
 
+@users_router.post("/{user_id}/reinvite", response_model=UserResponse)
+async def reinvite_user(
+    user_id: UUID,
+    actor: CurrentActor,
+    session: DbSession,
+    settings: AppSettings,
+    permissions: PermissionDep,
+) -> UserResponse:
+    """초대장을 다시 보낸다. 비밀번호를 잊은 사람이 돌아올 수 있는 유일한 문이다.
+
+    초대 토큰은 `invited` 인 계정만 받으므로, 그 상태로 되돌리는 일 자체가
+    권한이다 — 세션을 끊고 옛 비밀번호를 지우고 감사 로그를 남긴다.
+    정지와 같은 무게라 step-up 이 붙은 `USER_MANAGE` 를 쓴다.
+    """
+    await permissions.require(session, actor, perms.USER_MANAGE, scope=Scope.global_())
+    user = await UserService(session, settings).reinvite(actor_id=actor.user_id, user_id=user_id)
+    await session.commit()
+    return UserResponse.model_validate(user)
+
+
 @users_router.patch("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: UUID,

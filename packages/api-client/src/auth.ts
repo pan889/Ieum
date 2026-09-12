@@ -115,6 +115,8 @@ export function createUsersApi(client: ApiClient) {
      */
     suspend: (id: string) => client.post<CurrentUser>(`${USERS}/${id}/suspend`, {}),
     reactivate: (id: string) => client.post<CurrentUser>(`${USERS}/${id}/reactivate`, {}),
+    /** 초대장을 다시 보낸다. 비밀번호를 잊은 사람이 돌아오는 유일한 길이다. */
+    reinvite: (id: string) => client.post<CurrentUser>(`${USERS}/${id}/reinvite`, {}),
 
     /** 이 사람에게만 2FA 를 강제한다. 조직 전체를 켜지 않고도 걸 수 있다. */
     setRequireMfa: (id: string, required: boolean) =>

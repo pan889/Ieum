@@ -42,6 +42,14 @@ class User(Entity):
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="invited")
+    #: 정지 직전 상태. 되살릴 때 여기로 돌아간다. 정지 중이 아니면 `NULL`.
+    #:
+    #: **비밀번호 유무로는 갈릴 수 없어서 기억해 둔다.** `password_hash` 가
+    #: 없는 계정은 두 가지다 — 초대만 받고 수락하지 않은 사람과, IdP 로
+    #: 들어오는 SSO·SCIM 계정. 앞쪽은 되살릴 때 `invited` 여야 하고 뒤쪽은
+    #: `active` 여야 하는데, 열 하나로는 구분이 안 된다. 잘못 갈라서 SSO
+    #: 계정이 `invited` 가 되면 그 사람은 영영 못 들어온다.
+    pre_suspend_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     #: 고객(포털 사용자)은 /api/v1/portal/* 만 접근한다 (auth.md 5절)
     is_customer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     #: SSO 전용 계정은 비밀번호가 없다

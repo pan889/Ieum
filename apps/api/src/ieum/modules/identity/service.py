@@ -966,12 +966,24 @@ class UserService:
         user.password_hash = self._passwords.hash(new_password)
 
     async def activate_with_password(self, *, user_id: UUID, password: str) -> User:
-        """초대 수락. 비밀번호를 설정하고 계정을 활성화한다."""
+        """초대 수락. 비밀번호를 설정하고 계정을 활성화한다.
+
+        **`invited` 인 계정만 받는다.** 이 한 줄이 초대 토큰을 한 번만 쓰이게
+        만든다. 토큰은 DB 행 없이 암호화만 해서 주므로(`invites.py`) 7일
+        동안 몇 번이든 다시 낼 수 있다 — 상태를 안 보면 그 토큰이 **이미
+        활성화된 계정의 비밀번호를 다시 정하는 열쇠**가 된다. 전달된 메일 한
+        통, 공용 메일함, 링크가 남은 브라우저 기록 어디서든 새면 그 계정을
+        통째로 가져갈 수 있고, 본인 세션은 끊기지도 않아 눈치채지 못한다.
+
+        비밀번호를 잊은 사람은 이 문을 쓰지 않는다 — 재설정 흐름이 따로 있다.
+        """
         user = await self._users.get(user_id)
         if user is None:
             raise NotFoundError("사용자를 찾을 수 없다.")
         if user.status == "suspended":
             raise ConflictError("정지된 계정이다.")
+        if user.status != "invited":
+            raise ConflictError("이미 수락한 초대다.", code="identity.invite_already_accepted")
 
         self._validate_password(password)
         user.password_hash = self._passwords.hash(password)
@@ -984,6 +996,50 @@ class UserService:
             target_id=user.id,
         )
         publish(self._s, identity_events.UserActivated(aggregate_id=user.id, email=user.email))
+        return user
+
+    async def reinvite(self, *, actor_id: UUID, user_id: UUID) -> User:
+        """계정을 다시 `invited` 로 되돌리고 초대장을 새로 보낸다.
+
+        **이것이 비밀번호를 잊은 사람의 유일한 문이다.** 초대 토큰은
+        `invited` 인 계정만 받으므로(`activate_with_password`), 그 문을
+        여는 일은 관리자의 결정으로만 일어나야 한다 — 감사 로그가 남고,
+        기존 세션이 끊기고, 옛 비밀번호가 그 자리에서 사라진다.
+
+        **SSO·SCIM 계정에는 쓰지 않는다.** 그쪽은 비밀번호로 들어오지 않으므로
+        `invited` 로 내리면 IdP 로그인까지 막힌다 — 되살릴 길이 없는 상태다.
+        """
+        user = await self._users.get(user_id)
+        if user is None:
+            raise NotFoundError("사용자를 찾을 수 없다.")
+        if user.status == "suspended":
+            raise ConflictError("정지된 계정이다. 먼저 되살려야 한다.")
+        if user.password_hash is None and user.status == "active":
+            # 비밀번호가 없는 활성 계정 = IdP 가 관리하는 계정이다.
+            raise ConflictError(
+                "SSO 계정은 초대장으로 되돌릴 수 없다.",
+                code="identity.sso_account_cannot_be_reinvited",
+            )
+
+        user.status = "invited"
+        user.password_hash = None
+        revoked = await self._sessions.revoke_all_for_user(user_id)
+        self._audit.record(
+            action=audit.USER_REINVITED,
+            actor_id=actor_id,
+            target_type="user",
+            target_id=user_id,
+            metadata={"email": user.email, "revoked_sessions": revoked},
+        )
+        publish(
+            self._s,
+            identity_events.UserInvited(
+                aggregate_id=user.id,
+                email=user.email,
+                invited_by=actor_id,
+                is_customer=user.is_customer,
+            ),
+        )
         return user
 
     async def update_profile(self, *, user_id: UUID, locale: str | None = None) -> User:
@@ -1048,9 +1104,15 @@ class UserService:
         브라우저가 아무 확인 없이 그대로 이어진다. 그러면 "정지했다" 가
         "잠깐 쉬게 했다" 가 된다.
 
-        되살릴 때 어떤 상태로 가는지는 **비밀번호가 있는지**로 갈린다.
-        초대만 받고 수락하지 않은 사람을 `active` 로 두면 로그인할 수단이
-        없는 활성 계정이 된다 — 초대 링크는 `invited` 를 기대한다.
+        되살릴 때는 **정지 직전 상태로 돌아간다**(`pre_suspend_status`).
+        비밀번호 유무로 갈랐던 적이 있는데, 그러면 SSO·SCIM 계정이 —
+        설계상 비밀번호가 없다 — `invited` 로 떨어져 영영 못 들어왔다.
+        관리자가 다시 눌러도 이미 `suspended` 가 아니라 아무 일도 안 났고,
+        다시 초대하려 하면 이메일이 이미 있다고 409 였다.
+
+        옛 판에서 정지된 행은 그 열이 비어 있다. 그때는 `active` 로 본다 —
+        틀렸다면 `reinvite` 로 되돌릴 수 있지만, 반대로 틀리면(`invited`)
+        IdP 계정은 되돌릴 길이 없다.
         """
         if suspend and user_id == actor_id:
             raise ConflictError("자기 계정은 정지할 수 없다.", code="identity.cannot_suspend_self")
@@ -1062,6 +1124,7 @@ class UserService:
         if suspend:
             if user.status == "suspended":
                 return user
+            user.pre_suspend_status = user.status
             user.status = "suspended"
             revoked = await self._sessions.revoke_all_for_user(user_id)
             self._audit.record(
@@ -1075,7 +1138,8 @@ class UserService:
 
         if user.status != "suspended":
             return user
-        user.status = "active" if user.password_hash is not None else "invited"
+        user.status = user.pre_suspend_status or "active"
+        user.pre_suspend_status = None
         self._audit.record(
             action=audit.USER_REACTIVATED,
             actor_id=actor_id,

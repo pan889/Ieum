@@ -221,6 +221,55 @@ class TestWasIncludesTheCurrentValue:
         assert stayed is not None
 
 
+class TestWasNotKeepsTheEmptyOnes:
+    """**`WAS NOT` 이 미배정 이슈를 통째로 숨겼다.**
+
+    `status` 는 `WorkflowState.name` 이 NOT NULL 이라 안 터진다. 터지는 것은
+    `assignee`·`reporter` 처럼 비어 있을 수 있는 필드다 — 담당자가 한 번도
+    없었던 이슈에서는 비교가 거짓이 아니라 NULL 이고, SQL 세 값 논리에서
+    `NOT NULL` 도 NULL 이라 그 행이 조건에서 빠진다. "그 사람을 거친 적 없는
+    일" 을 찾는 질의가 제일 먼저 나와야 할 미배정 이슈를 빼놓았다.
+    """
+
+    async def test_an_issue_that_never_had_an_assignee_matches(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        world: dict[str, Any],
+    ) -> None:
+        unassigned = await make(session, permissions, world, "담당자 없던 것")
+        assigned = await make(session, permissions, world, "그 사람 것")
+        issue = await session.get(Issue, assigned)
+        assert issue is not None
+        issue.assignee_id = world["other"].id
+        await session.flush()
+
+        found_rows = await found(
+            session, permissions, world, f'assignee WAS NOT "{world["other"].id}"'
+        )
+        assert "담당자 없던 것" in found_rows
+        assert "그 사람 것" not in found_rows
+        assert unassigned is not None
+
+    async def test_was_still_answers_positively(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        world: dict[str, Any],
+    ) -> None:
+        """부정을 고치면서 긍정을 뒤집지 않았다."""
+        await make(session, permissions, world, "담당자 없던 것")
+        assigned = await make(session, permissions, world, "그 사람 것")
+        issue = await session.get(Issue, assigned)
+        assert issue is not None
+        issue.assignee_id = world["other"].id
+        await session.flush()
+
+        assert await found(session, permissions, world, f'assignee WAS "{world["other"].id}"') == {
+            "그 사람 것"
+        }
+
+
 class TestChangedIsOneChange:
     """**한 변경 안에서** x→y 여야 한다."""
 

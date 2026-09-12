@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -74,9 +75,31 @@ from ieum.modules.issues.models import (
     WorkflowState,
     Worklog,
 )
+from ieum.modules.issues.visibility import visible_issues
 
 #: 결과 상한. 내보내기는 별도 경로를 쓴다 (query-language.md 3절).
 MAX_RESULTS = 1000
+
+
+def _as_instant(value: Any) -> datetime:
+    """창 경계 두 개를 견줄 수 있는 값으로. **앞뒤 검사에만 쓴다.**
+
+    `2026-01-01` 같은 리터럴은 `date` 로, `now()` 같은 함수는 tz 가 붙은
+    `datetime` 으로 온다. 파이썬은 그 둘을 그대로 견주면 `TypeError` 를 내는데
+    그건 `IQLError` 가 아니라서 400 이 아니라 **500** 이 됐다 — 문법도 필드도
+    맞는 질의인데 에디터는 어디가 틀렸는지 못 보여 줬고, 저장 필터에 넣어 두면
+    열 때마다 터졌다.
+
+    질의에 실려 나가는 값은 건드리지 않는다. Postgres 는 `date` 든
+    `timestamptz` 든 알아서 맞춰 비교하므로, 여기서 맞출 것은 앞뒤뿐이다.
+    tz 가 없는 값은 UTC 로 본다 — 둘 다 같은 규칙을 쓰므로 대소는 변하지 않는다.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
+    # 날짜가 아닌 값은 `_instant` 가 이미 걸렀다.
+    raise TypeError(f"창 경계로 쓸 수 없는 값: {value!r}")  # pragma: no cover
 
 
 def _window_conditions(window: tuple[Any, Any] | None) -> list[ColumnElement[bool]]:
@@ -210,12 +233,19 @@ class Compiler:
     # ── ACL ─────────────────────────────────────────────────────
 
     def _acl_filter(self, acl: Acl) -> ColumnElement[bool]:
-        if acl.is_global:
-            return Issue.archived_at.is_(None) | Issue.archived_at.is_not(None)  # 항상 참
+        """스코프와 보안 레벨을 함께 건다.
+
+        **보안 레벨은 전역 권한도 통과시키지 않는다.** 단건 조회의 관문
+        (`SecurityLevelGuard`)이 관리자라고 봐주지 않으므로, 목록도 같아야
+        한다 — 한쪽만 보여 주면 "상세는 403 인데 검색 결과에는 뜬다" 가 된다.
+        """
         if acl.is_empty:
             # 볼 수 있는 프로젝트가 없다. 조건을 거짓으로 만들어 결과를 비운다.
             return Issue.id.is_(None)
-        return Issue.project_id.in_(acl.project_ids)
+        restricted = visible_issues(acl.principal_ids)
+        if acl.is_global:
+            return restricted
+        return Issue.project_id.in_(acl.project_ids) & restricted
 
     # ── 노드 ────────────────────────────────────────────────────
 
@@ -303,7 +333,15 @@ class Compiler:
                     | (self._value_at(mapped, spec, window[0]) == literal(value))
                 )
         found = or_(*parts)
-        return not_(found) if node.negated else found
+        if not node.negated:
+            return found
+        # **`IS TRUE` 로 먼저 접는다.** `assignee` 는 NULL 일 수 있어서, 담당자가
+        # 한 번도 없었던 이슈에서는 `found` 가 거짓이 아니라 NULL 이다. SQL 의
+        # 세 값 논리에서 `NOT NULL` 은 참이 아니라 NULL 이므로, `assignee WAS
+        # NOT x` 가 **미배정 이슈를 통째로 숨겼다** — "x 를 거친 적 없는 일" 을
+        # 찾는 질의가 제일 먼저 나와야 할 것을 빼놓았다. `sprint != x` 에서
+        # 백로그가 사라지던 것과 같은 함정이다(`_sprintish`).
+        return not_(found.is_(true()))
 
     def _history_changed(self, node: HistoryChanged) -> ColumnElement[bool]:
         """`field CHANGED [FROM x] [TO y]`.
@@ -338,7 +376,7 @@ class Compiler:
             return None
         start = None if window.start is None else self._instant(window.start)
         end = None if window.end is None else self._instant(window.end)
-        if start is not None and end is not None and end < start:
+        if start is not None and end is not None and _as_instant(end) < _as_instant(start):
             span = window.span or Span(0, 1)
             raise errors.invalid_value(
                 "DURING", "끝이 시작보다 앞선다", offset=span.offset, length=span.length

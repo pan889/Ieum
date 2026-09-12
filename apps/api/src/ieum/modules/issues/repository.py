@@ -26,6 +26,7 @@ from ieum.modules.issues.models import (
     WorkflowState,
     WorkflowTransition,
 )
+from ieum.modules.issues.visibility import visible_issues
 
 
 class WorkflowRepository:
@@ -296,11 +297,16 @@ class IssueRepository:
         project_id: UUID | None = None,
         include_archived: bool = False,
     ) -> Page[Issue]:
-        """목록은 권한 검사가 아니라 필터링이다 (auth.md 5절)."""
+        """목록은 권한 검사가 아니라 필터링이다 (auth.md 5절).
+
+        스코프만으로는 부족하다. 보안 레벨이 걸린 이슈는 단건 조회에서
+        관문(`SecurityLevelGuard`)에 막히는데, 목록은 그 관문을 지나지
+        않는다 — 같은 조건을 SQL 로 한 번 더 건다(`visibility.py`).
+        """
         if acl.is_empty:
             return Page(items=[])
 
-        stmt: Select[tuple[Issue]] = select(Issue)
+        stmt: Select[tuple[Issue]] = select(Issue).where(visible_issues(acl.principal_ids))
         if not acl.is_global:
             stmt = stmt.where(Issue.project_id.in_(acl.project_ids))
         if project_id is not None:
