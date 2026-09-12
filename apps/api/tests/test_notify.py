@@ -188,6 +188,49 @@ class TestFanOut:
         )
         assert {n.user_id for n in created} == {people["korean"].id}
 
+    async def test_the_actor_can_ask_to_be_told(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """자기 행동을 안 알리는 것은 **기본값이지 규칙이 아니다.**
+
+        `notify_own_actions` 는 API 도 화면도 내놓는 설정인데, 전에는 여기서
+        액터를 무조건 빼서 **저장만 되고 아무 일도 하지 않았다.** 스키마·모델·
+        마이그레이션에만 있고 어떤 로직도 그 값을 읽지 않았다.
+        """
+        session.add(NotificationPreference(user_id=people["actor"].id, notify_own_actions=True))
+        await session.flush()
+        created = await NotificationService(session, settings).fan_out(
+            {people["actor"].id, people["korean"].id},
+            NotificationRequest(
+                kind="issue.created",
+                title_key="notifications:issue.created",
+                actor_id=people["actor"].id,
+                params={"key": "X-1", "summary": "s"},
+            ),
+        )
+        assert {n.user_id for n in created} == {people["actor"].id, people["korean"].id}
+
+    async def test_the_actor_who_asked_still_obeys_the_other_switches(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """켜 두었어도 인앱을 끄면 안 온다 — 두 설정이 서로를 무시하지 않는다."""
+        session.add(
+            NotificationPreference(
+                user_id=people["actor"].id, notify_own_actions=True, in_app=False
+            )
+        )
+        await session.flush()
+        created = await NotificationService(session, settings).fan_out(
+            {people["actor"].id},
+            NotificationRequest(
+                kind="issue.created",
+                title_key="notifications:issue.created",
+                actor_id=people["actor"].id,
+                params={"key": "X-1", "summary": "s"},
+            ),
+        )
+        assert created == []
+
     async def test_respects_in_app_preference(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:

@@ -69,8 +69,6 @@ class NotificationService:
         메일은 여기서 보내지 않는다. 발송 대상만 돌려주고 워커가 보낸다 —
         SMTP 가 느리면 이벤트 디스패치 전체가 막힌다.
         """
-        if request.actor_id is not None:
-            recipients = recipients - {request.actor_id}
         if not recipients:
             return []
 
@@ -79,6 +77,16 @@ class NotificationService:
 
         for user_id in sorted(recipients):
             preference = preferences.get(user_id)
+            # **자기 행동은 기본적으로 안 알린다.** 다만 그것은 **설정**이다 —
+            # `notify_own_actions` 를 켠 사람에게는 보낸다.
+            #
+            # 전에는 여기서 액터를 무조건 뺐고, 그래서 그 설정은 저장되고 화면에
+            # 보이면서 **아무 일도 하지 않았다.** 스키마·모델·마이그레이션에만
+            # 있고 어떤 로직도 읽지 않는 값이었다.
+            if user_id == request.actor_id and not (
+                preference is not None and preference.notify_own_actions
+            ):
+                continue
             if preference is not None:
                 if not preference.in_app:
                     continue
