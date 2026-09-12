@@ -24,6 +24,19 @@ services:
       IEUM_ENV: production
       IEUM_DEBUG: "false"
     restart: unless-stopped
+    healthcheck:
+      # **api 이미지를 그대로 쓰므로 이미지의 HEALTHCHECK 를 물려받는다** —
+      # 그것은 `/healthz` 를 두드리는데 워커는 HTTP 를 안 연다. 덮어쓰지 않으면
+      # 워커는 영원히 unhealthy 이고, `up --wait` 은 멀쩡한 스택에서 실패한다.
+      #
+      # arq 가 Redis 에 남기는 기록을 읽는다. 기록은 30초마다 갱신되고
+      # (`WorkerSettings.health_check_interval`) 수명이 31초라, 멈춰 선
+      # 워커는 여기서 붉어진다.
+      test: ["CMD", "arq", "--check", "ieum.worker.settings.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   web:
     build:

@@ -1,0 +1,38 @@
+# 이미지 빌드에 보내지 않는 것.
+#
+# **이 파일이 없으면 `apps/web/Dockerfile` 의 `COPY . .` 가 호스트의
+# `node_modules` 를 컨테이너 안의 깨끗한 설치본 위에 덮어쓴다.** 같은 아키텍처
+# 에서는 그냥 도니까 안 보이는데, 그러면 `pnpm install --frozen-lockfile` 레이어가
+# 하는 일이 없어지고 이미지가 **빌드한 사람 기계의 의존성**을 싣게 된다.
+
+# 의존성 — 이미지가 자기 것을 설치한다
+node_modules
+**/node_modules
+.venv
+**/.venv
+.pnpm-store
+
+# 비밀. `.env` 에는 IEUM_SECRET_KEY 와 관리자 비밀번호가 들어 있다.
+# 빌드 스테이지에만 남더라도 레이어에 남는 것은 남는 것이다.
+.env
+.env.*
+!.env.example
+
+# 생성물·캐시
+dist
+**/dist
+.mypy_cache
+.ruff_cache
+.pytest_cache
+**/__pycache__
+.coverage
+htmlcov
+test-results
+playwright-report
+blob-report
+
+# 이미지가 안 쓰는 것
+.git
+.gitignore
+assets
+CHANGELOG.md
