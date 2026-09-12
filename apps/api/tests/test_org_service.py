@@ -495,6 +495,61 @@ class TestRoleService:
         )
         assert role.scope_kind == "project"
 
+    async def test_a_space_role_can_actually_be_assigned(
+        self, session: AsyncSession, user: User, permissions: PermissionService
+    ) -> None:
+        """**스페이스 권한을 줄 길이 아예 없었다.**
+
+        `org.role.assign` 정의가 global·project 만 받고 있었고, 정의에 없는
+        스코프 종류로 물으면 `PermissionService.has` 는 거절이 아니라
+        `ValueError` 를 던진다 — 500 이다. 위키 스페이스에 역할을 주려는
+        요청은 전부 거기서 죽었다. 시험은 리포지토리를 직접 불러 스페이스
+        역할을 만들었으므로 이 경로를 한 번도 밟지 않았다.
+        """
+        from ieum.modules.wiki import permissions as wiki_perms
+
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.ROLE_MANAGE, perms.ROLE_ASSIGN),
+            scope=Scope.global_(),
+        )
+        service = RoleService(session, permissions)
+        role = await service.create_role(
+            actor_for(user),
+            name=f"SpaceReader-{new_id()}",
+            scope_kind="space",
+            grants=[wiki_perms.PAGE_VIEW],
+        )
+        assignment = await service.assign(
+            actor_for(user),
+            role_id=role.id,
+            scope=Scope.space(new_id()),
+            principal_kind="user",
+            principal_id=user.id,
+        )
+        assert assignment.scope_kind == "space"
+
+    async def test_a_role_that_cannot_hold_its_grants_is_refused_at_creation(
+        self, session: AsyncSession, user: User, permissions: PermissionService
+    ) -> None:
+        """고칠 때만 보면 같은 역할이 만들 때는 통과하고 고칠 때만 거절된다."""
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.ROLE_MANAGE,),
+            scope=Scope.global_(),
+        )
+        with pytest.raises(ValidationError) as exc:
+            await RoleService(session, permissions).create_role(
+                actor_for(user),
+                name=f"Impossible-{new_id()}",
+                scope_kind="project",
+                # 프로젝트 생성은 전역에서만 뜻이 있다.
+                grants=[perms.PROJECT_CREATE],
+            )
+        assert exc.value.details["permissions"] == [perms.PROJECT_CREATE]
+
     async def test_scope_mismatch_rejected(
         self, session: AsyncSession, user: User, permissions: PermissionService
     ) -> None:

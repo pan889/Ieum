@@ -655,6 +655,49 @@ class TestWebhookService:
                 secret=WEBHOOK_SECRET,
             )
 
+    async def test_a_project_admin_does_not_see_global_webhooks(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        permissions: PermissionService,
+        people: dict[str, User],
+    ) -> None:
+        """**목록에는 URL 이 그대로 실린다.**
+
+        조직 전체에 걸린 연동 주소에는 대개 경로나 질의에 비밀이 섞여 있다
+        (Slack·Teams 의 수신 주소가 그렇다). 한 프로젝트의 관리자가 그것을 볼
+        이유는 없는데, 목록 질의가 전역 웹훅을 항상 끼워 넣고 있었다.
+        """
+        project = Project(key=f"V{secrets.token_hex(3).upper()}", name="Visible")
+        session.add(project)
+        await session.flush()
+        everywhere = await self._admin(session, people["korean"])
+        service = WebhookService(session, settings, permissions)
+        await service.create(
+            everywhere,
+            name="조직 전체",
+            url="https://hooks.example.com/T000/B000/비밀한조각",
+            events=["issue.created"],
+            secret=WEBHOOK_SECRET,
+        )
+        await service.create(
+            everywhere,
+            name="이 프로젝트",
+            url="https://example.com/project",
+            events=["issue.created"],
+            secret=WEBHOOK_SECRET,
+            scope_id=project.id,
+        )
+
+        local = await self._admin(session, people["english"], project)
+        names = {row.name for row in await service.list_for(local)}
+        assert names == {"이 프로젝트"}
+        # 전역 권한이 있으면 둘 다 본다 — 거르는 것이 지나치지 않았다.
+        assert {row.name for row in await service.list_for(everywhere)} == {
+            "조직 전체",
+            "이 프로젝트",
+        }
+
     async def test_secret_is_encrypted_not_stored_plainly(
         self,
         session: AsyncSession,

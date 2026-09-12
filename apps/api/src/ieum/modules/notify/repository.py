@@ -216,9 +216,18 @@ class WebhookRepository:
         return [w for w in rows if event_type in (w.events or [])]
 
     async def list_visible(self, *, project_ids: frozenset[UUID] | None) -> list[Webhook]:
+        """볼 수 있는 웹훅. `project_ids` 가 None 이면 전역 권한이라 전부다.
+
+        **전역 웹훅은 프로젝트 권한만 있는 사람에게 안 보인다.** 목록에는
+        URL 이 그대로 실리는데, 조직 전체에 걸린 연동 주소에는 대개 경로나
+        질의에 비밀이 섞여 있다(Slack·Teams 의 수신 주소가 그렇다). 한
+        프로젝트의 관리자가 조직 전체의 연동 주소를 볼 이유는 없다.
+
+        단건 조회(`get`)는 이미 스코프를 제대로 본다 — 목록만 넓었다.
+        """
         stmt = select(Webhook).order_by(Webhook.name)
         if project_ids is not None:
-            stmt = stmt.where((Webhook.scope == "global") | Webhook.scope_id.in_(project_ids))
+            stmt = stmt.where(Webhook.scope_id.in_(project_ids))
         return list((await self._s.execute(stmt)).scalars().all())
 
 

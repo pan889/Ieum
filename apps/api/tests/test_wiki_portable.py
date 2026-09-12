@@ -20,6 +20,7 @@ import pytest
 from ieum.core.exceptions import ValidationError
 from ieum.core.markdown import normalize
 from ieum.modules.wiki.portable import (
+    MAX_ARCHIVE_BYTES,
     asset_folder,
     asset_targets,
     attachment_targets,
@@ -186,6 +187,31 @@ class TestArchive:
         # 추측해서 열면 깨진 글자가 문서로 들어앉고 되돌릴 방법이 없다.
         data = self._zip({"ok.md": b"fine", "broken.md": "한글".encode("euc-kr")})
         assert [e.path for e in read_archive(data).entries] == ["ok.md"]
+
+    def test_rejects_a_bomb_that_is_small_until_you_open_it(self) -> None:
+        """**압축된 크기만 재고 있었다.**
+
+        deflate 는 0 으로 채운 파일을 1000:1 넘게 줄인다. 그래서 1MB 짜리
+        ZIP 하나가 수십 GB 로 풀리는데, 크기 검사도 개수 검사도 통과하고
+        `archive.read()` 가 그것을 통째로 메모리에 올린 뒤에 죽는다.
+        """
+        buffer = io.BytesIO()
+        # **`self._zip` 을 안 쓴다.** 그쪽은 압축하지 않고 담으므로(ZIP_STORED)
+        # 폭탄이 안 된다 — 폭탄의 요점이 압축이다.
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("docs/bomb.bin", b"\x00" * (MAX_ARCHIVE_BYTES + 1))
+        data = buffer.getvalue()
+        # 압축된 뒤에는 상한보다 한참 작다 — 옛 검사는 여기서 통과했다.
+        assert len(data) < MAX_ARCHIVE_BYTES // 100
+
+        with pytest.raises(ValidationError) as exc:
+            read_archive(data)
+        assert exc.value.code == "wiki.import_too_large"
+
+    def test_an_ordinary_bundle_still_comes_through(self) -> None:
+        """거르는 것이 지나쳐 멀쩡한 묶음을 막으면 가져오기가 죽는다."""
+        data = self._zip({"docs/a.md": b"# A\n\nbody", "docs/img.png": b"\x89PNG" * 1000})
+        assert [e.path for e in read_archive(data).entries] == ["docs/a.md"]
 
     def test_rejects_a_broken_zip(self) -> None:
         with pytest.raises(ValidationError) as exc:

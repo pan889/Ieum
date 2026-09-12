@@ -444,13 +444,12 @@ class TestOneBadMailDoesNotEatTheRest:
         worker_env: async_sessionmaker[AsyncSession],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from test_desk_inbound import _channel, mail
-
         from ieum.config import get_settings
         from ieum.core.crypto import SecretBox
         from ieum.core.permissions import PermissionService
         from ieum.modules.org.repository import OrgPermissionResolver
         from ieum.worker import tasks as worker_tasks
+        from test_desk_inbound import _channel, mail
 
         permissions = PermissionService(
             resolver=OrgPermissionResolver(), step_up_window_seconds=300

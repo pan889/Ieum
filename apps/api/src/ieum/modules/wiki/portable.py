@@ -316,6 +316,35 @@ def rewrite_assets(body: str, replacements: dict[str, str]) -> str:
     return "\n".join(out)
 
 
+def _read_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, *, already: int) -> bytes:
+    """한 멤버를 읽되 **푼 뒤의 크기**를 센다.
+
+    `MAX_ARCHIVE_BYTES` 는 압축된 크기만 잰다. deflate 는 0 으로 채운 파일을
+    1000:1 넘게 줄이므로, 1MB 짜리 ZIP 하나가 수십 GB 로 풀릴 수 있다 —
+    개수 제한도 크기 제한도 통과하고, `archive.read()` 가 그것을 통째로
+    메모리에 올린 뒤에 프로세스가 죽는다.
+
+    헤더의 `file_size` 는 만든 쪽이 적은 값이라 믿지 않는다. 조각으로 읽으며
+    **누적 해제량**을 직접 센다. 상한은 압축 상한과 같은 값을 쓴다 — 풀어서
+    50MB 를 넘는 위키 묶음은 지금 다루는 물건이 아니다.
+    """
+    chunk = 1 << 20
+    out = bytearray()
+    with archive.open(member) as stream:
+        while True:
+            piece = stream.read(chunk)
+            if not piece:
+                break
+            out += piece
+            if already + len(out) > MAX_ARCHIVE_BYTES:
+                raise ValidationError(
+                    "묶음을 풀면 너무 크다.",
+                    code="wiki.import_too_large",
+                    details={"max": MAX_ARCHIVE_BYTES},
+                )
+    return bytes(out)
+
+
 def read_archive(data: bytes) -> Archive:
     """ZIP 에서 `.md` 와 나머지 파일을 꺼낸다. 폴더 구조가 곧 문서 트리다.
 
@@ -344,11 +373,13 @@ def read_archive(data: bytes) -> Archive:
                 details={"max": MAX_ARCHIVE_FILES},
             )
         assets: dict[str, bytes] = {}
+        unpacked = 0
         for member in members:
             safe = safe_archive_path(member.filename)
             if safe is None:
                 continue
-            raw = archive.read(member)
+            raw = _read_member(archive, member, already=unpacked)
+            unpacked += len(raw)
             if not safe.lower().endswith(_MD_SUFFIXES):
                 assets[safe] = raw
                 continue

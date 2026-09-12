@@ -15,7 +15,7 @@
 
 set -eu
 
-VERSION_DEFAULT="1.0.0"
+VERSION_DEFAULT="1.0.1"
 IMAGE_OWNER_DEFAULT="pan889"
 PORT_DEFAULT="8080"
 RAW_BASE="https://raw.githubusercontent.com/pan889/Ieum"

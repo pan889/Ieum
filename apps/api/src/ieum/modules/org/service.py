@@ -165,6 +165,9 @@ class RoleService:
     ) -> Role:
         await self._perms.require(self._s, actor, perms.ROLE_MANAGE, scope=Scope.global_())
         self._validate_grants(grants)
+        # **만들 때도 본다.** 고칠 때만 보면(`update_role`) 같은 역할이 만들
+        # 때는 통과하고 고칠 때만 거절되는, 설명할 수 없는 상태가 된다.
+        self._require_scope_fits(scope_kind, grants)
 
         if await self._roles.get_by_name(name, scope_kind) is not None:
             raise ConflictError("같은 이름·스코프의 역할이 이미 있다.")
