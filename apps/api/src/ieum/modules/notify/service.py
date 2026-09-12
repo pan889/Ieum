@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.config import Settings
 from ieum.core.context import Actor
-from ieum.core.exceptions import NotFoundError, ValidationError
+from ieum.core.exceptions import NotFoundError, PermissionDeniedError, ValidationError
 from ieum.core.i18n import translator_for
 from ieum.core.logging import get_logger
 from ieum.core.pagination import Page, PageRequest
@@ -61,6 +61,27 @@ class NotificationRequest:
     target_type: str | None = None
     target_id: UUID | None = None
     actor_id: UUID | None = None
+
+
+#: `Notification.title` 열 너비(`notify/models.py`). 두 자리가 어긋나면
+#: **드레인이 통째로 죽는다** — 아래 주석을 보라. 시험이 둘을 맞춰 본다.
+TITLE_MAX = 500
+
+
+def fit_title(text: str) -> str:
+    """알림 제목을 열 너비에 맞춘다.
+
+    **자르지 않으면 아웃박스 드레인이 통째로 죽는다.** 제목 템플릿은 이슈
+    요약을 통째로 품는데(`{key} 생성됨: {summary}`), 요약도 500자까지
+    받는다. 한 자만 넘쳐도 Postgres 가 INSERT 를 거절하고, 그 예외가 배치
+    트랜잭션을 되돌려 **그 배치의 다른 알림까지 같이 사라진다**. 긴 제목
+    하나를 쓴 사람 때문에 그 시간대 알림이 전부 안 나가는 셈이다.
+
+    줄임표 한 글자를 자리로 남겨, 잘렸다는 것이 화면에 보이게 한다.
+    """
+    if len(text) <= TITLE_MAX:
+        return text
+    return text[: TITLE_MAX - 1].rstrip() + "…"
 
 
 class NotificationService:
@@ -114,7 +135,7 @@ class NotificationService:
                     Notification(
                         user_id=user_id,
                         kind=request.kind,
-                        title=translate(request.title_key, **params),
+                        title=fit_title(translate(request.title_key, **params)),
                         body=translate(request.body_key, **params) if request.body_key else None,
                         link=request.link,
                         target_type=request.target_type,
@@ -176,9 +197,56 @@ class WatchService:
         self._s = session
         self._watches = WatchRepository(session)
 
-    async def watch(self, actor: Actor, target_type: str, target_id: UUID) -> bool:
+    async def watch(
+        self,
+        actor: Actor,
+        target_type: str,
+        target_id: UUID,
+        *,
+        permissions: PermissionService,
+    ) -> bool:
+        """구독한다. **볼 수 있는 것만 구독할 수 있다.**
+
+        이 검사가 없으면 구독이 곧 우회로가 된다: 알림 제목에는 이슈 키와
+        요약이, 본문에는 바뀐 내용이 그대로 담기므로, 아무 UUID 나 구독해
+        두면 그 프로젝트의 소식을 받아 볼 수 있다. 팬아웃 쪽에는 관문이
+        없다 — 워처 목록을 그대로 수신자로 쓴다.
+
+        무엇을 볼 수 있는지는 **그 모듈이 정한다**(`contracts.can_view_*`).
+        여기서 `issue.view` 같은 문자열과 스코프를 직접 조립하면, 규칙이
+        바뀔 때 이 자리만 옛것이 된다.
+        """
         self._validate_target(target_type)
+        if not await self._can_view(actor, target_type, target_id, permissions):
+            raise PermissionDeniedError("볼 수 없는 대상은 구독할 수 없다.")
         return await self._watches.add(actor.user_id, target_type, target_id)
+
+    async def _can_view(
+        self,
+        actor: Actor,
+        target_type: str,
+        target_id: UUID,
+        permissions: PermissionService,
+    ) -> bool:
+        from ieum.modules.issues import contracts as issues
+        from ieum.modules.org import contracts as org
+        from ieum.modules.wiki import contracts as wiki
+
+        match target_type:
+            case "issue":
+                return await issues.can_view_issue(self._s, permissions, actor, target_id)
+            case "project":
+                return await org.can_view_project(self._s, permissions, actor, target_id)
+            case "page":
+                return await wiki.can_view_page(self._s, permissions, actor, target_id)
+            case "space":
+                return await wiki.can_view_space(self._s, permissions, actor, target_id)
+        # `_validate_target` 이 이미 걸렀다. 종류가 늘면 여기서 막힌다 —
+        # 조용히 통과시키면 새 종류만 검사 없이 구독된다.
+        raise ValidationError(  # pragma: no cover - _validate_target 이 먼저 막는다
+            f"구독 권한을 물을 수 없는 대상이다: {target_type}",
+            code="notify.unknown_watch_target",
+        )
 
     async def unwatch(self, actor: Actor, target_type: str, target_id: UUID) -> bool:
         self._validate_target(target_type)
@@ -355,6 +423,7 @@ class WebhookService:
 
 __all__ = [
     "MAX_WATCH_TARGETS",
+    "TITLE_MAX",
     "WATCH_TARGET_ISSUE",
     "WATCH_TARGET_PAGE",
     "WATCH_TARGET_PROJECT",
@@ -363,4 +432,5 @@ __all__ = [
     "NotificationService",
     "WatchService",
     "WebhookService",
+    "fit_title",
 ]

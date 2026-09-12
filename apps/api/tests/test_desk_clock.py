@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -301,6 +302,71 @@ class TestFinishingTheResolution:
         await desk_clock.on_transition(session, issue.id, to_state_category="in_progress")
         row = await _clock(session, issue, policy)
         assert row is not None and row.completed_at is None
+
+
+class TestTheSweepsLockWhatTheyTake:
+    """**워커가 둘이면 같은 클럭을 둘이 집었다.**
+
+    HA 가이드는 워커를 여러 개 띄워도 된다고 적어 두었다. 그런데 위반·
+    에스컬레이션 스윕만 행을 안 잠가서, 두 스윕이 같은 클럭을 같이 읽고 둘 다
+    `breached_at` 을 적고 둘 다 돌려줬다 — 위반 알림이 두 통 가고
+    에스컬레이션이 두 번 돈다. 아웃박스는 처음부터 잠그고 있었다
+    (`fetch_unpublished`).
+
+    **여기서 보는 것은 질의의 모양이다.** 진짜 경쟁을 재현하려면 커밋된 두
+    트랜잭션이 필요한데 이 시험 세션은 하나로 굴러간다. 그래도 `FOR UPDATE`
+    를 지우면 이 시험이 붉어진다 — 막으려는 것이 바로 그 삭제다.
+    """
+
+    def _sql(self, statement: Any) -> str:
+        """**Postgres 방언으로 찍어야 한다.** `SKIP LOCKED` 는 방언이 붙여 주는
+        것이라, 기본 방언으로 찍으면 `FOR UPDATE` 까지만 나온다."""
+        from sqlalchemy.dialects import postgresql
+
+        return str(statement.compile(dialect=postgresql.dialect())).upper()
+
+    async def test_the_breach_sweep_asks_for_a_row_lock(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        captured: list[object] = []
+        real = session.execute
+
+        async def spy(statement: object, *args: object, **kwargs: object) -> object:
+            captured.append(statement)
+            return await real(statement, *args, **kwargs)  # type: ignore[arg-type]
+
+        session.execute = spy  # type: ignore[method-assign]
+        try:
+            await desk_clock.sweep_breaches(session)
+        finally:
+            session.execute = real  # type: ignore[method-assign]
+
+        sql = self._sql(captured[0])
+        assert "FOR UPDATE" in sql
+        assert "SKIP LOCKED" in sql
+
+    async def test_the_escalation_sweep_asks_for_a_row_lock(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        captured: list[object] = []
+        real = session.execute
+
+        async def spy(statement: object, *args: object, **kwargs: object) -> object:
+            captured.append(statement)
+            return await real(statement, *args, **kwargs)  # type: ignore[arg-type]
+
+        session.execute = spy  # type: ignore[method-assign]
+        try:
+            await desk_clock.sweep_escalations(session)
+        finally:
+            session.execute = real  # type: ignore[method-assign]
+
+        sql = self._sql(captured[0])
+        assert "FOR UPDATE" in sql
+        assert "SKIP LOCKED" in sql
+        # **정책은 안 잠근다.** 여러 클럭이 함께 보는 행이라 같이 잠그면
+        # 스윕끼리 서로를 막는다.
+        assert "OF SLA_CLOCK" in sql
 
 
 class TestSweepingForBreaches:

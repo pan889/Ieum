@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import asyncio
-from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +29,7 @@ from ieum.modules.search.backends.opensearch import OpenSearchBackend
 from ieum.modules.search.mirror import payload as mirror_payload
 from ieum.modules.search.models import SearchDocument, SearchMirrorQueue
 from ieum.modules.wiki.models import Page, PageVersion, Space
+from ieum.modules.wiki.service import effective_viewers
 
 log = get_logger(__name__)
 
@@ -150,49 +150,14 @@ async def _reindex_pages(session: AsyncSession) -> int:
                 ref=f"{space_keys.get(page.space_id, '')}/{page.path}",
                 title=page.title,
                 body=body,
-                # 제한은 서비스가 계산한다. 여기서는 보수적으로 비워 두지
-                # 않는다 — 제한된 문서를 열어 버리는 쪽이 더 나쁘다.
-                restricted_to=await _viewers(session, page),
+                # **서비스와 같은 함수를 쓴다.** 여기서 같은 규칙을 손으로
+                # 한 벌 더 쓰고 있었고, 그 두 벌이 어긋나 있었다 — 서비스를
+                # 고쳐도 전체 재색인 한 번이면 제한이 다시 샜다.
+                restricted_to=await effective_viewers(session, page),
                 updated_at=page.updated_at,
             )
         done += len(rows)
         offset += BATCH
-
-
-async def _viewers(session: AsyncSession, page: Page) -> list[UUID] | None:
-    """가장 가까운 조상의 열람 제한. 서비스의 `_effective_viewers` 와 같은 규칙."""
-    from ieum.modules.wiki.models import PageRestriction
-
-    parts = page.path.split("/")
-    paths = ["/".join(parts[: i + 1]) for i in range(len(parts))]
-    rows = list(
-        (
-            await session.execute(
-                select(Page.id, Page.path)
-                .where(Page.space_id == page.space_id, Page.path.in_(paths))
-                .order_by(Page.path)
-            )
-        ).all()
-    )
-    by_path = {path: page_id for page_id, path in rows}
-    for path in reversed(paths):
-        page_id = by_path.get(path)
-        if page_id is None:
-            continue
-        rules = list(
-            (
-                await session.execute(
-                    select(PageRestriction.principal_id).where(
-                        PageRestriction.page_id == page_id, PageRestriction.mode == "view"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if rules:
-            return rules
-    return None
 
 
 async def run_reindex() -> int:

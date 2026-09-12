@@ -76,6 +76,103 @@ def _bundle() -> bytes:
     )
 
 
+async def _two_workflow_project(session: AsyncSession) -> Project:
+    """워크플로우가 둘인 프로젝트.
+
+    Bug 는 `버그` 워크플로우(Open·Closed), Story 는 `기획` 워크플로우
+    (Backlog·Done). 상태 목록은 넷을 한 통에 담아 내므로, 이름만 보고 고르면
+    Story 에 Open 이 걸릴 수 있다.
+    """
+    from ieum.modules.issues.models import IssueType, Workflow, WorkflowState
+
+    row = Project(key=f"W{new_id().hex[:6].upper()}", name="워크플로우 둘")
+    session.add(row)
+    await session.flush()
+    for wf_name, states, type_name in (
+        (f"버그-{new_id().hex[:4]}", (("Open", "todo", True), ("Closed", "done", False)), "Bug"),
+        (
+            f"기획-{new_id().hex[:4]}",
+            (("Backlog", "todo", True), ("Done", "done", False)),
+            "Story",
+        ),
+    ):
+        workflow = Workflow(name=wf_name)
+        session.add(workflow)
+        await session.flush()
+        for position, (name, category, initial) in enumerate(states):
+            session.add(
+                WorkflowState(
+                    workflow_id=workflow.id,
+                    name=name,
+                    category=category,
+                    position=position,
+                    is_initial=initial,
+                )
+            )
+        session.add(IssueType(project_id=row.id, name=type_name, workflow_id=workflow.id))
+    await session.flush()
+    return row
+
+
+def _bundle_of(issues: list[Issue]) -> bytes:
+    return write_archive(
+        Archive(
+            manifest=Manifest(
+                source=Source(kind="redmine"),
+                project=SourceProject(key="p", name="소스"),
+                taken_at="2026-09-12T00:00:00Z",
+            ),
+            people=[],
+            issues=issues,
+        )
+    )
+
+
+class TestCrossedWorkflows:
+    """**만들어지기는 하는데 아무도 못 옮기는 이슈.**
+
+    상태 목록은 프로젝트의 모든 워크플로우를 한 통에 담아 보여 준다. 워크플로우가
+    둘 이상이면 이름만 보고 고른 상태가 다른 워크플로우의 것일 수 있고, 그대로
+    실으면 그 상태에서 나갈 전이가 하나도 없다. `IssueTypeRef` 가 `workflow_id`
+    를 함께 내는 이유가 이 판단인데, 아무도 보지 않고 있었다.
+    """
+
+    async def test_a_status_from_another_workflow_blocks_the_load(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        person = await _admin(session)
+        project = await _two_workflow_project(session)
+
+        preview = await ImportService(session, permissions).preview(
+            actor_for(person),
+            project_id=project.id,
+            # Story 는 `기획` 워크플로우인데 Open 은 `버그` 쪽 상태다.
+            data=_bundle_of([Issue(source_id="1", summary="하나", type="Story", status="Open")]),
+        )
+        assert preview.can_load is False
+        assert any("Story" in line and "Open" in line for line in preview.report.blocking)
+
+    async def test_a_matching_pair_is_fine(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """거르는 것이 지나쳐 맞는 짝까지 막으면 아무것도 못 옮긴다."""
+        person = await _admin(session)
+        project = await _two_workflow_project(session)
+
+        preview = await ImportService(session, permissions).preview(
+            actor_for(person),
+            project_id=project.id,
+            data=_bundle_of(
+                [
+                    Issue(source_id="1", summary="하나", type="Story", status="Backlog"),
+                    Issue(source_id="2", summary="둘", type="Bug", status="Open"),
+                ]
+            ),
+        )
+        assert preview.report.crossed_workflows == []
+        assert preview.can_load is True
+
+
 class TestStepUp:
     async def test_an_admin_without_two_factor_cannot_run_it(
         self, session: AsyncSession, permissions: PermissionService

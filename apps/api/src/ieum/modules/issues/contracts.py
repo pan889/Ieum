@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
 from ieum.core.pagination import Page, PageRequest
-from ieum.core.permissions import PermissionService, get_permission_service
+from ieum.core.permissions import PermissionService, Scope, get_permission_service
+from ieum.modules.issues import permissions as perms
 from ieum.modules.issues.models import STATE_CATEGORIES as _STATE_CATEGORIES
 from ieum.modules.issues.models import Issue
 from ieum.modules.issues.repository import IssueRepository, WorkflowRepository
@@ -58,6 +59,31 @@ async def get_issue(session: AsyncSession, issue_id: UUID) -> IssueRef | None:
         assignee_id=issue.assignee_id,
         priority=issue.priority,
         is_archived=issue.is_archived,
+    )
+
+
+async def can_view_issue(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    issue_id: UUID,
+) -> bool:
+    """이 사람이 이 이슈를 볼 수 있나. **보안 레벨까지 본다.**
+
+    바깥 모듈이 "이 이슈를 이 사람에게 보여도 되나" 를 물을 때 쓴다. 권한
+    이름과 스코프와 객체 수준 제한을 어떻게 엮는지는 이 모듈이 안다 —
+    부르는 쪽이 `issue.view` 라는 문자열과 프로젝트 스코프를 스스로 조립하면
+    규칙이 바뀔 때 그쪽만 옛것이 된다.
+    """
+    issue = await IssueRepository(session).get(issue_id)
+    if issue is None:
+        return False
+    return await permissions.has(
+        session,
+        actor,
+        perms.ISSUE_VIEW,
+        scope=Scope.project(issue.project_id),
+        subject=issue,
     )
 
 
@@ -629,6 +655,9 @@ class StateRef:
     name: str
     category: str
     workflow_name: str
+    #: 어느 워크플로우의 상태인가. 유형을 고르면 상태의 후보가 정해지므로
+    #: (`IssueTypeRef.workflow_id`), 고른 짝이 맞는지 보려면 둘을 견줘야 한다.
+    workflow_id: UUID
 
 
 async def get_project_states(session: AsyncSession, project_id: UUID) -> list[StateRef]:
@@ -658,6 +687,7 @@ async def get_project_states(session: AsyncSession, project_id: UUID) -> list[St
             name=state.name,
             category=state.category,
             workflow_name=workflow_name,
+            workflow_id=state.workflow_id,
         )
         for state, workflow_name in rows
     ]

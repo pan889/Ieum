@@ -382,6 +382,165 @@ class TestWebhookDelivery:
         assert hook.enabled is False
 
 
+class TestOneBadEventDoesNotTakeTheBatchWithIt:
+    """**한 건의 DB 오류가 배치 전체를 되돌렸다.**
+
+    행마다 `except` 가 있었지만, DB 오류가 나면 그 세션은 못 쓰는 상태가 된다.
+    `except` 가 적으려던 `attempts` 도 배치 끝의 커밋과 함께 통째로 되돌아갔고,
+    그래서 (1) 같은 배치의 멀쩡한 이벤트까지 사라졌고 (2) 재시도 횟수가 안 늘어
+    `MAX_ATTEMPTS` 상한이 영원히 안 걸렸다 — 같은 행이 배치마다 되돌아와 매번
+    다른 이벤트를 끌고 죽었다.
+    """
+
+    async def test_a_db_error_is_contained_to_its_own_row(
+        self,
+        worker_env: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ieum.worker import tasks as worker_tasks
+
+        poison = await seed_event(worker_env)
+        healthy = await seed_event(worker_env)
+
+        real = worker_tasks.handle_issue_event
+
+        async def explode(ctx: Any, envelope: Any) -> list[Any]:
+            if envelope.aggregate_id == poison["issue_id"]:
+                # 진짜 DB 오류여야 한다 — 파이썬 예외만으로는 세션이 안 죽는다.
+                await ctx.session.execute(text("SELECT 1 / 0"))
+            result: list[Any] = await real(ctx, envelope)
+            return result
+
+        monkeypatch.setattr(worker_tasks, "handle_issue_event", explode)
+        assert await drain_outbox() == 2
+
+        async with worker_env() as session:
+            rows = {
+                row.aggregate_id: row
+                for row in (await session.execute(select(OutboxEvent))).scalars().all()
+            }
+        bad = rows[poison["issue_id"]]
+        good = rows[healthy["issue_id"]]
+
+        # 멀쩡한 쪽은 그대로 발행됐다. 여기가 예전에 같이 사라지던 자리다.
+        assert good.published_at is not None
+        # 죽은 쪽은 안 발행됐고, **재시도 횟수가 늘었다** — 상한이 걸린다.
+        assert bad.published_at is None
+        assert bad.attempts == 1
+        assert bad.last_error
+
+
+class TestOneBadMailDoesNotEatTheRest:
+    """**읽음으로 표시된 메일은 다시 못 가져온다.**
+
+    한 통씩 커밋하는 자리에 "읽을 수 없는 메일" 만 감싸 두었다. 읽히기는
+    하는데 처리에서 죽는 메일이 있으면 예외가 반복문 밖으로 나가, 아직 안 본
+    나머지가 통째로 사라졌다 — 바로 위 주석이 "한 통이 죽어도 앞의 것을 잃지
+    않는다" 고 약속하는 그 자리다.
+    """
+
+    async def test_the_later_messages_still_get_handled(
+        self,
+        worker_env: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from test_desk_inbound import _channel, mail
+
+        from ieum.config import get_settings
+        from ieum.core.crypto import SecretBox
+        from ieum.core.permissions import PermissionService
+        from ieum.modules.org.repository import OrgPermissionResolver
+        from ieum.worker import tasks as worker_tasks
+
+        permissions = PermissionService(
+            resolver=OrgPermissionResolver(), step_up_window_seconds=300
+        )
+        box = SecretBox(get_settings().secret_key.get_secret_value(), purpose="desk.email")
+        async with worker_env() as session:
+            channel, _ = await _channel(session, permissions)
+            channel.inbound_password_enc = box.encrypt("imap-password")
+            await session.commit()
+
+        poison = mail(subject="죽는 메일")
+        healthy = mail(subject="살아남는 메일")
+        handled: list[bytes] = []
+
+        async def fetch(*_a: object, **_kw: object) -> list[bytes]:
+            return [poison, healthy]
+
+        async def handle(*_a: object, **kwargs: object) -> object:
+            raw = kwargs["raw"]
+            if raw == poison:
+                raise RuntimeError("이 통은 처리할 수 없다")
+            handled.append(raw)  # type: ignore[arg-type]
+            return None
+
+        monkeypatch.setattr(worker_tasks, "fetch_unseen", fetch)
+        monkeypatch.setattr(worker_tasks, "handle_inbound", handle)
+
+        # 죽은 한 통은 안 세고, 뒤의 한 통은 그대로 처리된다.
+        assert await worker_tasks.poll_email() == 1
+        assert handled == [healthy]
+
+
+class TestOneStageDoesNotStarveTheRest:
+    """**앞 단계 하나가 터지면 뒤가 통째로 굶었다.**
+
+    단계는 서로 독립인데 한 줄로 이어져 있었다. 아웃박스가 막히면 SLA 시계도,
+    받은 메일도, 반복 이슈도 며칠씩 멈추는데 화면은 멀쩡하다.
+    """
+
+    async def test_the_later_stages_still_run(
+        self,
+        worker_env: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ieum.worker import tasks as worker_tasks
+
+        ran: list[str] = []
+
+        async def boom() -> int:
+            raise RuntimeError("드레인이 막혔다")
+
+        def note(name: str, real: Any) -> Any:
+            async def wrapped() -> int:
+                ran.append(name)
+                count: int = await real()
+                return count
+
+            return wrapped
+
+        monkeypatch.setattr(worker_tasks, "drain_outbox", boom)
+        for name in ("sweep_sla", "poll_email", "run_due_recurrences"):
+            monkeypatch.setattr(worker_tasks, name, note(name, getattr(worker_tasks, name)))
+
+        with pytest.raises(worker_tasks.SweepStageError) as exc:
+            await sweep()
+        assert "outbox" in str(exc.value)
+        assert ran == ["sweep_sla", "poll_email", "run_due_recurrences"]
+
+    async def test_the_heartbeat_says_what_broke(
+        self,
+        worker_env: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """무엇이 터졌는지 안 적으면 "돌다가 터졌다" 만 남는다."""
+        from ieum.core.heartbeat import all_beats
+        from ieum.worker import tasks as worker_tasks
+
+        async def boom() -> int:
+            raise RuntimeError("드레인이 막혔다")
+
+        monkeypatch.setattr(worker_tasks, "drain_outbox", boom)
+        with pytest.raises(worker_tasks.SweepStageError):
+            await sweep()
+
+        async with worker_env() as session:
+            rows = await all_beats(session)
+        assert rows[0].last_error is not None
+        assert "outbox" in rows[0].last_error
+
+
 class TestSweep:
     """스윕이 무엇을 돌리는지 **정확한 사전으로** 못 박는다.
 

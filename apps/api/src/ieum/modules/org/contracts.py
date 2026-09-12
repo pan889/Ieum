@@ -10,8 +10,10 @@ from uuid import UUID
 from sqlalchemy import CursorResult, and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.core.context import Actor
 from ieum.core.pagination import PageRequest
-from ieum.core.permissions import Acl
+from ieum.core.permissions import Acl, PermissionService, Scope
+from ieum.modules.org import permissions as perms
 from ieum.modules.org.models import EntityLink, Project, Role, RoleAssignment
 from ieum.modules.org.repository import ProjectRepository, WorkspaceRepository
 
@@ -38,6 +40,25 @@ def _to_ref(project: Project) -> ProjectRef:
 async def get_project(session: AsyncSession, project_id: UUID) -> ProjectRef | None:
     project = await ProjectRepository(session).get(project_id)
     return _to_ref(project) if project else None
+
+
+async def can_view_project(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    project_id: UUID,
+) -> bool:
+    """이 사람이 이 프로젝트를 볼 수 있나.
+
+    권한 이름과 스코프를 어떻게 엮는지는 이 모듈이 안다. 바깥에서 조립하면
+    규칙이 바뀔 때 그쪽만 옛것이 된다.
+    """
+    project = await ProjectRepository(session).get(project_id)
+    if project is None:
+        return False
+    return await permissions.has(
+        session, actor, perms.PROJECT_VIEW, scope=Scope.project(project_id)
+    )
 
 
 async def get_projects(

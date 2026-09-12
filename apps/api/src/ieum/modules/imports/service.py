@@ -27,6 +27,7 @@ from ieum.modules.imports.mapping import (
     Target,
     match_names,
     match_priorities,
+    term,
     used_vocabulary,
 )
 from ieum.modules.imports.models import TARGET_TYPES, ImportedObject
@@ -154,18 +155,17 @@ class ImportService:
         archive = self._read(data)
         vocabulary = used_vocabulary(archive.issues)
 
-        types = [
+        type_rows = [
             # 하위 작업 전용 유형은 후보에서 뺀다. 부모 없는 이슈가 거기로
             # 들어가면 만들어지는 순간 규칙에 걸리고, 그 실패는 이관 도중에
             # 나타나서 절반만 들어온 상태를 남긴다.
-            Target(str(row.id), row.name)
+            row
             for row in await issues.get_project_issue_types(self._s, project_id)
             if not row.is_subtask
         ]
-        states = [
-            Target(str(row.id), row.name, row.workflow_name)
-            for row in await issues.get_project_states(self._s, project_id)
-        ]
+        state_rows = await issues.get_project_states(self._s, project_id)
+        types = [Target(str(row.id), row.name) for row in type_rows]
+        states = [Target(str(row.id), row.name, row.workflow_name) for row in state_rows]
 
         report = Report(
             types=match_names(vocabulary.types, types, type_overrides),
@@ -174,6 +174,7 @@ class ImportService:
             people=await self._people(archive),
         )
         self._note_dangling(archive, report)
+        self._note_crossed_workflows(archive, report, type_rows, state_rows)
 
         known = await self._imported.known_source_ids(
             project_id=project_id,
@@ -261,13 +262,17 @@ class ImportService:
                     # `can_load` 가 이미 막았다. 여기에 "없으면 아무거나" 를
                     # 두면 그 가드가 헐거워지는 날 아무도 모른다 — 개수는
                     # 맞고 이슈만 엉뚱한 자리에 있다.
-                    type_id=UUID(types[issue.type]),
-                    state_id=UUID(statuses[issue.status]),
+                    # **표준형으로 찾는다.** 어휘를 모을 때 `term` 으로 다듬어
+                    # 담았으므로, 원본 문자열로 찾으면 앞뒤 공백 하나에
+                    # `KeyError` 가 나고 그건 500 이다 — 미리 보기는 통과시켜
+                    # 놓고 이슈를 절반쯤 만든 뒤에.
+                    type_id=UUID(types[term(issue.type)]),
+                    state_id=UUID(statuses[term(issue.status)]),
                     summary=issue.summary or "(제목 없음)",
                     description=issue.description,
                     reporter_id=people.get(issue.author),
                     assignee_id=people.get(issue.assignee),
-                    priority=priorities.get(issue.priority, 3),
+                    priority=priorities.get(term(issue.priority), 3),
                     created_at=_moment(issue.created_at),
                     updated_at=_moment(issue.updated_at or issue.created_at),
                     start_date=_day(issue.start_date),
@@ -422,6 +427,43 @@ class ImportService:
                 continue
             out.append(PersonMatch(person.source_id, person.name, person.email, str(user.id)))
         return out
+
+    def _note_crossed_workflows(
+        self,
+        archive: Archive,
+        report: Report,
+        type_rows: list[issues.IssueTypeRef],
+        state_rows: list[issues.StateRef],
+    ) -> None:
+        """고른 상태가 고른 종류의 워크플로우에 없으면 적어 둔다.
+
+        **상태 목록은 프로젝트의 모든 워크플로우를 한 통에 담는다.** 워크플로우가
+        둘 이상인 프로젝트에서는 이름만 보고 고른 상태가 다른 워크플로우의 것일
+        수 있고, 그대로 실으면 이슈는 만들어지는데 그 상태에서 나갈 전이가
+        하나도 없다 — 아무도 못 옮기는 이슈가 조용히 쌓인다. `IssueTypeRef` 가
+        `workflow_id` 를 함께 내는 이유가 이 판단이다.
+
+        **묶음에 실제로 나온 (종류, 상태) 짝만 본다.** 나오지 않은 조합까지
+        따지면 워크플로우가 여럿인 프로젝트는 아무것도 못 옮긴다.
+        """
+        type_workflow = {str(row.id): row.workflow_id for row in type_rows}
+        state_workflow = {str(row.id): row.workflow_id for row in state_rows}
+        chosen_type = {m.source: m.target_id for m in report.types if m.ok}
+        chosen_state = {m.source: m.target_id for m in report.statuses if m.ok}
+
+        seen: set[tuple[str, str]] = set()
+        for issue in archive.issues:
+            pair = (term(issue.type), term(issue.status))
+            if pair in seen:
+                continue
+            seen.add(pair)
+            type_id = chosen_type.get(pair[0])
+            state_id = chosen_state.get(pair[1])
+            if type_id is None or state_id is None:
+                # 짝을 못 지은 것은 이미 `blocking` 에 들어 있다.
+                continue
+            if type_workflow.get(type_id) != state_workflow.get(state_id):
+                report.crossed_workflows.append(pair)
 
     def _note_dangling(self, archive: Archive, report: Report) -> None:
         """묶음 **안에 없는 것**을 가리키는 부모·관계를 적어 둔다.

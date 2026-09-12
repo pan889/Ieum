@@ -13,6 +13,7 @@ DB 트랜잭션을 붙잡고 있으면 락이 쌓인다.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -66,6 +67,11 @@ from ieum.modules.search import mirror as search_mirror
 
 log = get_logger(__name__)
 
+
+class SweepStageError(RuntimeError):
+    """스윕의 한 단계 이상이 실패했다. 나머지 단계는 그대로 돌았다."""
+
+
 OUTBOX_BATCH = 100
 WEBHOOK_BATCH = 50
 
@@ -97,28 +103,36 @@ async def drain_outbox() -> int:
                 payload=dict(row.payload),
             )
             try:
-                notification_ids.extend(await handle_issue_event(handler_ctx, envelope))
-                notification_ids.extend(await handle_page_event(handler_ctx, envelope))
-                standalone.extend(await collect_invite_mail(identity_ctx, envelope))
-                # 메일 채널의 회신 (C6). 알림과 따로 나가는 이유: 받는 사람이
-                # 우리 사용자가 아니라 **고객**이고, 인앱 알림을 볼 수 없다.
-                standalone.extend(await collect_reply_mail(desk_ctx, envelope))
-                # 만족도 조사 (C11). 회신과 같은 자리에서 모은다 — 받는 사람이
-                # 우리 사용자가 아니라 고객이고, 인앱 알림을 볼 수 없다.
-                standalone.extend(
-                    await collect_survey_mail(
-                        SurveyContext(session=session, settings=settings), envelope
+                # **세이브포인트로 감싼다.** 한 건이 DB 오류로 죽으면 그 세션은
+                # 못 쓰는 상태가 되고, 아래 `except` 가 적으려는 `attempts` 도
+                # 배치 끝의 커밋과 함께 통째로 되돌아간다. 그러면 **그 배치의
+                # 다른 이벤트까지 같이 사라지고**, 재시도 횟수가 안 늘어 같은
+                # 행이 다음 배치도, 그다음 배치도 똑같이 죽인다 — 상한
+                # (`MAX_ATTEMPTS`)이 영원히 안 걸린다. 세이브포인트는 그 한
+                # 건만 되돌리고 바깥 트랜잭션을 살려 둔다.
+                async with session.begin_nested():
+                    notification_ids.extend(await handle_issue_event(handler_ctx, envelope))
+                    notification_ids.extend(await handle_page_event(handler_ctx, envelope))
+                    standalone.extend(await collect_invite_mail(identity_ctx, envelope))
+                    # 메일 채널의 회신 (C6). 알림과 따로 나가는 이유: 받는 사람이
+                    # 우리 사용자가 아니라 **고객**이고, 인앱 알림을 볼 수 없다.
+                    standalone.extend(await collect_reply_mail(desk_ctx, envelope))
+                    # 만족도 조사 (C11). 회신과 같은 자리에서 모은다 — 받는 사람이
+                    # 우리 사용자가 아니라 고객이고, 인앱 알림을 볼 수 없다.
+                    standalone.extend(
+                        await collect_survey_mail(
+                            SurveyContext(session=session, settings=settings), envelope
+                        )
                     )
-                )
-                await enqueue_webhooks(handler_ctx, envelope)
-                # SLA 클럭 (C4). 여기서 도는 이유는 요청 경로에서 재면 아무도
-                # 열어 보지 않은 티켓이 영원히 위반이 아니게 되기 때문이다.
-                await handle_desk_event(ClockContext(session=session), envelope)
-                # 자동화 규칙 (C9). **클럭 뒤에 둔다** — 규칙이 우선순위를
-                # 올려도 이미 걸린 클럭의 목표는 그대로다(약속은 접수 시점에
-                # 정해진다). 순서를 바꾸면 같은 티켓이 규칙의 실행 순간에
-                # 따라 다른 목표를 갖는다.
-                await handle_automation(RuleContext(session=session), envelope)
+                    await enqueue_webhooks(handler_ctx, envelope)
+                    # SLA 클럭 (C4). 여기서 도는 이유는 요청 경로에서 재면 아무도
+                    # 열어 보지 않은 티켓이 영원히 위반이 아니게 되기 때문이다.
+                    await handle_desk_event(ClockContext(session=session), envelope)
+                    # 자동화 규칙 (C9). **클럭 뒤에 둔다** — 규칙이 우선순위를
+                    # 올려도 이미 걸린 클럭의 목표는 그대로다(약속은 접수 시점에
+                    # 정해진다). 순서를 바꾸면 같은 티켓이 규칙의 실행 순간에
+                    # 따라 다른 목표를 갖는다.
+                    await handle_automation(RuleContext(session=session), envelope)
             # 한 건이 실패해도 배치 전체를 멈추지 않는다.
             except Exception as exc:
                 row.attempts += 1
@@ -378,14 +392,28 @@ async def poll_email() -> int:
                         error=str(exc)[:200],
                     )
                     continue
-                await handle_inbound(
-                    session,
-                    get_permission_service(),
-                    channel=channel,
-                    parsed=parsed,
-                    raw=raw,
-                    store=store,
-                )
+                try:
+                    await handle_inbound(
+                        session,
+                        get_permission_service(),
+                        channel=channel,
+                        parsed=parsed,
+                        raw=raw,
+                        store=store,
+                    )
+                # **읽을 수 없는 메일만 감싸면 모자란다.** 읽히기는 하는데
+                # 처리에서 죽는 메일(첨부가 상한을 넘거나, 본문이 열보다 길거나,
+                # 참조가 깨졌거나)이 있으면 예외가 이 반복문 밖으로 나가, 아직
+                # 안 본 나머지 메일이 통째로 사라진다 — IMAP 에서는 이미 읽음
+                # 으로 표시돼 다시 가져올 수 없다. 바로 위 주석이 "한 통이
+                # 죽어도 앞의 것을 잃지 않는다" 고 약속하는 그 일이다.
+                except Exception as exc:
+                    log.error(
+                        "desk.email.handle_failed",
+                        channel_id=str(channel_id),
+                        error=f"{type(exc).__name__}: {exc}"[:500],
+                    )
+                    continue
                 handled += 1
 
         async with session_scope() as session:
@@ -456,29 +484,54 @@ async def sweep() -> dict[str, int]:
         raise
 
 
+async def _stage(name: str, run: Callable[[], Awaitable[int]], failed: list[str]) -> int:
+    """한 단계를 돌린다. **터져도 다음 단계를 굶기지 않는다.**
+
+    단계는 서로 독립이다 — 아웃박스가 막혔다고 SLA 시계가 멈출 이유도,
+    고객 메일을 안 받을 이유도 없다. 한 줄로 이어 두면 앞 단계 하나가 뒤를
+    전부 굶기고, 그 상태가 주기마다 똑같이 되풀이된다: 위반 알림도, 반복
+    이슈도, 받은 메일도 며칠씩 멈춰 있는데 화면은 멀쩡하다.
+
+    실패는 삼키지 않는다 — 불러 준 목록에 적히고, 스윕이 끝나면 심장박동에
+    실려 나간다.
+    """
+    try:
+        return await run()
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        failed.append(f"{name}: {reason}")
+        log.error("worker.stage_failed", stage=name, error=reason)
+        return 0
+
+
 async def _sweep_once(started: datetime) -> dict[str, int]:
-    processed = await drain_outbox()
-    delivered = await deliver_webhooks()
-    attachments = await sweep_attachments()
+    failed: list[str] = []
+    processed = await _stage("outbox", drain_outbox, failed)
+    delivered = await _stage("webhooks", deliver_webhooks, failed)
+    attachments = await _stage("attachments", sweep_attachments, failed)
     # **드레인 뒤에 돈다.** 앞에서 방금 걸린 클럭이 이미 위반일 수 있다
     # (업무 시간이 아주 짧은 목표). 순서를 바꾸면 그 위반이 한 주기 늦는다.
-    sla_breaches = await sweep_sla()
+    sla_breaches = await _stage("sla", sweep_sla, failed)
     # **위반 뒤에 돈다.** 목표 시각에 알림과 조치를 함께 두는 설정이 흔하고,
     # 그때 아웃박스에 "위반했다" 가 "그래서 이걸 했다" 보다 먼저 들어가야
     # 읽는 순서가 일어난 순서와 같다.
-    sla_escalations = await sweep_sla_escalations()
+    sla_escalations = await _stage("sla_escalations", sweep_sla_escalations, failed)
     # **메일 수신은 드레인 **앞**이 아니라 뒤다.** 여기서 만든 티켓의
     # `desk.ticket.submitted` 는 다음 주기의 드레인이 집는다 — 같은 주기에
     # 처리하려면 드레인을 두 번 돌려야 하고, 그러면 한 주기의 길이가 IMAP
     # 왕복에 묶인다.
-    emails = await poll_email()
+    emails = await _stage("email", poll_email, failed)
     # 스프린트 번다운의 오늘 점 (M5). **되짚어 계산하지 않으므로** 여기서
     # 계속 덮어써야 오늘 값이 살아 있고, 날짜가 바뀌면 그대로 굳는다.
-    sprints = await snapshot_active_sprints()
+    sprints = await _stage("sprints", snapshot_active_sprints, failed)
     # 반복 이슈 (A27). **드레인 뒤에 둔다** — 여기서 만든 이슈의 알림은
     # 다음 주기의 드레인이 집는다. 앞에 두면 같은 주기에 나가지만, 그러면
     # 15초 주기의 길이가 이슈 생성 수에 묶인다.
-    recurrences = await run_due_recurrences()
+    recurrences = await _stage("recurrences", run_due_recurrences, failed)
+    if failed:
+        # 한 단계라도 터졌으면 스윕은 실패다. 나머지는 이미 돌았고, 무엇이
+        # 터졌는지는 `sweep` 이 심장박동에 적는다.
+        raise SweepStageError(" | ".join(failed))
     elapsed = (utcnow() - started).total_seconds()
     # **스프린트는 조건에 안 넣는다.** 도는 스프린트가 하나라도 있으면 매
     # 주기 점을 덮어쓰므로, 조건에 넣으면 이 줄이 30초마다 찍힌다 — "무슨

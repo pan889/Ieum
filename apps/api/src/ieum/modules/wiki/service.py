@@ -164,6 +164,37 @@ _EDIT_PERMISSIONS = frozenset(
 )
 
 
+async def effective_viewers(session: AsyncSession, page: Page) -> list[UUID] | None:
+    """이 문서를 볼 수 있는 주체. 제한이 없으면 None.
+
+    **사슬 전체를 교집합한다.** 실제 열람 판정(`_passes_restrictions`)은 자기
+    자신과 **모든** 조상의 제한을 차례로 통과해야 통과시킨다. 가장 가까운 제한
+    하나만 쓰면, 그보다 위가 더 좁을 때 색인이 더 너그러워진다 — `/A` 를
+    alice 만, `/A/B` 를 bob 만 볼 수 있게 해 두면 bob 은 `/A` 에서 막혀 문서를
+    못 여는데 검색에는 제목과 본문 발췌가 그대로 떴다. 두 규칙이 다를 때 내용을
+    내주는 쪽은 느슨한 쪽이다.
+
+    교집합이 비면 **빈 목록**을 돌려준다. `None`(제한 없음)과 다르다 — 아무도
+    못 본다는 뜻이고, 두 검색 백엔드가 그렇게 읽는다.
+
+    **모듈 함수인 이유는 재색인 때문이다.** `reindex.py` 가 같은 값을 자기
+    손으로 계산하고 있었고, 그 두 벌이 어긋나 있었다 — 서비스를 고쳐도 전체
+    재색인 한 번이면 샜다. 한 벌만 남긴다.
+    """
+    # 자기 자신도 본다. `_ancestor_paths` 는 조상만 준다.
+    paths = [*_ancestor_paths(page.path), page.path]
+    candidates = await PageRepository(session).by_paths(page.space_id, paths)
+    rules = await PageRestrictionRepository(session).for_pages([p.id for p in candidates])
+    allowed: set[UUID] | None = None
+    for node in candidates:
+        viewers = {r.principal_id for r in rules.get(node.id, []) if r.mode == "view"}
+        # 규칙이 없는 마디는 아무것도 좁히지 않는다.
+        if not viewers:
+            continue
+        allowed = viewers if allowed is None else allowed & viewers
+    return None if allowed is None else sorted(allowed)
+
+
 async def _passes_restrictions(session: AsyncSession, actor: Actor, page: Page, mode: str) -> bool:
     """자기 자신과 모든 조상의 제한을 본다.
 
@@ -1412,6 +1443,11 @@ class PageService:
             ),
         )
         await self._copy_restrictions(node, view.page)
+        # **제한을 옮긴 뒤에 색인을 다시 만든다.** `create` 는 제한이 아직
+        # 없는 상태에서 색인했으므로, 이 줄이 없으면 사본이 `restricted_to`
+        # 없이 색인에 남는다 — 문서를 열면 403 인데 검색에는 제목과 본문
+        # 발췌가 뜨는, 원본을 가린 의미가 사라진 상태다.
+        await self._rederive(view.page)
         return view
 
     async def _copy_restrictions(self, source: Page, target: Page) -> None:
@@ -1576,24 +1612,7 @@ class PageService:
             await self._rederive(node)
 
     async def _effective_viewers(self, page: Page) -> list[UUID] | None:
-        """이 문서를 볼 수 있는 주체. 제한이 없으면 None.
-
-        제한은 가장 가까운 조상에서 물려받는다 (`_visible` 과 같은 규칙).
-        """
-        # 자기 자신도 본다. `_ancestor_paths` 는 조상만 준다.
-        paths = [*_ancestor_paths(page.path), page.path]
-        candidates = await self._pages.by_paths(page.space_id, paths)
-        by_path = {p.path: p for p in candidates}
-        rules = await self._restrictions.for_pages([p.id for p in candidates])
-        # 자기 자신부터 위로 올라가며 처음 만나는 view 제한을 쓴다.
-        for path in reversed(paths):
-            node = by_path.get(path)
-            if node is None:
-                continue
-            view_rules = [r for r in rules.get(node.id, []) if r.mode == "view"]
-            if view_rules:
-                return [r.principal_id for r in view_rules]
-        return None
+        return await effective_viewers(self._s, page)
 
     # ── 내부 ────────────────────────────────────────────────────
 
@@ -2091,4 +2110,5 @@ __all__ = [
     "PageTemplateService",
     "PageView",
     "SpaceService",
+    "effective_viewers",
 ]

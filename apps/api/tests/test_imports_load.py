@@ -140,6 +140,45 @@ async def _count(session: AsyncSession, model: type, column: object, value: obje
     return int((await session.execute(stmt)).scalar_one())
 
 
+class TestPaddedWordsDoNotBlowUpHalfway:
+    """**미리 보기는 통과시키고 적재가 500 으로 죽었다.**
+
+    어휘를 모을 때는 `strip` 하고 찾을 때는 원본 문자열을 썼다. 소스의 상태
+    이름에 앞뒤 공백이 하나라도 있으면 `KeyError` 가 나는데, 그것도 이슈를
+    절반쯤 만든 뒤에 난다 — 되돌릴 수 없는 자리다.
+    """
+
+    async def test_a_status_with_stray_spaces_still_loads(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        person = await _admin(session)
+        project = await _project(session)
+        data = _bundle(
+            [
+                Issue(
+                    source_id="1",
+                    summary="공백 낀 상태",
+                    type=" Bug ",
+                    status=" Open ",
+                    priority=" High ",
+                    created_at="2023-04-05T06:07:08Z",
+                )
+            ]
+        )
+
+        done = await ImportService(session, permissions).load(
+            actor_for(person), project_id=project.id, data=data
+        )
+        assert (done.issues_created, done.issues_skipped) == (1, 0)
+
+        issue = (
+            await session.execute(select(IssueRow).where(IssueRow.project_id == project.id))
+        ).scalar_one()
+        assert issue.summary == "공백 낀 상태"
+        # 다듬은 이름으로 제대로 이었다 — 2 는 High 다.
+        assert issue.priority == 2
+
+
 class TestItRunsTwiceWithoutGrowing:
     async def test_the_second_run_creates_nothing(
         self, session: AsyncSession, permissions: PermissionService

@@ -84,6 +84,17 @@ class Vocabulary:
     priorities: tuple[str, ...] = ()
 
 
+def term(value: str) -> str:
+    """묶음에서 온 낱말의 표준형.
+
+    **모으는 쪽과 찾는 쪽이 반드시 같은 것을 써야 한다.** 한쪽만 `strip` 하면,
+    소스에 앞뒤 공백이 붙은 상태 이름이 하나라도 있을 때 미리 보기는 멀쩡히
+    통과하고 적재가 `KeyError` 로 500 이 난다 — 그것도 이슈를 절반쯤 만든
+    뒤에.
+    """
+    return value.strip()
+
+
 def used_vocabulary(issues: Sequence[Issue]) -> Vocabulary:
     """묶음에서 실제로 쓰인 낱말만 모은다. 나온 순서를 지킨다."""
     types: list[str] = []
@@ -95,7 +106,7 @@ def used_vocabulary(issues: Sequence[Issue]) -> Vocabulary:
             (issue.status, statuses),
             (issue.priority, priorities),
         ):
-            cleaned = value.strip()
+            cleaned = term(value)
             if cleaned and cleaned not in bucket:
                 bucket.append(cleaned)
     return Vocabulary(tuple(types), tuple(statuses), tuple(priorities))
@@ -139,14 +150,21 @@ def match_priorities(
 ) -> list[Match]:
     """이름을 우리 1~5 에 편다.
 
-    소스가 준 이름의 **순서를 우리는 모른다.** `("Low", "Normal", "High")` 가
-    낮은 것부터인지 아닌지 파일에는 안 적혀 있다. 그래서 묶음에 나온 순서를
-    그대로 쓴다 — 어댑터가 소스의 정의 순서대로 싣기 때문이고, Redmine 은
-    실제로 낮은 것부터 준다.
+    **아는 이름이면 이름으로 잇는다.** 예전에는 묶음에 나온 순서만 보고
+    5→1 로 폈는데, 그 순서는 소스가 정한 순서가 아니라 **이슈가 나온 순서**다
+    (`used_vocabulary`). 그래서 묶음의 첫 이슈가 High 이면 High 가 5(가장
+    낮음)가 됐다 — 주석은 "어댑터가 소스의 정의 순서대로 싣는다" 고 적어
+    두었지만 묶음 형식에는 그런 목록이 없다.
 
-    짐작이므로 `BY_RANK` 로 표시한다. 미리 보기 화면이 이것을 다르게 그린다.
+    **전부 알아볼 때만** 이름으로 잇는다. 반만 알아보고 나머지를 순서로
+    채우면 두 규칙이 한 목록 안에서 섞여 서로 어긋난다.
+
+    하나도 못 알아보면 옛 방식대로 순서로 편다 — 그게 아무 짝도 안 지어
+    주는 것보다는 낫고, `BY_RANK` 로 표시되어 미리 보기 화면이 "순서로
+    짐작했다, 확인하라" 고 적는다.
     """
     overrides = overrides or {}
+    named = _by_known_name(sources)
     out: list[Match] = []
     count = len(sources)
     for index, source in enumerate(sources):
@@ -154,14 +172,62 @@ def match_priorities(
         if chosen.isdigit() and PRIORITY_HIGHEST <= int(chosen) <= PRIORITY_LOWEST:
             out.append(Match(source, chosen, chosen, BY_OVERRIDE))
             continue
+        if named is not None:
+            rank = named[source]
+            out.append(Match(source, str(rank), str(rank), BY_NAME))
+            continue
         if count == 1:
             rank = PRIORITY_NORMAL
         else:
-            # 낮은 것부터 온다고 보고 5→1 로 편다.
+            # 이름을 하나도 못 알아봤다. 나온 순서가 낮은 것부터라고 보고 편다.
             span = PRIORITY_LOWEST - PRIORITY_HIGHEST
             rank = PRIORITY_LOWEST - round(index * span / (count - 1))
         out.append(Match(source, str(rank), str(rank), BY_RANK))
     return out
+
+
+#: 널리 쓰이는 우선순위 이름 → 우리 1~5. 소문자로 견준다.
+#:
+#: Redmine 기본값(Low·Normal·High·Urgent·Immediate)과 Jira 기본값
+#: (Lowest·Low·Medium·High·Highest)을 덮는다. 한국어 이름도 넣는다 — 두
+#: 제품 모두 현지화된 이름을 그대로 쓰는 설치가 흔하다.
+#:
+#: **겹치는 것을 허용한다.** 소스가 다섯 단계보다 잘게 나눠 두었으면 몇 개는
+#: 같은 자리로 모인다. 방향이 맞는 것이 자리 수가 맞는 것보다 중요하다.
+_PRIORITY_NAMES: dict[str, int] = {
+    "immediate": 1,
+    "blocker": 1,
+    "critical": 1,
+    "highest": 1,
+    "즉시": 1,
+    "최고": 1,
+    "urgent": 2,
+    "high": 2,
+    "긴급": 2,
+    "높음": 2,
+    "normal": 3,
+    "medium": 3,
+    "moderate": 3,
+    "보통": 3,
+    "중간": 3,
+    "low": 4,
+    "낮음": 4,
+    "lowest": 5,
+    "trivial": 5,
+    "minor": 5,
+    "최저": 5,
+}
+
+
+def _by_known_name(sources: tuple[str, ...]) -> dict[str, int] | None:
+    """전부 알아보면 `{이름: 순위}`, 하나라도 모르면 None."""
+    found: dict[str, int] = {}
+    for source in sources:
+        rank = _PRIORITY_NAMES.get(source.strip().lower())
+        if rank is None:
+            return None
+        found[source] = rank
+    return found or None
 
 
 #: 사람을 왜 못 이었는가.
@@ -202,6 +268,13 @@ class Report:
     #: 종류·상태 칸이 **비어 있는** 이슈. 짝지을 낱말 자체가 없다.
     blank_type: list[str] = field(default_factory=list)
     blank_status: list[str] = field(default_factory=list)
+    #: 고른 상태가 고른 종류의 워크플로우에 없는 짝. `("Bug", "완료")` 꼴.
+    #:
+    #: 프로젝트에 워크플로우가 둘 이상이면 생긴다 — 상태 목록은 프로젝트의
+    #: 모든 워크플로우를 한 통에 담아 보여 주므로, 이름만 보고 고르면 다른
+    #: 워크플로우의 상태가 걸릴 수 있다. 그대로 실으면 이슈는 만들어지는데
+    #: 그 상태에서 나갈 전이가 하나도 없어 **아무도 못 옮기는 이슈**가 된다.
+    crossed_workflows: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def blocking(self) -> list[str]:
@@ -218,6 +291,10 @@ class Report:
             out.append(f"종류가 비어 있는 이슈 {len(self.blank_type)}개: {self.blank_type[:5]}")
         if self.blank_status:
             out.append(f"상태가 비어 있는 이슈 {len(self.blank_status)}개: {self.blank_status[:5]}")
+        out += [
+            f"종류 '{type_name}' 의 워크플로우에 없는 상태다: {status_name}"
+            for type_name, status_name in self.crossed_workflows
+        ]
         return out
 
 
@@ -239,5 +316,6 @@ __all__ = [
     "match_names",
     "match_priorities",
     "normalize",
+    "term",
     "used_vocabulary",
 ]

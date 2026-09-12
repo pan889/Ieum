@@ -124,8 +124,13 @@ async def dispatch(session: AsyncSession, row: OutboxEvent) -> None:
     handlers = events.handlers_for(row.event_type)
 
     try:
-        for handler in handlers:
-            await handler(envelope)
+        # **세이브포인트로 감싼다.** 구독자가 DB 오류로 죽으면 세션이 못 쓰는
+        # 상태가 되고, 아래에서 적는 `attempts` 까지 배치 커밋과 함께 되돌아
+        # 간다 — 재시도 횟수가 안 늘어 `MAX_ATTEMPTS` 상한이 영원히 안 걸리고,
+        # 같은 행이 배치마다 다른 이벤트를 같이 끌고 죽는다.
+        async with session.begin_nested():
+            for handler in handlers:
+                await handler(envelope)
     # 한 건이 실패해도 루프 전체를 멈추지 않는다. 실패는 행에 기록하고 재시도한다.
     except Exception as exc:
         row.attempts += 1

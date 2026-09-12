@@ -335,10 +335,13 @@ def _json(value: dict[str, Any]) -> str:
 
 
 def _source(doc: dict[str, Any]) -> dict[str, Any]:
-    """색인에 실을 몸통. `restricted_to` 가 없으면 **열을 아예 뺀다.**
+    """색인에 실을 몸통. `restricted_to` 가 **`None` 이면** 열을 아예 뺀다.
 
     `null` 로 넣으면 `exists` 가 그 열을 "없다" 로 보므로 뜻이 같지만,
     빼는 쪽이 매핑의 `strict` 와 어긋날 일이 없고 저장도 작다.
+
+    **빈 목록은 빼지 않는다.** 빈 목록은 "제한 없음" 이 아니라 "아무도 못
+    본다" 이고, 빼 버리면 그 뜻이 정반대로 뒤집힌다.
     """
     body = {
         "kind": doc["kind"],
@@ -351,7 +354,10 @@ def _source(doc: dict[str, Any]) -> dict[str, Any]:
         "source_updated_at": doc["source_updated_at"],
     }
     restricted = doc.get("restricted_to")
-    if restricted:
+    # **`None` 과 빈 목록은 다르다.** `None` 은 "제한 없음", 빈 목록은
+    # "아무도 못 본다" 다 — 위키의 중첩 제한이 서로 안 겹치면 그렇게 된다.
+    # 둘을 같이 보면 아무도 못 볼 문서가 모두에게 보이는 쪽으로 뒤집힌다.
+    if restricted is not None:
         body["restricted_to"] = [str(one) for one in restricted]
     return body
 

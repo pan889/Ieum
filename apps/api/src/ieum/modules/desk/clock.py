@@ -220,6 +220,12 @@ async def sweep_breaches(session: AsyncSession, *, limit: int = 200) -> list[Sla
                 )
                 .order_by(SlaClock.target_at)
                 .limit(limit)
+                # **행을 잠근다.** 워커를 둘 이상 띄우면(HA 가이드가 그래도
+                # 된다고 적어 둔 구성이다) 두 스윕이 같은 클럭을 같이 집어
+                # 둘 다 `breached_at` 을 적고 둘 다 돌려준다 — 위반 알림이
+                # 두 통 가고 에스컬레이션이 두 번 돈다. 아웃박스는 처음부터
+                # 이렇게 잠그는데(`fetch_unpublished`) 스윕만 빠져 있었다.
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()
@@ -273,6 +279,9 @@ async def sweep_escalations(session: AsyncSession, *, limit: int = 200) -> list[
             )
             .order_by(SlaClock.target_at)
             .limit(limit)
+            # 위반 스윕과 같은 이유. **클럭만 잠근다** — 정책은 여러 클럭이
+            # 함께 보는 행이라 같이 잠그면 스윕끼리 서로를 막는다.
+            .with_for_update(of=SlaClock, skip_locked=True)
         )
     ).all()
 

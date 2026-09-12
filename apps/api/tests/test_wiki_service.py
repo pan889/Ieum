@@ -1673,6 +1673,155 @@ class TestCopyKeepsRestrictions:
             await service.get(actor_for(other), child.id)
 
 
+class TestSearchIndexMatchesTheRealReadRule:
+    """색인의 제한이 실제 열람 판정보다 **느슨하면 내용이 샌다.**
+
+    문서를 여는 판정(`_passes_restrictions`)은 자기 자신과 모든 조상의 제한을
+    차례로 통과해야 통과시킨다. 색인에 적는 값이 그보다 너그러우면, 열면
+    403 인 문서의 제목과 본문 발췌가 검색 결과에 뜬다.
+    """
+
+    async def _indexed_viewers(self, session: AsyncSession, page_id: UUID) -> list[UUID] | None:
+        from ieum.modules.search.models import SearchDocument
+
+        row = (
+            await session.execute(select(SearchDocument).where(SearchDocument.entity_id == page_id))
+        ).scalar_one()
+        return row.restricted_to
+
+    async def test_a_nested_restriction_narrows_it(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        other: User,
+        space: Space,
+    ) -> None:
+        """`/A` 는 나만, `/A/B` 는 남만 — 그러면 **아무도** 못 본다.
+
+        가장 가까운 제한 하나만 쓰면 색인에는 "남이 볼 수 있다" 고 적혔다.
+        그 사람은 `/A` 에서 막혀 문서를 못 여는데 검색에는 떴다.
+        """
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        top = await service.create(actor, NewPage(space_id=space.id, title="Locked", publish=True))
+        inner = await service.create(
+            actor,
+            NewPage(space_id=space.id, title="Inside", parent_id=top.page.id, publish=True),
+        )
+        await service.set_restrictions(
+            actor, top.page.id, mode="view", principals=[("user", user.id)]
+        )
+        await service.set_restrictions(
+            actor, inner.page.id, mode="view", principals=[("user", other.id)]
+        )
+
+        # 교집합이 비었다. `None`(제한 없음)이 아니라 빈 목록이어야 한다.
+        assert await self._indexed_viewers(session, inner.page.id) == []
+
+        await grant(
+            session,
+            principal_id=other.id,
+            permissions_granted=(perms.PAGE_VIEW,),
+            scope=Scope.space(space.id),
+        )
+        # 색인이 말하는 것과 문을 지키는 것이 같은 답을 낸다.
+        with pytest.raises(PermissionDeniedError):
+            await service.get(actor_for(other), inner.page.id)
+
+    async def test_an_ancestor_restriction_still_applies_on_its_own(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """자기에게 규칙이 없으면 조상 것을 그대로 물려받는다."""
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        top = await service.create(actor, NewPage(space_id=space.id, title="Locked", publish=True))
+        inner = await service.create(
+            actor,
+            NewPage(space_id=space.id, title="Inside", parent_id=top.page.id, publish=True),
+        )
+        await service.set_restrictions(
+            actor, top.page.id, mode="view", principals=[("user", user.id)]
+        )
+
+        assert await self._indexed_viewers(session, inner.page.id) == [user.id]
+
+    async def test_an_unrestricted_page_stays_unrestricted(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """빈 목록과 `None` 을 헷갈리면 모든 문서가 사라진다."""
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        page = await service.create(actor, NewPage(space_id=space.id, title="Open", publish=True))
+        assert await self._indexed_viewers(session, page.page.id) is None
+
+    async def test_a_full_reindex_keeps_the_same_rule(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        other: User,
+        space: Space,
+    ) -> None:
+        """**재색인이 제한을 되돌려 놓았다.**
+
+        `reindex.py` 가 같은 규칙을 자기 손으로 한 벌 더 쓰고 있었고, 그쪽은
+        가장 가까운 제한 하나만 봤다. 서비스를 고쳐도 전체 재색인 한 번이면
+        다시 샜다. 이제 두 자리가 같은 함수를 쓴다.
+        """
+        from ieum.reindex import reindex_all
+
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        top = await service.create(actor, NewPage(space_id=space.id, title="Locked", publish=True))
+        inner = await service.create(
+            actor,
+            NewPage(space_id=space.id, title="Inside", parent_id=top.page.id, publish=True),
+        )
+        await service.set_restrictions(
+            actor, top.page.id, mode="view", principals=[("user", user.id)]
+        )
+        await service.set_restrictions(
+            actor, inner.page.id, mode="view", principals=[("user", other.id)]
+        )
+
+        await reindex_all(session)
+        assert await self._indexed_viewers(session, inner.page.id) == []
+        assert await self._indexed_viewers(session, top.page.id) == [user.id]
+
+    async def test_a_copy_carries_its_restriction_into_the_index(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """**사본의 제한이 색인에 안 실렸다.**
+
+        `create` 가 색인할 때는 제한이 아직 없었고, 제한은 그 뒤에 복사됐다.
+        그래서 사본은 열면 403 인데 검색에는 제목과 본문 발췌가 떴다.
+        """
+        actor = await full_access(session, user, space)
+        service = PageService(session, permissions)
+        secret = await service.create(
+            actor, NewPage(space_id=space.id, title="Secret", publish=True)
+        )
+        await service.set_restrictions(
+            actor, secret.page.id, mode="view", principals=[("user", user.id)]
+        )
+
+        copied = await service.copy(actor, secret.page.id, new_parent_id=None)
+        assert await self._indexed_viewers(session, copied.page.id) == [user.id]
+
+
 class TestPrintablePaper:
     """인쇄물로 내보낼 재료 (B17).
 

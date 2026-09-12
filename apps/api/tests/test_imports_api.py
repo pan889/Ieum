@@ -208,12 +208,22 @@ class TestWhatItSaysBeforeAnythingMoves:
         assert "Bug" in names
         assert "Sub-task" not in names
 
-    async def test_priorities_are_marked_as_a_guess(self, app_client: httpx.AsyncClient) -> None:
+    async def test_known_priority_names_are_matched_by_name(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """묶음이 쓰는 이름(Normal·High)은 아는 이름이라 순서로 짐작하지 않는다.
+
+        예전에는 나온 순서로 폈고, 그 순서는 소스가 정한 것이 아니라 이슈가
+        나온 순서였다 — 첫 이슈가 High 면 High 가 가장 낮은 자리로 갔다.
+        """
         headers = await _admin_headers(app_client)
         project = await _project(app_client, headers)
 
         body = (await _preview(app_client, headers, project["id"], _archive())).json()
-        assert {m["how"] for m in body["priorities"]} == {"rank"}
+        by_source = {m["source"]: m for m in body["priorities"]}
+        assert by_source["Normal"]["target_id"] == "3"
+        assert by_source["High"]["target_id"] == "2"
+        assert {m["how"] for m in body["priorities"]} == {"name"}
         # 우선순위는 못 이어도 이슈를 막지 않는다.
         assert "우선순위" not in " ".join(body["blocking"])
 

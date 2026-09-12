@@ -83,28 +83,63 @@ class TestMatchingByName:
 
 
 class TestPriorities:
-    """이름을 우리 1~5 에 편다. 이름이 같을 수가 없어서 이름으로는 못 잇는다."""
+    """이름을 우리 1~5 에 편다.
 
-    def test_five_names_land_on_five_ranks_lowest_first(self) -> None:
-        matches = match_priorities(("Low", "Normal", "High", "Urgent", "Immediate"))
+    **아는 이름이면 이름으로 잇는다.** 예전에는 순서만 봤는데, 그 순서는
+    소스가 정한 순서가 아니라 묶음 안에서 **이슈가 나온 순서**였다. 그래서
+    첫 이슈가 High 면 High 가 5(가장 낮음)가 됐다.
+    """
+
+    def test_the_order_they_appear_in_does_not_decide_anything(self) -> None:
+        """**이 파일의 이유다.** 나온 순서가 뒤집혀도 뜻은 그대로여야 한다."""
+        forwards = match_priorities(("Low", "Normal", "High"))
+        backwards = match_priorities(("High", "Normal", "Low"))
+        assert {m.source: m.target_id for m in forwards} == {
+            "Low": "4",
+            "Normal": "3",
+            "High": "2",
+        }
+        assert {m.source: m.target_id for m in forwards} == {
+            m.source: m.target_id for m in backwards
+        }
+
+    def test_jira_defaults_land_on_all_five(self) -> None:
+        matches = match_priorities(("Lowest", "Low", "Medium", "High", "Highest"))
         assert [m.target_id for m in matches] == ["5", "4", "3", "2", "1"]
+        assert {m.how for m in matches} == {BY_NAME}
+
+    def test_redmine_defaults_keep_their_direction(self) -> None:
+        """**겹치는 자리를 허용한다.** 소스가 우리보다 잘게 나눠 두면 몇 개는
+        같은 자리로 모인다 — 방향이 맞는 것이 자리 수가 맞는 것보다 낫다."""
+        matches = match_priorities(("Low", "Normal", "High", "Urgent", "Immediate"))
+        assert [m.target_id for m in matches] == ["4", "3", "2", "2", "1"]
+        assert {m.how for m in matches} == {BY_NAME}
+
+    def test_names_are_matched_case_and_space_insensitively(self) -> None:
+        assert [m.target_id for m in match_priorities((" HIGH ", "low"))] == ["2", "4"]
+
+    def test_unknown_names_fall_back_to_the_spread(self) -> None:
+        """하나도 못 알아보면 옛 방식대로 편다. 아무 짝도 안 지어 주는 것보다 낫다."""
+        matches = match_priorities(("가장낮음", "가운데", "가장높음"))
+        assert [m.target_id for m in matches] == ["5", "3", "1"]
         assert {m.how for m in matches} == {BY_RANK}
 
-    def test_three_names_spread_over_the_whole_range(self) -> None:
-        matches = match_priorities(("Low", "Normal", "High"))
-        assert [m.target_id for m in matches] == ["5", "3", "1"]
+    def test_a_half_known_list_uses_the_spread_for_all_of_it(self) -> None:
+        """두 규칙이 한 목록 안에 섞이면 서로 어긋난다."""
+        assert {m.how for m in match_priorities(("High", "긴급해요"))} == {BY_RANK}
 
     def test_one_name_is_normal_not_highest(self) -> None:
         """하나뿐이면 순서가 없다. 전부 최고로 만들면 목록이 뜻을 잃는다."""
-        assert match_priorities(("Normal",))[0].target_id == "3"
+        assert match_priorities(("아무거나",))[0].target_id == "3"
 
     def test_a_person_can_pin_a_rank(self) -> None:
         [match] = match_priorities(("Immediate",), {"Immediate": "1"})
         assert (match.target_id, match.how) == ("1", BY_OVERRIDE)
 
     def test_a_rank_outside_one_to_five_is_refused(self) -> None:
+        """사람이 준 값이라도 범위를 벗어나면 안 쓴다."""
         [match] = match_priorities(("Immediate",), {"Immediate": "9"})
-        assert match.how == BY_RANK
+        assert (match.target_id, match.how) == ("1", BY_NAME)
 
     def test_it_never_leaves_a_priority_unmatched(self) -> None:
         """우선순위는 못 이어도 이슈를 막지 않는다 — 3 으로 들어가면 된다."""

@@ -42,18 +42,31 @@ from ieum.modules.notify.models import (
     Webhook,
     WebhookDelivery,
 )
-from ieum.modules.notify.repository import DeliveryRepository
+from ieum.modules.notify.repository import DeliveryRepository, WatchRepository
 from ieum.modules.notify.service import (
     MAX_WATCH_TARGETS,
+    TITLE_MAX,
     NotificationRequest,
     NotificationService,
     WatchService,
     WebhookService,
+    fit_title,
 )
 from ieum.modules.org.models import Project, Role
 from ieum.modules.org.repository import OrgPermissionResolver, RoleRepository
 
 WEBHOOK_SECRET = "webhook-secret-at-least-16"
+
+
+async def subscribe(session: AsyncSession, user: User, target_type: str, target_id: UUID) -> None:
+    """구독 행을 바로 넣는다.
+
+    `WatchService.watch` 는 **볼 수 있는 것만** 받는다. 이 파일의 시험 대부분은
+    그 관문이 아니라 그 뒤(팬아웃·질의)를 보는데, 진짜 이슈·문서와 역할 할당을
+    매번 세우면 무엇을 보는 시험인지가 흐려진다. 관문 자체는
+    `TestWatchNeedsAccess` 가 진짜 프로젝트로 본다.
+    """
+    await WatchRepository(session).add(user.id, target_type, target_id)
 
 
 # ── 서명·백오프 (DB 불필요) ──────────────────────────────────────
@@ -367,19 +380,20 @@ class TestWatch:
         service = WatchService(session)
         target = new_id()
 
-        assert await service.watch(actor, "issue", target) is True
-        # 두 번째는 False 지만 에러는 아니다. 중복 요청이 에러면 UI 가 번거롭다.
-        assert await service.watch(actor, "issue", target) is False
+        await subscribe(session, user, "issue", target)
         assert await service.is_watching(actor, "issue", target) is True
         assert await service.unwatch(actor, "issue", target) is True
         assert await service.is_watching(actor, "issue", target) is False
 
     async def test_invalid_target_rejected(
-        self, session: AsyncSession, people: dict[str, User]
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        people: dict[str, User],
     ) -> None:
         actor = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
         with pytest.raises(ValidationError) as exc:
-            await WatchService(session).watch(actor, "nonsense", new_id())
+            await WatchService(session).watch(actor, "nonsense", new_id(), permissions=permissions)
         assert exc.value.code == "notify.invalid_watch_target"
 
     async def test_watchers_of_returns_all(
@@ -388,9 +402,7 @@ class TestWatch:
         target = new_id()
         service = WatchService(session)
         for user in (people["korean"], people["english"]):
-            await service.watch(
-                Actor(user_id=user.id, email=user.email, is_active=True), "issue", target
-            )
+            await subscribe(session, user, "issue", target)
         await session.flush()
         assert await service.watchers_of("issue", target) == {
             people["korean"].id,
@@ -408,8 +420,8 @@ class TestWatch:
         mine, theirs, untouched = new_id(), new_id(), new_id()
         me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
         service = WatchService(session)
-        await service.watch(me, "project", mine)
-        await service.watch(me, "project", theirs)
+        await subscribe(session, people["korean"], "project", mine)
+        await subscribe(session, people["korean"], "project", theirs)
         await session.flush()
 
         assert await service.watching_among(me, "project", [mine, untouched]) == {mine}
@@ -425,11 +437,7 @@ class TestWatch:
         """
         target = new_id()
         service = WatchService(session)
-        await service.watch(
-            Actor(user_id=people["english"].id, email=people["english"].email, is_active=True),
-            "project",
-            target,
-        )
+        await subscribe(session, people["english"], "project", target)
         await session.flush()
 
         me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
@@ -443,7 +451,7 @@ class TestWatch:
         target = new_id()
         me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
         service = WatchService(session)
-        await service.watch(me, "issue", target)
+        await subscribe(session, people["korean"], "issue", target)
         await session.flush()
 
         assert await service.watching_among(me, "project", [target]) == set()
@@ -471,6 +479,134 @@ class TestWatch:
         me = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
         with pytest.raises(ValidationError):
             await WatchService(session).watching_among(me, "sprint", [new_id()])
+
+
+class TestTitleFitsTheColumn:
+    """**긴 요약 하나가 그 배치의 알림을 통째로 날렸다.**
+
+    제목 템플릿은 이슈 요약을 통째로 품는데(`{key} 생성됨: {summary}`),
+    요약도 제목 열과 같은 500자까지 받는다. 한 자만 넘쳐도 Postgres 가
+    INSERT 를 거절하고, 그 예외가 배치 트랜잭션을 되돌려 같은 배치의 다른
+    알림까지 같이 사라진다.
+    """
+
+    def test_the_constant_matches_the_column(self) -> None:
+        """두 자리가 어긋나면 자르는 의미가 없다."""
+        column = Notification.__table__.c.title.type
+        assert getattr(column, "length", None) == TITLE_MAX
+
+    def test_a_short_title_is_untouched(self) -> None:
+        assert fit_title("IEUM-1 생성됨: 짧은 제목") == "IEUM-1 생성됨: 짧은 제목"
+
+    def test_a_long_title_is_cut_and_says_so(self) -> None:
+        cut = fit_title("가" * (TITLE_MAX + 50))
+        assert len(cut) == TITLE_MAX
+        assert cut.endswith("…")
+
+    async def test_a_maximum_length_summary_still_gets_through(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+    ) -> None:
+        """요약이 열 상한까지 찬 이슈 — 여기서 드레인이 죽었다."""
+        issue_id = new_id()
+        await subscribe(session, people["english"], "issue", issue_id)
+        await session.flush()
+
+        created = await handle_issue_event(
+            HandlerContext(session=session, settings=settings),
+            EventEnvelope(
+                id=new_id(),
+                event_type="issue.created",
+                aggregate_type="issue",
+                aggregate_id=issue_id,
+                payload={
+                    "issue_key": "X-1",
+                    "summary": "가" * 500,
+                    "actor_id": str(people["actor"].id),
+                },
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert len(rows[0].title) <= TITLE_MAX
+
+
+class TestWatchNeedsAccess:
+    """**구독은 우회로가 될 수 있다.**
+
+    알림 제목에는 이슈 키와 요약이, 본문에는 바뀐 내용이 그대로 담긴다.
+    구독에 아무 검사가 없으면 UUID 하나만 알면 그 프로젝트의 소식을 받아
+    볼 수 있었고, 팬아웃 쪽에는 관문이 없다 — 워처 목록이 곧 수신자다.
+    """
+
+    async def _project_with_access(
+        self, session: AsyncSession, user: User
+    ) -> tuple[Project, Actor]:
+        project = Project(key=f"N{secrets.token_hex(3).upper()}", name="Watchable")
+        session.add(project)
+        await session.flush()
+        repo = RoleRepository(session)
+        role = Role(name=f"r-{secrets.token_hex(4)}", scope_kind="project")
+        repo.add(role)
+        await session.flush()
+        repo.grant(role.id, "org.project.view")
+        repo.assign(
+            role_id=role.id,
+            scope=Scope.project(project.id),
+            principal_kind="user",
+            principal_id=user.id,
+        )
+        await session.flush()
+        return project, Actor(user_id=user.id, email=user.email, is_active=True)
+
+    async def test_you_can_watch_what_you_can_see(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        people: dict[str, User],
+    ) -> None:
+        project, actor = await self._project_with_access(session, people["korean"])
+        service = WatchService(session)
+
+        assert await service.watch(actor, "project", project.id, permissions=permissions) is True
+        # 두 번째는 False 지만 에러는 아니다. 중복 요청이 에러면 UI 가 번거롭다.
+        assert await service.watch(actor, "project", project.id, permissions=permissions) is False
+        assert await service.is_watching(actor, "project", project.id) is True
+
+    async def test_you_cannot_watch_someone_elses_project(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        people: dict[str, User],
+    ) -> None:
+        project, _ = await self._project_with_access(session, people["korean"])
+        outsider = Actor(
+            user_id=people["english"].id, email=people["english"].email, is_active=True
+        )
+
+        with pytest.raises(PermissionDeniedError):
+            await WatchService(session).watch(
+                outsider, "project", project.id, permissions=permissions
+            )
+        assert await WatchService(session).is_watching(outsider, "project", project.id) is False
+
+    async def test_you_cannot_watch_something_that_does_not_exist(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        people: dict[str, User],
+    ) -> None:
+        """없는 id 를 통과시키면 나중에 그 id 로 만들어진 것을 구독하게 된다."""
+        actor = Actor(user_id=people["korean"].id, email=people["korean"].email, is_active=True)
+        with pytest.raises(PermissionDeniedError):
+            await WatchService(session).watch(actor, "issue", new_id(), permissions=permissions)
 
 
 class TestWebhookService:
@@ -671,15 +807,7 @@ class TestHandlers:
     ) -> None:
         """같은 일로 알림이 두 개 쌓이면 사람들이 알림을 끈다."""
         issue_id = new_id()
-        await WatchService(session).watch(
-            Actor(
-                user_id=people["english"].id,
-                email=people["english"].email,
-                is_active=True,
-            ),
-            "issue",
-            issue_id,
-        )
+        await subscribe(session, people["english"], "issue", issue_id)
         await session.flush()
 
         ctx = HandlerContext(session=session, settings=settings)
@@ -715,15 +843,7 @@ class TestHandlers:
         구독한 사람은 구독했다고 믿으니까.
         """
         project_id = new_id()
-        await WatchService(session).watch(
-            Actor(
-                user_id=people["english"].id,
-                email=people["english"].email,
-                is_active=True,
-            ),
-            "project",
-            project_id,
-        )
+        await subscribe(session, people["english"], "project", project_id)
         await session.flush()
 
         ctx = HandlerContext(session=session, settings=settings)
@@ -750,15 +870,7 @@ class TestHandlers:
     ) -> None:
         """**아무 프로젝트나 걸리면 안 된다.** 하나만 구독했는데 전부 오면
         그 사람은 알림을 통째로 끈다."""
-        await WatchService(session).watch(
-            Actor(
-                user_id=people["english"].id,
-                email=people["english"].email,
-                is_active=True,
-            ),
-            "project",
-            new_id(),
-        )
+        await subscribe(session, people["english"], "project", new_id())
         await session.flush()
 
         ctx = HandlerContext(session=session, settings=settings)
@@ -818,15 +930,7 @@ class TestHandlers:
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:
         issue_id = new_id()
-        await WatchService(session).watch(
-            Actor(
-                user_id=people["english"].id,
-                email=people["english"].email,
-                is_active=True,
-            ),
-            "issue",
-            issue_id,
-        )
+        await subscribe(session, people["english"], "issue", issue_id)
         await session.flush()
 
         ctx = HandlerContext(session=session, settings=settings)
@@ -1175,9 +1279,8 @@ class TestPageHandlers:
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:
         page_id, space_id = new_id(), new_id()
-        watches = WatchService(session)
-        await watches.watch(self._actor(people["english"]), "page", page_id)
-        await watches.watch(self._actor(people["korean"]), "space", space_id)
+        await subscribe(session, people["english"], "page", page_id)
+        await subscribe(session, people["korean"], "space", space_id)
         await session.flush()
 
         created = await handle_page_event(
@@ -1221,7 +1324,7 @@ class TestPageHandlers:
     ) -> None:
         """워처이면서 멘션된 사람에게 같은 일로 두 개가 쌓이면 안 된다."""
         page_id = new_id()
-        await WatchService(session).watch(self._actor(people["korean"]), "page", page_id)
+        await subscribe(session, people["korean"], "page", page_id)
         await session.flush()
 
         created = await handle_page_event(
@@ -1245,7 +1348,7 @@ class TestPageHandlers:
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:
         page_id = new_id()
-        await WatchService(session).watch(self._actor(people["actor"]), "page", page_id)
+        await subscribe(session, people["actor"], "page", page_id)
         await session.flush()
 
         created = await handle_page_event(
@@ -1267,9 +1370,8 @@ class TestPageHandlers:
     ) -> None:
         """발신자 언어가 아니라 수신자 언어로 렌더한다 (i18n.md 3절)."""
         page_id = new_id()
-        watches = WatchService(session)
-        await watches.watch(self._actor(people["korean"]), "page", page_id)
-        await watches.watch(self._actor(people["english"]), "page", page_id)
+        await subscribe(session, people["korean"], "page", page_id)
+        await subscribe(session, people["english"], "page", page_id)
         await session.flush()
 
         created = await handle_page_event(

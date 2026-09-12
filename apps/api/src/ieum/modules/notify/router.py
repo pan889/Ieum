@@ -94,10 +94,19 @@ async def update_preferences(
 
 @watches_router.post("", response_model=WatchStatusResponse)
 async def start_watching(
-    body: WatchRequest, actor: CurrentActor, session: DbSession
+    body: WatchRequest,
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
 ) -> WatchStatusResponse:
-    """이미 구독 중이어도 200 이다. 중복 요청이 에러면 UI 가 번거로워진다."""
-    await WatchService(session).watch(actor, body.target_type, body.target_id)
+    """이미 구독 중이어도 200 이다. 중복 요청이 에러면 UI 가 번거로워진다.
+
+    볼 수 없는 대상은 403 이다 — 알림 제목·본문에 내용이 담겨 나가므로,
+    구독을 열어 두면 그게 우회로가 된다.
+    """
+    await WatchService(session).watch(
+        actor, body.target_type, body.target_id, permissions=permissions
+    )
     await session.commit()
     return WatchStatusResponse(watching=True)
 

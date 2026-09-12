@@ -11,6 +11,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.core.context import Actor
+from ieum.core.permissions import PermissionService, Scope
+from ieum.modules.wiki import permissions as perms
 from ieum.modules.wiki.models import Page
 from ieum.modules.wiki.repository import PageRepository, SpaceRepository
 
@@ -45,7 +48,43 @@ async def get_page(session: AsyncSession, page_id: UUID) -> PageRef | None:
     )
 
 
-__all__ = ["PageRef", "get_page", "page_model"]
+__all__ = ["PageRef", "can_view_page", "can_view_space", "get_page", "page_model"]
+
+
+async def can_view_page(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    page_id: UUID,
+) -> bool:
+    """이 사람이 이 문서를 볼 수 있나. **열람 제한까지 본다.**
+
+    권한 이름·스코프·제한을 어떻게 엮는지는 이 모듈이 안다. 바깥에서
+    조립하면 규칙이 바뀔 때 그쪽만 옛것이 된다.
+    """
+    page = await PageRepository(session).get(page_id)
+    if page is None:
+        return False
+    return await permissions.has(
+        session,
+        actor,
+        perms.PAGE_VIEW,
+        scope=Scope.space(page.space_id),
+        subject=page,
+    )
+
+
+async def can_view_space(
+    session: AsyncSession,
+    permissions: PermissionService,
+    actor: Actor,
+    space_id: UUID,
+) -> bool:
+    """이 사람이 이 스페이스를 볼 수 있나. 문서 하나하나가 아니라 스페이스 단위다."""
+    space = await SpaceRepository(session).get(space_id)
+    if space is None:
+        return False
+    return await permissions.has(session, actor, perms.PAGE_VIEW, scope=Scope.space(space_id))
 
 
 async def space_kind(session: AsyncSession, space_id: UUID) -> str | None:
