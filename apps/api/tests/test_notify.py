@@ -628,6 +628,76 @@ class TestHandlers:
         assert len(mine) == 1
         assert mine[0].kind == "issue.mentioned"
 
+    async def test_a_project_watcher_hears_about_its_issues(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """**프로젝트를 보고 있으면 그 안의 이슈 소식을 받는다.**
+
+        `watch.target_type` 은 처음부터 `project` 를 받았고 API 도 받아서
+        저장했는데, 알림 쪽에서 아무도 그것을 안 읽었다. 저장은 되고 목록에도
+        보이는데 소식은 하나도 안 오는 상태였다 — 기능이 없는 것보다 나쁘다,
+        구독한 사람은 구독했다고 믿으니까.
+        """
+        project_id = new_id()
+        await WatchService(session).watch(
+            Actor(
+                user_id=people["english"].id,
+                email=people["english"].email,
+                is_active=True,
+            ),
+            "project",
+            project_id,
+        )
+        await session.flush()
+
+        ctx = HandlerContext(session=session, settings=settings)
+        created = await handle_issue_event(
+            ctx,
+            self._envelope(
+                "issue.created",
+                issue_key="X-1",
+                summary="제목",
+                project_id=str(project_id),
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        assert [n.user_id for n in rows] == [people["english"].id]
+
+    async def test_another_projects_watcher_hears_nothing(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """**아무 프로젝트나 걸리면 안 된다.** 하나만 구독했는데 전부 오면
+        그 사람은 알림을 통째로 끈다."""
+        await WatchService(session).watch(
+            Actor(
+                user_id=people["english"].id,
+                email=people["english"].email,
+                is_active=True,
+            ),
+            "project",
+            new_id(),
+        )
+        await session.flush()
+
+        ctx = HandlerContext(session=session, settings=settings)
+        created = await handle_issue_event(
+            ctx,
+            self._envelope(
+                "issue.created",
+                issue_key="X-1",
+                summary="제목",
+                project_id=str(new_id()),
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        assert created == []
+
     async def test_self_mention_is_not_notified(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:

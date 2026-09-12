@@ -23,6 +23,7 @@ from ieum.modules.notify.repository import DeliveryRepository, WebhookRepository
 from ieum.modules.notify.service import (
     WATCH_TARGET_ISSUE,
     WATCH_TARGET_PAGE,
+    WATCH_TARGET_PROJECT,
     WATCH_TARGET_SPACE,
     NotificationRequest,
     NotificationService,
@@ -163,14 +164,23 @@ async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> li
 
 
 async def _recipients(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]:
-    """워처 + 담당자 + 보고자.
+    """이슈 워처 + **프로젝트 워처** + 담당자 + 보고자.
 
     담당자·보고자는 이벤트 페이로드에 실려 온다. 이슈를 되짚어 읽으면
     모듈 경계를 넘는다.
     """
-    watchers = await WatchService(ctx.session).watchers_of(
-        WATCH_TARGET_ISSUE, envelope.aggregate_id
-    )
+    watches = WatchService(ctx.session)
+    watchers = await watches.watchers_of(WATCH_TARGET_ISSUE, envelope.aggregate_id)
+    # **프로젝트를 보고 있으면 그 안의 이슈 소식을 받는다.** 문서 쪽이 이미
+    # 그렇게 한다(문서 워처 + 스페이스 워처) — 이슈만 그러지 않고 있었다.
+    #
+    # 이건 빠진 기능이 아니라 **거짓말이었다**: `watch.target_type` 은 이미
+    # `project` 를 받고, API 도 받아서 저장했다. 저장은 되는데 아무도 안 읽으니
+    # 구독한 사람은 목록에서 자기 구독을 보면서 소식은 하나도 못 받는다.
+    # 아무 일도 안 일어나는 것보다 나쁘다 — 구독했다고 믿으니까.
+    project_id = envelope.uuid("project_id")
+    if project_id is not None:
+        watchers |= await watches.watchers_of(WATCH_TARGET_PROJECT, project_id)
     # `to_user_id` 는 SLA 에스컬레이션 규칙이 **지목한 사람**이다. 워처도
     # 담당자도 아닐 수 있고, 그래서 이 키를 안 읽으면 규칙이 부른 사람에게만
     # 알림이 안 간다 — 규칙 전체가 하는 일이 그것뿐인데.
