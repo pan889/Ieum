@@ -17,7 +17,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from ieum.core.deps import CurrentActor, DbSession, PermissionDep
 from ieum.core.exceptions import ValidationError
 from ieum.migrate.archive import MAX_ARCHIVE_BYTES
-from ieum.modules.imports.schemas import OverridesRequest, PreviewResponse
+from ieum.modules.imports.schemas import LoadedResponse, OverridesRequest, PreviewResponse
 from ieum.modules.imports.service import ImportService
 
 imports_router = APIRouter(prefix="/imports", tags=["imports"])
@@ -70,6 +70,40 @@ async def preview_archive(
         priority_overrides=chosen.priorities,
     )
     return PreviewResponse.of(preview)
+
+
+@imports_router.post("/load", response_model=LoadedResponse)
+async def load_archive(
+    actor: CurrentActor,
+    session: DbSession,
+    permissions: PermissionDep,
+    project_id: Annotated[UUID, Form()],
+    file: Annotated[UploadFile, File()],
+    overrides: Annotated[str | None, Form()] = None,
+) -> LoadedResponse:
+    """묶음을 적재한다. **두 번 쳐도 안 늘어난다.**
+
+    미리 보기와 같은 몸통을 받는다 — 화면이 보여 준 그대로를 실어야 하고,
+    다른 것을 실으면 사람이 본 것과 들어간 것이 갈린다.
+    """
+    raw = await file.read()
+    if len(raw) > MAX_ARCHIVE_BYTES:
+        raise ValidationError(
+            "묶음이 너무 크다.",
+            code="imports.archive_too_large",
+            details={"max": MAX_ARCHIVE_BYTES},
+        )
+    chosen = _overrides(overrides)
+    loaded = await ImportService(session, permissions).load(
+        actor,
+        project_id=project_id,
+        data=raw,
+        type_overrides=chosen.types,
+        status_overrides=chosen.statuses,
+        priority_overrides=chosen.priorities,
+    )
+    await session.commit()
+    return LoadedResponse.of(loaded)
 
 
 __all__ = ["imports_router"]

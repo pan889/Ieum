@@ -760,3 +760,137 @@ async def add_comment_as_system(
         ),
     )
     return comment.id
+
+
+# ── 이관이 쓰는 자리 ──────────────────────────────────────────────
+#
+# **여기 있는 셋은 워크플로를 지나지 않는다.** 그것이 이 자리가 따로 있는
+# 이유다.
+#
+# 평소의 생성은 유형의 시작 상태에서 출발해 전이로만 움직인다. 이관은 그럴
+# 수 없다 — 소스의 `Closed` 는 우리가 지금 수행하는 전이가 아니라 **이미
+# 일어난 사실**이다. 시작 상태로 넣고 전이를 흉내 내면 이력에 오늘 날짜로
+# 가짜 전이가 줄줄이 쌓이고, 그건 옮겨 온 것보다 나쁘다.
+#
+# 같은 이유로 만든 시각·작성자도 소스의 것을 그대로 쓴다. 안 그러면 3년치
+# 이슈가 전부 오늘 만들어진 것이 되고, **그 이력이 이관의 목적이다.**
+#
+# 그래서 이 문은 좁다: `imports` 모듈만 쓰고, 권한은 그쪽이 이미 봤다
+# (`imports.run`, step-up).
+
+
+@dataclass(frozen=True, slots=True)
+class ImportedIssueDraft:
+    """이관이 만들 이슈 하나. 상태와 시각을 **직접** 정한다."""
+
+    project_id: UUID
+    type_id: UUID
+    state_id: UUID
+    summary: str
+    description: str = ""
+    reporter_id: UUID | None = None
+    assignee_id: UUID | None = None
+    priority: int = 3
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    start_date: Any = None
+    due_date: Any = None
+    progress: int = 0
+    labels: tuple[str, ...] = ()
+
+
+async def create_imported_issue(session: AsyncSession, draft: ImportedIssueDraft) -> UUID:
+    """이관이 이슈를 만든다. 만든 것의 id 를 돌려준다."""
+    from ieum.modules.issues.models import Issue as IssueModel
+    from ieum.modules.issues.repository import IssueLabelRepository
+
+    issue = IssueModel(
+        project_id=draft.project_id,
+        key_seq=await org.next_issue_number(session, draft.project_id),
+        type_id=draft.type_id,
+        state_id=draft.state_id,
+        summary=draft.summary,
+        description=draft.description or None,
+        reporter_id=draft.reporter_id,
+        assignee_id=draft.assignee_id,
+        priority=draft.priority,
+        start_date=draft.start_date,
+        due_date=draft.due_date,
+        progress=draft.progress,
+    )
+    # 시각은 서버 기본값(`now()`)을 **덮어쓴다.** 값을 넣으면 INSERT 에 실려
+    # 기본값이 안 쓰인다.
+    if draft.created_at is not None:
+        issue.created_at = draft.created_at
+    if draft.updated_at is not None:
+        issue.updated_at = draft.updated_at
+    session.add(issue)
+    await session.flush()
+    if draft.labels:
+        await IssueLabelRepository(session).replace(issue.id, list(draft.labels))
+    return issue.id
+
+
+async def add_imported_comment(
+    session: AsyncSession,
+    *,
+    issue_id: UUID,
+    body: str,
+    author_id: UUID | None,
+    created_at: datetime | None,
+) -> UUID:
+    """이관이 코멘트를 붙인다. 이벤트를 내지 않는다 — 3년 전 코멘트로 오늘
+    알림이 가면 옮긴 날 모두의 알림함이 터진다."""
+    from ieum.modules.issues.models import IssueComment as CommentModel
+
+    comment = CommentModel(issue_id=issue_id, author_id=author_id, body=body)
+    if created_at is not None:
+        comment.created_at = created_at
+        comment.updated_at = created_at
+    session.add(comment)
+    await session.flush()
+    return comment.id
+
+
+async def set_imported_parent(session: AsyncSession, *, issue_id: UUID, parent_id: UUID) -> None:
+    """부모를 잇는다. 이관이 이슈를 다 만든 **뒤에** 부른다 — 부모가 자식보다
+    늦게 올 수 있고, 그때 앞에서 이으려 하면 없는 것을 가리킨다."""
+    from ieum.modules.issues.models import Issue as IssueModel
+
+    issue = await session.get(IssueModel, issue_id)
+    if issue is not None:
+        issue.parent_id = parent_id
+
+
+async def link_imported_issues(
+    session: AsyncSession, *, from_issue_id: UUID, to_issue_id: UUID, kind: str
+) -> bool:
+    """관계를 잇는다. 이미 있으면 아무것도 안 하고 거짓을 돌려준다.
+
+    같은 관계를 두 번 넣으면 유니크에 걸려 **트랜잭션 전체가 죽는다** — 이관
+    한가운데서 그러면 절반만 들어온 상태가 남는다.
+    """
+    from sqlalchemy import select as _select
+
+    from ieum.modules.issues.models import IssueLink
+
+    if from_issue_id == to_issue_id:
+        return False
+    exists = await session.execute(
+        _select(IssueLink.id).where(
+            IssueLink.from_issue_id == from_issue_id,
+            IssueLink.to_issue_id == to_issue_id,
+            IssueLink.kind == kind,
+        )
+    )
+    if exists.scalar_one_or_none() is not None:
+        return False
+    session.add(IssueLink(from_issue_id=from_issue_id, to_issue_id=to_issue_id, kind=kind))
+    return True
+
+
+def link_kinds() -> frozenset[str]:
+    """우리가 아는 관계 종류. 이관이 소스의 어휘를 여기에 맞춘다."""
+    from ieum.modules.issues.models import LINK_KINDS
+
+    return frozenset(LINK_KINDS)

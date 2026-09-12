@@ -171,6 +171,7 @@
   "imports.archive_too_large": "이관 묶음이 너무 큽니다.",
   "imports.bad_overrides": "짝 지정을 읽지 못했습니다.",
   "imports.project_archived": "아카이브된 프로젝트로는 옮길 수 없습니다.",
+  "imports.unmapped_vocabulary": "아직 짝을 못 지은 낱말이 있어 아무것도 옮기지 않았습니다.",
   "imports.unreadable_archive": "이관 묶음을 읽지 못했습니다.",
   "internal.error": "서버에서 문제가 발생했습니다. 다시 시도해 주세요.",
   "iql.invalid": "올바르지 않은 질의입니다.",

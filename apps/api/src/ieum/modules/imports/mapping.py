@@ -199,12 +199,25 @@ class Report:
     dangling_relations: list[str] = field(default_factory=list)
     #: 우리가 모르는 관계 종류. 버리지 않고 이름을 남긴다.
     unknown_relation_kinds: list[str] = field(default_factory=list)
+    #: 종류·상태 칸이 **비어 있는** 이슈. 짝지을 낱말 자체가 없다.
+    blank_type: list[str] = field(default_factory=list)
+    blank_status: list[str] = field(default_factory=list)
 
     @property
     def blocking(self) -> list[str]:
-        """이대로 실으면 **이슈가 안 만들어지는** 것들."""
+        """이대로 실으면 **이슈가 안 만들어지는** 것들.
+
+        빈 칸도 여기 든다. 그 자리를 우리가 골라 주면 그 이슈들은 아무도 안
+        고른 종류·상태로 들어가고, 개수만 맞아서 **옮긴 사람은 성공으로
+        본다.** 어댑터는 둘 다 채워 주므로(소스가 요구한다), 비어 있다는 것은
+        묶음이 깨졌다는 뜻이다.
+        """
         out = [f"종류: {m.source}" for m in self.types if not m.ok]
         out += [f"상태: {m.source}" for m in self.statuses if not m.ok]
+        if self.blank_type:
+            out.append(f"종류가 비어 있는 이슈 {len(self.blank_type)}개: {self.blank_type[:5]}")
+        if self.blank_status:
+            out.append(f"상태가 비어 있는 이슈 {len(self.blank_status)}개: {self.blank_status[:5]}")
         return out
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from ieum.modules.imports.mapping import Match, PersonMatch, Target
-from ieum.modules.imports.service import Preview
+from ieum.modules.imports.service import Loaded, Preview
 
 
 class MatchResponse(BaseModel):
@@ -125,9 +125,33 @@ class OverridesRequest(BaseModel):
     priorities: dict[str, str] = Field(default_factory=dict)
 
 
+class LoadedResponse(BaseModel):
+    issues_created: int
+    #: 이미 있어서 건너뛴 것. **다시 돌리면 이 값이 전부여야 한다.**
+    issues_skipped: int
+    comments_created: int
+    parents_linked: int
+    relations_linked: int
+    #: 못 옮긴 것. 화면이 이것을 접어 두면 안 된다 — 개수는 나중에도 셀 수
+    #: 있지만 이 목록은 여기서 안 보면 아무 데도 안 남는다.
+    unmoved: list[str]
+
+    @classmethod
+    def of(cls, loaded: Loaded) -> LoadedResponse:
+        return cls(
+            issues_created=loaded.issues_created,
+            issues_skipped=loaded.issues_skipped,
+            comments_created=loaded.comments_created,
+            parents_linked=loaded.parents_linked,
+            relations_linked=loaded.relations_linked,
+            unmoved=loaded.unmoved,
+        )
+
+
 __all__ = [
     "ChoiceResponse",
     "CountedResponse",
+    "LoadedResponse",
     "MatchResponse",
     "OverridesRequest",
     "PersonResponse",

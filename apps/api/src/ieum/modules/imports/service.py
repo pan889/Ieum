@@ -1,12 +1,14 @@
 """이관 묶음을 받는 쪽의 비즈니스 로직.
 
-지금은 **미리 보기까지**다. 적재는 다음이다 — 이관은 되돌리기 번거로우니
-"무엇이 들어오는가" 를 사람이 먼저 보고 정해야 한다.
+**미리 보기가 적재의 앞단이다.** `load` 는 `preview` 를 먼저 부르고, 거기서
+막는 것이 하나라도 나오면 아무것도 안 넣는다. 두 화면이 서로 다른 판단을
+하는 일이 없어야 한다 — 사람은 미리 보기를 믿고 적재를 누른다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +29,42 @@ from ieum.modules.imports.mapping import (
     match_priorities,
     used_vocabulary,
 )
-from ieum.modules.imports.models import TARGET_TYPES
+from ieum.modules.imports.models import TARGET_TYPES, ImportedObject
 from ieum.modules.imports.repository import ImportedObjectRepository
 from ieum.modules.issues import contracts as issues
 from ieum.modules.org import contracts as org
+
+#: 묶음의 관계 어휘 → 우리 어휘. **이름이 하나 다르다.**
+#:
+#: 묶음은 `copied_to`, 우리는 `copied` 다. 같은 뜻인데 글자가 달라서, 표가
+#: 없으면 이관 한가운데서 CHECK 제약에 걸린다 — 그 실패는 절반만 들어온
+#: 상태를 남긴다.
+RELATION_TO_LINK = {
+    "relates": "relates",
+    "duplicates": "duplicates",
+    "blocks": "blocks",
+    "precedes": "precedes",
+    "copied_to": "copied",
+}
+
+
+def _moment(value: str) -> datetime | None:
+    """ISO-8601 을 시각으로. 못 읽으면 `None` — 그 자리는 서버 시각이 된다."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _day(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +76,23 @@ class Counted:
     people: int = 0
     #: 이 프로젝트에 **이미 들어와 있는** 이슈. 다시 돌려도 안 늘어나는 수다.
     already_here: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Loaded:
+    """적재가 무엇을 했는가.
+
+    **`unmoved` 가 이 결과의 절반이다.** 들어온 개수는 나중에도 셀 수 있지만,
+    안 들어온 것은 여기서 안 적으면 아무 데도 안 남는다.
+    """
+
+    issues_created: int = 0
+    #: 이미 들어와 있어서 건너뛴 것. 다시 돌렸을 때 이 값이 전부여야 한다.
+    issues_skipped: int = 0
+    comments_created: int = 0
+    parents_linked: int = 0
+    relations_linked: int = 0
+    unmoved: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +198,201 @@ class ImportService:
             choices=Choices(types=types, statuses=states),
         )
 
+    async def load(
+        self,
+        actor: Actor,
+        *,
+        project_id: UUID,
+        data: bytes,
+        type_overrides: dict[str, str] | None = None,
+        status_overrides: dict[str, str] | None = None,
+        priority_overrides: dict[str, str] | None = None,
+    ) -> Loaded:
+        """묶음을 실제로 적재한다.
+
+        **두 번 돌려도 안 늘어난다.** `(프로젝트, 소스, 종류, 소스 id)` 로
+        이미 옮긴 것을 기억하고 건너뛴다 — 이관은 한 번에 안 끝나고, 중간에
+        멈춘 뒤 다시 돌리는 것이 정상이다.
+
+        **막는 것이 하나라도 있으면 아무것도 안 넣는다.** 절반만 들어온
+        상태가 가장 나쁘다 — 되돌리려면 무엇이 들어왔는지 세어야 하는데,
+        그걸 세려고 이 표를 만든 것이다.
+        """
+        preview = await self.preview(
+            actor,
+            project_id=project_id,
+            data=data,
+            type_overrides=type_overrides,
+            status_overrides=status_overrides,
+            priority_overrides=priority_overrides,
+        )
+        if not preview.can_load:
+            raise ConflictError(
+                "짝을 못 지은 것이 있어 적재할 수 없다.",
+                code="imports.unmapped_vocabulary",
+                details={"blocking": preview.report.blocking},
+            )
+
+        archive = self._read(data)
+        source = archive.manifest.source.kind
+        report = preview.report
+        types = {m.source: m.target_id for m in report.types if m.ok}
+        statuses = {m.source: m.target_id for m in report.statuses if m.ok}
+        priorities = {m.source: int(m.target_id) for m in report.priorities if m.ok}
+        people = {p.source_id: UUID(p.user_id) for p in report.people if p.ok}
+        unmoved: list[str] = []
+
+        # ── 이슈 ────────────────────────────────────────────────
+        known = await self._imported.resolve(
+            project_id=project_id,
+            source_kind=source,
+            target_type=TARGET_TYPES[0],
+            source_ids=[issue.source_id for issue in archive.issues],
+        )
+        created = 0
+        for issue in archive.issues:
+            if issue.source_id in known:
+                continue
+            issue_id = await issues.create_imported_issue(
+                self._s,
+                issues.ImportedIssueDraft(
+                    project_id=project_id,
+                    # **대체값을 두지 않는다.** 빈 칸과 못 이은 낱말은 위의
+                    # `can_load` 가 이미 막았다. 여기에 "없으면 아무거나" 를
+                    # 두면 그 가드가 헐거워지는 날 아무도 모른다 — 개수는
+                    # 맞고 이슈만 엉뚱한 자리에 있다.
+                    type_id=UUID(types[issue.type]),
+                    state_id=UUID(statuses[issue.status]),
+                    summary=issue.summary or "(제목 없음)",
+                    description=issue.description,
+                    reporter_id=people.get(issue.author),
+                    assignee_id=people.get(issue.assignee),
+                    priority=priorities.get(issue.priority, 3),
+                    created_at=_moment(issue.created_at),
+                    updated_at=_moment(issue.updated_at or issue.created_at),
+                    start_date=_day(issue.start_date),
+                    due_date=_day(issue.due_date),
+                    progress=issue.done_ratio,
+                    labels=tuple(issue.labels),
+                ),
+            )
+            self._imported.add(
+                ImportedObject(
+                    project_id=project_id,
+                    source_kind=source,
+                    source_id=issue.source_id,
+                    target_type=TARGET_TYPES[0],
+                    target_id=issue_id,
+                )
+            )
+            known[issue.source_id] = issue_id
+            created += 1
+            # **사람을 못 이었으면 그 이슈가 작성자를 잃는다.** 개수만 세면
+            # 어느 이슈인지 못 찾으므로 이름을 남긴다.
+            if issue.author and issue.author not in people:
+                unmoved.append(f"작성자를 못 이었다: {issue.source_id}")
+            if issue.assignee and issue.assignee not in people:
+                unmoved.append(f"담당자를 못 이었다: {issue.source_id}")
+        await self._s.flush()
+
+        counted = await self._load_comments(archive, project_id, source, known, people)
+        parents, relations = await self._load_links(archive, project_id, source, known, unmoved)
+
+        unmoved.extend(f"부모가 묶음 밖이다: {row}" for row in report.dangling_parents)
+        unmoved.extend(f"관계 상대가 묶음 밖이다: {row}" for row in report.dangling_relations)
+        return Loaded(
+            issues_created=created,
+            issues_skipped=len(archive.issues) - created,
+            comments_created=counted,
+            parents_linked=parents,
+            relations_linked=relations,
+            unmoved=unmoved,
+        )
+
+    async def _load_comments(
+        self,
+        archive: Archive,
+        project_id: UUID,
+        source: str,
+        issue_ids: dict[str, UUID],
+        people: dict[str, UUID],
+    ) -> int:
+        """코멘트도 자기 열쇠를 가진다 — 이슈만 세면 중간에 멈춘 실행에서
+        코멘트가 두 벌이 된다."""
+        wanted = [c.source_id for issue in archive.issues for c in issue.comments]
+        already = await self._imported.known_source_ids(
+            project_id=project_id,
+            source_kind=source,
+            target_type=TARGET_TYPES[1],
+            source_ids=wanted,
+        )
+        created = 0
+        for issue in archive.issues:
+            target = issue_ids.get(issue.source_id)
+            if target is None:
+                continue
+            for comment in issue.comments:
+                if comment.source_id in already:
+                    continue
+                comment_id = await issues.add_imported_comment(
+                    self._s,
+                    issue_id=target,
+                    body=comment.body,
+                    author_id=people.get(comment.author),
+                    created_at=_moment(comment.created_at),
+                )
+                self._imported.add(
+                    ImportedObject(
+                        project_id=project_id,
+                        source_kind=source,
+                        source_id=comment.source_id,
+                        target_type=TARGET_TYPES[1],
+                        target_id=comment_id,
+                    )
+                )
+                created += 1
+        await self._s.flush()
+        return created
+
+    async def _load_links(
+        self,
+        archive: Archive,
+        project_id: UUID,
+        source: str,
+        issue_ids: dict[str, UUID],
+        unmoved: list[str],
+    ) -> tuple[int, int]:
+        """부모와 관계는 **이슈를 다 만든 뒤에** 잇는다.
+
+        부모가 자식보다 뒤에 올 수 있다. 앞에서 이으려 하면 아직 없는 것을
+        가리키고, 그때 건너뛰면 그 관계는 영영 안 생긴다.
+        """
+        known = frozenset(issues.link_kinds())
+        parents = 0
+        relations = 0
+        for issue in archive.issues:
+            here = issue_ids.get(issue.source_id)
+            if here is None:
+                continue
+            parent = issue_ids.get(issue.parent) if issue.parent else None
+            if parent is not None:
+                await issues.set_imported_parent(self._s, issue_id=here, parent_id=parent)
+                parents += 1
+            for relation in issue.relations:
+                kind = RELATION_TO_LINK.get(relation.kind)
+                if kind is None or kind not in known:
+                    unmoved.append(f"모르는 관계 종류: {relation.kind} ({issue.source_id})")
+                    continue
+                target = issue_ids.get(relation.target)
+                if target is None:
+                    continue
+                if await issues.link_imported_issues(
+                    self._s, from_issue_id=here, to_issue_id=target, kind=kind
+                ):
+                    relations += 1
+        await self._s.flush()
+        return parents, relations
+
     # ── 안쪽 ────────────────────────────────────────────────────
 
     def _read(self, data: bytes) -> Archive:
@@ -187,6 +433,12 @@ class ImportService:
         present = {issue.source_id for issue in archive.issues}
         unknown_kinds: set[str] = set()
         for issue in archive.issues:
+            # 빈 칸은 짝지을 낱말이 없다. 우리가 골라 주면 그 이슈들이
+            # 아무도 안 고른 자리로 들어가고 개수는 맞는다.
+            if not issue.type.strip():
+                report.blank_type.append(issue.source_id)
+            if not issue.status.strip():
+                report.blank_status.append(issue.source_id)
             if issue.parent and issue.parent not in present:
                 report.dangling_parents.append(issue.source_id)
             for relation in issue.relations:
@@ -197,4 +449,4 @@ class ImportService:
         report.unknown_relation_kinds.extend(sorted(unknown_kinds))
 
 
-__all__ = ["Choices", "Counted", "ImportService", "Preview"]
+__all__ = ["Choices", "Counted", "ImportService", "Loaded", "Preview"]

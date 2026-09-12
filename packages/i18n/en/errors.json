@@ -171,6 +171,7 @@
   "imports.archive_too_large": "That import bundle is too large.",
   "imports.bad_overrides": "Those pairings couldn't be read.",
   "imports.project_archived": "You can't import into an archived project.",
+  "imports.unmapped_vocabulary": "Some words haven't been paired yet, so nothing was imported.",
   "imports.unreadable_archive": "That import bundle couldn't be read.",
   "internal.error": "Something went wrong on our side. Please try again.",
   "iql.invalid": "That query isn't valid.",
