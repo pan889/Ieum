@@ -266,19 +266,31 @@ class TestRelocateAll:
                     one.match.how,
                 )
 
-    def test_a_page_full_of_orphans_does_not_take_forever(self) -> None:
-        """고아 40건. 예산이 없으면 한 건에 초 단위라 요청이 30초를 넘긴다."""
-        import time
+    def test_a_page_full_of_orphans_only_searches_a_few(self) -> None:
+        """고아 40건이어도 퍼지로 넘어가는 것은 **몇 건뿐**이다.
 
+        여기서 초를 재면 안 된다. 처음에 `3초 미만`으로 썼다가 CI 러너에서
+        7.6초가 나와 붉었다 — 기계가 느린 것이지 코드가 달라진 게 아니다.
+        그런 단언은 영원히 기계 성능을 쫓아다니게 되고, 결국 문턱을 올리다가
+        아무것도 안 지키는 값이 된다.
+
+        지킬 것은 "빠른가" 가 아니라 **"예산이 실제로 막는가"** 이고, 그건
+        몇 건을 찾아봤는지로 그대로 셀 수 있다. 12만 자 문서에 기본 예산
+        (30만 자)이면 두 건 남짓이다. 마흔 건을 다 돌았다면 예산이 없는 것이다.
+
+        한 건의 비용이 커지는 쪽은 `test_it_really_is_faster` 가 본다 —
+        거기는 절대 시간이 아니라 **배수**라 기계를 안 탄다.
+        """
         body = _long_document(120_000)
         orphans = [Anchor(exact=f"없는말{i:03d} " * 120).as_json() for i in range(40)]
 
-        started = time.perf_counter()
         got = relocate_all(body, orphans)
-        took = time.perf_counter() - started
-
-        assert took < 3.0, f"{took:.1f}초 걸렸다"
         assert len(got) == 40
+
+        searched = sum(1 for one in got if one.decided)
+        assert 1 <= searched <= 5, searched
+        # 나머지는 "못 찾았다" 가 아니라 "안 찾아봤다" 로 남아야 한다.
+        assert all(one.match is None for one in got)
 
     def test_what_it_did_not_search_is_not_called_an_orphan(self) -> None:
         """예산이 떨어지면 **모른다**고 해야 한다.
