@@ -34,6 +34,7 @@ from ieum.modules.identity.models import (
     UserGroup,
     UserSession,
 )
+from ieum.modules.imports.models import ImportedObject
 from ieum.modules.issues.models import (
     Board,
     FieldDefinition,
@@ -103,6 +104,7 @@ __all__ = [
     "FieldDefinition",
     "GroupMember",
     "Heartbeat",
+    "ImportedObject",
     "Issue",
     "IssueCategory",
     "IssueComment",

@@ -144,6 +144,38 @@ async def get_issue_type(
     return next((t.name for t in types if t.id == issue_type_id), None)
 
 
+@dataclass(frozen=True, slots=True)
+class IssueTypeRef:
+    """이 프로젝트에서 쓸 수 있는 이슈 유형 하나.
+
+    `workflow_id` 를 함께 내는 이유: 유형을 고르면 **상태의 후보가 정해진다**.
+    이관이 "이 종류로 올 것은 이 상태들 중 하나여야 한다" 를 판단하려면
+    둘을 같이 봐야 한다.
+    """
+
+    id: UUID
+    name: str
+    #: 하위 작업 전용 유형인가. 이관이 부모 없는 이슈를 여기로 넣으면
+    #: 만들어지는 순간 규칙에 걸린다.
+    is_subtask: bool
+    workflow_id: UUID
+
+
+async def get_project_issue_types(session: AsyncSession, project_id: UUID) -> list[IssueTypeRef]:
+    """이 프로젝트에서 쓸 수 있는 이슈 유형 전부.
+
+    `get_project_states` 와 짝이다. 이관이 소스의 종류 이름을 여기에 견준다.
+    """
+    from ieum.modules.issues.repository import IssueTypeRepository
+
+    return [
+        IssueTypeRef(
+            id=row.id, name=row.name, is_subtask=row.is_subtask, workflow_id=row.workflow_id
+        )
+        for row in await IssueTypeRepository(session).available_for(project_id)
+    ]
+
+
 async def get_field_definitions(
     session: AsyncSession, *, project_id: UUID, issue_type_id: UUID
 ) -> list[FieldDefinitionRef]:

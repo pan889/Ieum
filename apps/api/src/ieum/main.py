@@ -65,6 +65,7 @@ from ieum.modules.identity.router import (
 )
 from ieum.modules.identity.scim import ScimError
 from ieum.modules.identity.scim_router import scim_router
+from ieum.modules.imports.router import imports_router
 from ieum.modules.issues.board_router import boards_router
 from ieum.modules.issues.calendar_router import calendar_router
 from ieum.modules.issues.gantt_router import gantt_router
@@ -294,6 +295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 소켓 하나뿐이라 파일을 따로 둔다 — WebSocket 은 인증이 다른 길이다.
         collab_router,
         unified_search_router,
+        imports_router,
         notifications_router,
         watches_router,
         webhooks_router,

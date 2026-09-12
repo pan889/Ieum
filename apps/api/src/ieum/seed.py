@@ -19,6 +19,7 @@ from ieum.modules.desk import permissions as desk_perms
 from ieum.modules.identity import permissions as identity_perms
 from ieum.modules.identity.models import User
 from ieum.modules.identity.repository import UserRepository, normalize_email
+from ieum.modules.imports import permissions as imports_perms
 from ieum.modules.issues import permissions as issue_perms
 from ieum.modules.issues.models import IssueType, Workflow, WorkflowState, WorkflowTransition
 from ieum.modules.issues.repository import IssueTypeRepository, WorkflowRepository
@@ -52,6 +53,9 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
             # 앱 등록 (M6). 전역이고, 자리를 정하는 쪽은 step-up 이다 —
             # 화면 안에 남의 글을 놓는 자리를 내주는 일이라서 그렇다.
             *plugin_perms.ALL,
+            # 이관. 관리자만이다 — 프로젝트 담당자에게 주면 남의 이름으로
+            # 수백 개를 만드는 길이 프로젝트마다 열린다.
+            *imports_perms.ALL,
         ),
     ),
     "Member": (
