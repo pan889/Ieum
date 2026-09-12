@@ -403,10 +403,18 @@ function Escalations({
 
       <ul className="flex flex-col gap-1">
         {rules.map((rule, index) => (
-          // 규칙에는 안정된 id 가 없다(서버가 배열을 그대로 저장한다). 조건과
-          // 조치가 곧 이름이므로 그것으로 키를 만든다 — 서버도 같은 이름으로
-          // 실행 여부를 기억한다.
-          <li key={`${String(rule.at_percent)}:${rule.action}`} className="flex flex-wrap items-end gap-2">
+          // **자리(index)가 곧 키다.**
+          //
+          // 값으로 키를 만들면 두 가지가 깨진다. 하나는 겹침 — 같은 조건·조치를
+          // 두 줄 두는 것은 막을 이유가 없는데 키가 같아진다. 다른 하나가 더
+          // 나쁘다: 퍼센트 칸에 한 글자 칠 때마다 키가 바뀌어 React 가 줄을
+          // 부수고 다시 만들고, 그러면 **입력 칸이 포커스를 잃는다.** `8` 을
+          // 치는 순간 커서가 튕겨서 `80` 을 칠 수가 없다.
+          //
+          // 여기서 index 를 쓰는 게 맞는 이유: 이 목록은 순서를 바꾸지 않고,
+          // 고치는 것도 `replace(index, …)` 로 자리를 집어서 한다 — 자리가
+          // 이미 이 줄의 신원이다.
+          <li key={index} className="flex flex-wrap items-end gap-2">
             <Field
               label={t('desk:sla.atPercent')}
               type="number"

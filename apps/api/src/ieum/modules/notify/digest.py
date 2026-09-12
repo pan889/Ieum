@@ -29,7 +29,8 @@ log = get_logger(__name__)
 
 #: 받는 사람의 지역 시각으로 이 시간대에 보낸다.
 DIGEST_HOUR = 8
-#: 한 통에 담을 최대 줄 수. 넘치면 "그리고 N개 더" 로 줄인다.
+#: 한 통에 담을 최대 **줄 수**. 넘치면 "그리고 N건 더" 로 줄인다.
+#: 건수 자체는 따로 센다(`count_since`) — 이 값에 걸려서는 안 된다.
 MAX_LINES = 20
 #: 이만큼 안 지났으면 이미 보낸 것으로 본다. 시계가 조금 밀려도 두 번 안 간다.
 MIN_GAP = timedelta(hours=20)
@@ -79,30 +80,31 @@ async def collect(
         if not is_morning(moment, user.timezone):
             continue
 
-        rows = await notifications.since(
-            preference.user_id, preference.last_digest_at, MAX_LINES + 1
-        )
+        rows = await notifications.since(preference.user_id, preference.last_digest_at, MAX_LINES)
         if not rows:
             # 보낼 것이 없으면 시각도 안 건드린다. 다음 시간에 다시 본다.
             continue
+        # **가져온 줄 수가 아니라 진짜 건수를 센다.** 본문은 스무 줄까지지만
+        # 제목과 "그리고 N건 더" 는 사실이어야 한다 — 500건 쌓인 사람에게
+        # "21건" 이라고 적고 "그리고 1건 더" 를 붙이면 둘 다 거짓말이다.
+        total = await notifications.count_since(preference.user_id, preference.last_digest_at)
 
         translate = translator_for(settings.i18n_catalog_dir, user.locale)
-        shown = rows[:MAX_LINES]
-        lines = [f"- {row.title}" for row in shown]
-        if len(rows) > MAX_LINES:
-            lines.append(translate("notifications:digest.more", count=len(rows) - MAX_LINES))
-        body = "\n".join([translate("notifications:digest.intro", count=len(rows)), "", *lines])
+        lines = [f"- {row.title}" for row in rows]
+        if total > len(rows):
+            lines.append(translate("notifications:digest.more", count=total - len(rows)))
+        body = "\n".join([translate("notifications:digest.intro", count=total), "", *lines])
 
         out.append(
             Digest(
                 mail=Mail(
                     to=user.email,
-                    subject=translate("notifications:digest.subject", count=len(rows)),
+                    subject=translate("notifications:digest.subject", count=total),
                     body=body,
                     link="/notifications",
                 ),
                 preference=preference,
-                covered=len(rows),
+                covered=total,
             )
         )
     return out

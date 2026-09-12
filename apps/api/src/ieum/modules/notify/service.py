@@ -31,6 +31,7 @@ from ieum.modules.notify.repository import (
     WatchRepository,
     WebhookRepository,
 )
+from ieum.modules.notify.targets import check_shape
 
 log = get_logger(__name__)
 
@@ -393,13 +394,14 @@ class WebhookService:
         return await self._deliveries.list_for_webhook(webhook_id, request)
 
     def _validate_url(self, url: str) -> None:
-        """http/https 만 허용한다. file: 나 사설 스킴은 SSRF 통로가 된다."""
-        if not url.startswith(("http://", "https://")):
-            raise ValidationError(
-                "http 또는 https URL 이어야 한다.", code="notify.invalid_webhook_url"
-            )
-        if len(url) > 2000:
-            raise ValidationError("URL 이 너무 길다.", code="notify.invalid_webhook_url")
+        """모양만 본다. **어디로 가는지는 보낼 때 본다.**
+
+        여기서 이름을 풀어 봐야 소용이 없다 — 오늘 공개 주소를 가리키는
+        이름이 내일 `127.0.0.1` 을 가리킬 수 있고, 그 사이에 우리가 다시
+        확인하는 자리는 없다. 실제 IP 검사는 `notify.targets.pin` 이
+        전송 직전에 한다.
+        """
+        check_shape(url)
 
     def _validate_events(self, events: list[str]) -> None:
         # 카탈로그를 거친다. core.events 를 직접 보면 import 순서에 따라

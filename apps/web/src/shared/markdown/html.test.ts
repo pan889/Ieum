@@ -1,3 +1,12 @@
+/**
+ * @vitest-environment-options { "url": "http://app/" }
+ *
+ * **창 주소를 정해 둔다.** `internalUri` 는 이제 "우리 주소인가" 를 호스트로
+ * 보는데(남의 트래커 링크가 우리 것으로 바뀌지 않게), 이 파일의 시험들은
+ * `http://app/...` 을 우리 주소로 삼아 쓰였다. 안 맞춰 두면 여기 있는
+ * 링크들이 전부 "남의 주소" 가 된다.
+ */
+
 import { describe, expect, it } from 'vitest'
 
 import { copiedFromEditor, htmlToMarkdown, pastedMarkdown } from './html'

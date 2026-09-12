@@ -14,8 +14,9 @@ DB 트랜잭션을 붙잡고 있으면 락이 쌓인다.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import httpx
 from sqlalchemy import select
@@ -59,7 +60,7 @@ from ieum.modules.notify.handlers import (
     handle_page_event,
 )
 from ieum.modules.notify.mail import Mail, send_all
-from ieum.modules.notify.models import Notification, Webhook
+from ieum.modules.notify.models import Notification, Webhook, WebhookDelivery
 from ieum.modules.notify.repository import DeliveryRepository
 from ieum.modules.notify.service import NotificationService
 from ieum.modules.org import contracts as org_contracts
@@ -74,6 +75,10 @@ class SweepStageError(RuntimeError):
 
 OUTBOX_BATCH = 100
 WEBHOOK_BATCH = 50
+#: 한 건을 잡아 두는 시간. 보내는 동안 다른 워커가 같은 것을 집지 않게 한다.
+#: 배치 전체가 최악으로 걸리는 시간(50건에 건당 10초)보다 넉넉해야, 앞쪽을 보내는
+#: 사이에 뒤쪽 임대가 먼저 풀려 두 번 나가는 일이 없다.
+WEBHOOK_LEASE = timedelta(seconds=15 * 60)
 
 
 async def drain_outbox() -> int:
@@ -187,10 +192,27 @@ async def send_pending_mail(notification_ids: list[Any]) -> int:
 
 
 async def deliver_webhooks() -> int:
-    """전송할 차례가 된 웹훅을 보낸다."""
+    """전송할 차례가 된 웹훅을 보낸다. **세 단계로 나눈다.**
+
+    1. 보낼 것을 잡아 두고 **트랜잭션을 닫는다.**
+    2. HTTP 를 보낸다 — DB 커넥션 없이.
+    3. 새 트랜잭션에서 결과를 적는다.
+
+    한 덩어리로 돌리면 안 된다. 배치가 50건이고 한 건이 최대 10초라, 응답이
+    느린 수신처가 몇 개만 있어도 트랜잭션 하나가 **몇 분씩** 열려 있게 된다.
+    그동안 커넥션 하나가 묶이고, 그보다 나쁜 것은 열린 트랜잭션이 vacuum 의
+    기준선을 붙잡아 테이블 전체의 정리가 밀린다는 점이다.
+
+    잡아 두는 방법은 `next_retry_at` 을 앞당겨 미는 것이다(`WEBHOOK_LEASE`).
+    그 컬럼은 원래 "이때까지는 건드리지 않는다" 는 뜻이라 다른 워커가 이미
+    그렇게 읽는다 — 새 상태 값을 만들 필요가 없다. 보내다 워커가 죽어도
+    임대가 끝나면 다시 잡힌다.
+    """
     settings = get_settings()
     box = SecretBox(settings.secret_key.get_secret_value(), purpose="notify.webhook")
 
+    # 1단계: 잡아 둔다. 여기서 하는 일은 전부 DB 뿐이다.
+    jobs: list[tuple[UUID, UUID, str]] = []
     async with session_scope() as session:
         deliveries = await DeliveryRepository(session).due(limit=WEBHOOK_BATCH)
         if not deliveries:
@@ -204,44 +226,92 @@ async def deliver_webhooks() -> int:
             .all()
         }
 
-        async with httpx.AsyncClient(follow_redirects=False) as client:
-            for row in deliveries:
-                webhook = webhooks.get(row.webhook_id)
-                if webhook is None:
-                    row.status = "abandoned"
-                    row.error = "웹훅이 삭제됨"
-                    continue
-                if not webhook.enabled:
-                    # 꺼진 웹훅은 재시도하지 않는다. 다시 켜면 새 이벤트부터 간다.
-                    row.status = "abandoned"
-                    row.error = "웹훅이 비활성 상태"
-                    continue
+        for row in deliveries:
+            webhook = webhooks.get(row.webhook_id)
+            if webhook is None:
+                row.status = "abandoned"
+                row.error = "웹훅이 삭제됨"
+                continue
+            if not webhook.enabled:
+                # 꺼진 웹훅은 재시도하지 않는다. 다시 켜면 새 이벤트부터 간다.
+                row.status = "abandoned"
+                row.error = "웹훅이 비활성 상태"
+                continue
 
-                try:
-                    secret = box.decrypt(webhook.secret_enc)
-                # 시크릿을 못 푸는 웹훅 하나가 배치 전체를 멈추면 안 된다.
-                # 키 로테이션이나 다른 키로 만든 DB 를 복원하면 실제로 생긴다.
-                except Exception as exc:
-                    row.status = "abandoned"
-                    row.error = f"시크릿 복호화 실패: {type(exc).__name__}"
-                    webhook.enabled = False
-                    webhook.disabled_reason = "시크릿을 복호화할 수 없음"
-                    log.error(
-                        "webhook.secret_undecryptable",
-                        webhook_id=str(webhook.id),
-                        error=str(exc)[:200],
-                    )
-                    continue
-
-                outcome = await webhook_delivery.post(webhook, row, secret, client=client)
-                webhook_delivery.apply_outcome(webhook, row, outcome)
-                log.info(
-                    "webhook.delivered" if outcome.ok else "webhook.delivery_failed",
+            try:
+                secret = box.decrypt(webhook.secret_enc)
+            # 시크릿을 못 푸는 웹훅 하나가 배치 전체를 멈추면 안 된다.
+            # 키 로테이션이나 다른 키로 만든 DB 를 복원하면 실제로 생긴다.
+            except Exception as exc:
+                row.status = "abandoned"
+                row.error = f"시크릿 복호화 실패: {type(exc).__name__}"
+                webhook.enabled = False
+                webhook.disabled_reason = "시크릿을 복호화할 수 없음"
+                log.error(
+                    "webhook.secret_undecryptable",
                     webhook_id=str(webhook.id),
-                    delivery_id=str(row.id),
-                    status=outcome.status_code,
-                    attempts=row.attempts,
+                    error=str(exc)[:200],
                 )
+                continue
+
+            row.next_retry_at = utcnow() + WEBHOOK_LEASE
+            jobs.append((row.id, webhook.id, secret))
+
+    if not jobs:
+        return len(deliveries)
+
+    # 2단계: HTTP. 세션은 닫혀 있다.
+    #
+    # `expire_on_commit=False` 라 위에서 읽은 행은 값을 그대로 들고 있다.
+    # 그래도 **읽기로만 쓴다** — 떨어져 나온 객체에 값을 적어 봐야 아무 데도
+    # 안 남는다. 결과는 3단계에서 다시 불러온 행에 적는다.
+    by_id = {d.id: d for d in deliveries}
+    outcomes: dict[UUID, webhook_delivery.DeliveryOutcome] = {}
+    async with httpx.AsyncClient(follow_redirects=False) as client:
+        for delivery_id, webhook_id, secret in jobs:
+            outcomes[delivery_id] = await webhook_delivery.post(
+                webhooks[webhook_id],
+                by_id[delivery_id],
+                secret,
+                client=client,
+                allow_private_targets=settings.webhook_allow_private_targets,
+            )
+
+    # 3단계: 결과를 적는다.
+    async with session_scope() as session:
+        fresh_deliveries = {
+            d.id: d
+            for d in (
+                await session.execute(
+                    select(WebhookDelivery).where(WebhookDelivery.id.in_(outcomes))
+                )
+            )
+            .scalars()
+            .all()
+        }
+        fresh_webhooks = {
+            w.id: w
+            for w in (
+                await session.execute(select(Webhook).where(Webhook.id.in_({j[1] for j in jobs})))
+            )
+            .scalars()
+            .all()
+        }
+        for delivery_id, webhook_id, _ in jobs:
+            saved = fresh_deliveries.get(delivery_id)
+            hook = fresh_webhooks.get(webhook_id)
+            if saved is None or hook is None:
+                # 보내는 사이에 지워졌다. 적을 데가 없다.
+                continue
+            outcome = outcomes[delivery_id]
+            webhook_delivery.apply_outcome(hook, saved, outcome)
+            log.info(
+                "webhook.delivered" if outcome.ok else "webhook.delivery_failed",
+                webhook_id=str(hook.id),
+                delivery_id=str(saved.id),
+                status=outcome.status_code,
+                attempts=saved.attempts,
+            )
 
     return len(deliveries)
 

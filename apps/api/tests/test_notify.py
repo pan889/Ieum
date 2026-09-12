@@ -1266,6 +1266,54 @@ class TestDigest:
         mine = next(d for d in found if d.mail.to == user.email)
         assert mine.mail.subject == "Ieum 소식 1건"
 
+    async def test_the_count_is_the_real_count_not_the_line_count(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """본문은 스무 줄까지지만 **건수는 사실이어야 한다.**
+
+        가져온 행을 세면, 쌓인 게 많은 사람에게 "21건" 이라고 적고 거기에
+        "그리고 1건 더" 를 붙인다. 둘 다 거짓말이고, 받는 사람은 요약을 보고
+        "별거 없네" 하고 안 들어온다 — 다이제스트가 있는 이유를 무너뜨린다.
+        """
+        user = people["korean"]
+        await self._prefers_daily(session, user)
+        total = nd.MAX_LINES + 45
+        for i in range(total):
+            await self._notify(session, user, f"소식 {i:03d}")
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        mine = next(d for d in found if d.mail.to == user.email)
+
+        assert mine.covered == total
+        assert mine.mail.subject == f"Ieum 소식 {total}건"
+        # 본문은 스무 줄까지만. 그건 그대로 둔다.
+        shown = [line for line in mine.mail.body.splitlines() if line.startswith("- ")]
+        assert len(shown) == nd.MAX_LINES
+        assert f"그리고 {total - nd.MAX_LINES}건 더" in mine.mail.body
+
+    async def test_the_count_ignores_what_was_already_read(
+        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+    ) -> None:
+        """세는 조건이 가져오는 조건과 **같아야** 한다.
+
+        따로 세게 되면 조건이 갈라지기 쉽다 — 읽은 것까지 세면 본문에는 없는
+        건수가 제목에 찍힌다.
+        """
+        user = people["korean"]
+        await self._prefers_daily(session, user)
+        for i in range(3):
+            await self._notify(session, user, f"새 소식 {i}")
+        for i in range(7):
+            seen = await self._notify(session, user, f"이미 본 것 {i}")
+            seen.read_at = utcnow()
+        await session.flush()
+
+        found = await nd.collect(session, settings, now=self._at(nd.DIGEST_HOUR))
+        mine = next(d for d in found if d.mail.to == user.email)
+        assert mine.covered == 3
+        assert mine.mail.subject == "Ieum 소식 3건"
+        assert "이미 본 것" not in mine.mail.body
+
     async def test_marking_sent_stops_the_next_run(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
     ) -> None:

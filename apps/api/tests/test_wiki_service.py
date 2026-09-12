@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -24,6 +26,7 @@ from ieum.core.exceptions import (
     ValidationError,
 )
 from ieum.core.ids import new_id
+from ieum.core.markdown.anchors import Relocation
 from ieum.core.outbox import OutboxEvent
 from ieum.core.pagination import PageRequest
 from ieum.core.permissions import PermissionService, Scope, set_permission_service
@@ -1936,3 +1939,266 @@ class TestPrintablePaper:
         paper = await pages.export_paper(actor, view.page.id)
         assert paper.assets[f"{row.id}/a.png"].data == blob
         assert paper.assets[f"{row.id}/a.png"].media_type == "image/png"
+
+
+class TestCommentsDoNotStopTheServer:
+    """코멘트 목록이 **이벤트 루프를 붙잡으면 안 된다.**
+
+    앵커를 다시 붙이는 일은 `difflib` 이라 긴 문서에서 초 단위로 걸린다. 그걸
+    루프에서 그냥 돌리면, 그동안 이 워커가 받아 둔 **다른 모든 요청이 같이
+    선다** — 문서 하나에 달린 코멘트 목록이 서버 전체를 멈추는 셈이다.
+
+    그래서 여기서 재는 것은 "빠른가" 가 아니라 **"그동안 다른 일이 돌았는가"**
+    다. 빠르기만 보면 나중에 누가 루프에서 돌리도록 되돌려도, 문서가 작은
+    테스트에서는 여전히 초록이다.
+    """
+
+    async def test_the_loop_keeps_running_while_anchors_are_rebuilt(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        await grant(
+            session,
+            principal_id=user.id,
+            permissions_granted=(perms.COMMENT_ADD,),
+            scope=Scope.space(space.id),
+        )
+        view = await PageService(session, permissions).create(
+            actor, NewPage(space_id=space.id, title="Runbook", body="본문이 있다", publish=True)
+        )
+        comments = PageCommentService(session, permissions)
+        await comments.add(actor, view.page.id, body="여기", anchor={"exact": "본문이"})
+
+        # 진짜로 오래 걸리는 문서를 만드는 대신, 걸리는 일을 **대신 세운다.**
+        # 어차피 재는 것은 "그 일이 루프 위에서 도느냐" 하나다.
+        slept = asyncio.Event()
+
+        def slow(*args: object, **kwargs: object) -> list[object]:
+            time.sleep(0.4)
+            return [Relocation(match=None, decided=False)]
+
+        monkeypatch.setattr(service_module, "relocate_all", slow)
+
+        async def heartbeat() -> int:
+            beats = 0
+            while not slept.is_set():
+                await asyncio.sleep(0.01)
+                beats += 1
+            return beats
+
+        ticker = asyncio.ensure_future(heartbeat())
+        try:
+            await comments.list_for(actor, view.page.id)
+        finally:
+            slept.set()
+        beats = await ticker
+
+        # 0.4 초 동안 10ms 마다면 수십 번이다. 루프가 잡혀 있었으면 한 자리다.
+        assert beats >= 10, f"루프가 {beats}번밖에 못 돌았다 — 앵커 계산이 루프를 잡고 있다"
+
+
+class TestSlugsAgreeWithTheUniqueIndex:
+    """새 slug 을 고르는 규칙이 DB 의 유일 인덱스와 **어긋나면 안 된다.**
+
+    느슨하면 IntegrityError 로 500 이 나고, 그 500 은 사용자에게 아무 말도
+    못 한다 — 무엇과 부딪혔는지가 화면에 안 보이는 행이기 때문이다.
+    """
+
+    async def test_an_archived_sibling_still_holds_its_slug(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """보관은 지우는 게 아니다. 행은 남고, 인덱스는 그 행을 센다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        parent = await pages.create(actor, NewPage(space_id=space.id, title="상위", publish=True))
+        first = await pages.create(
+            actor, NewPage(space_id=space.id, parent_id=parent.page.id, title="보고서")
+        )
+        await pages.archive(actor, first.page.id)
+
+        again = await pages.create(
+            actor, NewPage(space_id=space.id, parent_id=parent.page.id, title="보고서")
+        )
+        await session.flush()
+        assert again.page.slug != first.page.slug
+        assert again.page.path != first.page.path
+
+    async def test_an_archived_root_page_still_holds_its_slug(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        first = await pages.create(actor, NewPage(space_id=space.id, title="공지"))
+        await pages.archive(actor, first.page.id)
+
+        again = await pages.create(actor, NewPage(space_id=space.id, title="공지"))
+        await session.flush()
+        assert again.page.slug != first.page.slug
+
+    async def test_moving_onto_an_archived_sibling_does_not_blow_up(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        target = await pages.create(actor, NewPage(space_id=space.id, title="옮길 곳"))
+        buried = await pages.create(
+            actor, NewPage(space_id=space.id, parent_id=target.page.id, title="문서")
+        )
+        await pages.archive(actor, buried.page.id)
+        wanderer = await pages.create(actor, NewPage(space_id=space.id, title="문서"))
+
+        moved = await pages.move(actor, wanderer.page.id, new_parent_id=target.page.id)
+        await session.flush()
+        assert moved.page.slug != buried.page.slug
+
+
+class TestTheBlogAddressIsReserved:
+    """블로그 글 주소는 `blog/<slug>` 다. 그 앞자리를 트리 문서가 가져가면 안 된다.
+
+    유일 인덱스는 `kind` 로 나뉘어 있어서 이걸 안 막아 준다 — 최상위 문서
+    `blog` 와 블로그 글은 서로 다른 것으로 본다. 그런데 **경로는 같아진다.**
+    """
+
+    async def test_a_top_level_page_does_not_take_it(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        view = await pages.create(actor, NewPage(space_id=space.id, title="Blog", publish=True))
+        assert view.page.slug != "blog"
+        assert view.page.path != "blog"
+
+    async def test_a_child_under_it_cannot_shadow_a_post(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """이게 진짜 사고다 — 경로가 똑같아지면 경로로 찾는 자리가 500 이 난다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        post = await pages.create(
+            actor, NewPage(space_id=space.id, title="릴리스", kind="blog", publish=True)
+        )
+        parent = await pages.create(actor, NewPage(space_id=space.id, title="Blog", publish=True))
+        child = await pages.create(
+            actor, NewPage(space_id=space.id, parent_id=parent.page.id, title="릴리스")
+        )
+        await session.flush()
+
+        assert post.page.path == "blog/릴리스"
+        assert child.page.path != post.page.path
+        # 경로로 찾을 때 두 행이 나오면 안 된다.
+        assert await pages._pages.get_by_path(space.id, "blog/릴리스") is not None
+
+    async def test_moving_a_page_to_the_root_does_not_take_it_either(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        holder = await pages.create(actor, NewPage(space_id=space.id, title="어딘가"))
+        inner = await pages.create(
+            actor, NewPage(space_id=space.id, parent_id=holder.page.id, title="Blog")
+        )
+        assert inner.page.slug == "blog"  # 하위에서는 괜찮다
+
+        moved = await pages.move(actor, inner.page.id, new_parent_id=None)
+        await session.flush()
+        assert moved.page.slug != "blog"
+
+
+class TestAPostPublishedLaterStillHasADate:
+    """블로그 목록은 `published_at` 으로 정렬한다.
+
+    만들 때만 적으면, 초안으로 써 뒀다가 나중에 공개한 글은 영영 NULL 이다.
+    포스트그레스는 내림차순에서 NULL 을 **맨 앞**에 놓으므로, 그 글이 블로그
+    맨 위에 박혀서 안 내려온다.
+    """
+
+    async def test_publishing_a_draft_post_stamps_the_time(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        draft = await pages.create(
+            actor, NewPage(space_id=space.id, title="나중에 낼 글", kind="blog", publish=False)
+        )
+        assert draft.page.published_at is None
+
+        opened = await pages.update(actor, draft.page.id, publish=True)
+        await session.flush()
+        assert opened.page.published_at is not None
+
+    async def test_it_does_not_jump_to_the_top_of_the_blog(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        draft = await pages.create(
+            actor, NewPage(space_id=space.id, title="먼저 쓴 초안", kind="blog", publish=False)
+        )
+        await pages.create(
+            actor, NewPage(space_id=space.id, title="그냥 낸 글", kind="blog", publish=True)
+        )
+        await pages.update(actor, draft.page.id, publish=True)
+        await session.flush()
+
+        rows, _ = await pages.posts(actor, space.id, limit=10, offset=0)
+        # 나중에 공개했으니 맨 앞이 맞다. 하지만 **날짜가 있어서** 맨 앞인
+        # 것이지, 날짜가 없어서가 아니어야 한다.
+        assert rows[0].page.title == "먼저 쓴 초안"
+        assert all(r.page.published_at is not None for r in rows)
+
+    async def test_publishing_twice_does_not_move_the_date(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        space: Space,
+    ) -> None:
+        """이미 낸 글을 고쳐도 게시 시각은 그대로다 — 목록 순서가 흔들린다."""
+        actor = await full_access(session, user, space)
+        pages = PageService(session, permissions)
+        post = await pages.create(
+            actor, NewPage(space_id=space.id, title="낸 글", kind="blog", publish=True)
+        )
+        first = post.page.published_at
+        assert first is not None
+
+        again = await pages.update(actor, post.page.id, body="고쳤다", publish=True)
+        await session.flush()
+        assert again.page.published_at == first

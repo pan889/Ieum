@@ -117,28 +117,31 @@ async def collab_socket(
         await socket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    # **집었으면 반드시 놓는다.** 방은 참조 세기로 살아 있어서, 한 번 안 놓으면
+    # 그 문서의 방이 프로세스가 죽을 때까지 안 없어진다 — 문서 본문과 프레즌스
+    # 상태를 통째로 든 채로. `accept()` 는 실제로 실패한다(붙는 도중에 창을
+    # 닫으면 그렇다). 그게 `try` 밖에 있던 동안은 그때마다 방 하나씩 샜다.
     room = await registry.acquire(page_id, settings.redis_url)
-    if room.full():
-        await registry.release(page_id)
-        await socket.close(code=status.WS_1013_TRY_AGAIN_LATER)
-        return
-
-    await socket.accept()
-    client = Client(user_id=user_id, send=socket.send_bytes)
-    pump = None
     try:
+        if room.full():
+            await socket.close(code=status.WS_1013_TRY_AGAIN_LATER)
+            return
+
+        await socket.accept()
+        client = Client(user_id=user_id, send=socket.send_bytes)
         pump = asyncio.create_task(client.pump())
-        await room.join(client)
-        while True:
-            await room.handle(client, await socket.receive_bytes())
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        logger.exception("collab.socket_failed", page_id=str(page_id), user_id=str(user_id))
-    finally:
-        if pump is not None:
+        try:
+            await room.join(client)
+            while True:
+                await room.handle(client, await socket.receive_bytes())
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            logger.exception("collab.socket_failed", page_id=str(page_id), user_id=str(user_id))
+        finally:
             pump.cancel()
-        room.leave(client)
+            room.leave(client)
+    finally:
         await registry.release(page_id)
 
 

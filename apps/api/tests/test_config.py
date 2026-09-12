@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import yaml
 
+from compose_files import read_compose
 from ieum.config import REPO_ROOT, Settings, _repo_root
 
 
@@ -147,7 +148,7 @@ class TestComposeFeedsTheSameOrigins:
 
     def _compose(self, name: str) -> Any:
         path = REPO_ROOT / name
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return read_compose(path)
 
     def test_dev_api_and_minio_share_the_variable(self) -> None:
         compose = self._compose("docker-compose.yml")

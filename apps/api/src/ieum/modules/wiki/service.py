@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import posixpath
 import re
@@ -29,7 +30,7 @@ from ieum.core.logging import get_logger
 from ieum.core.markdown import MAX_LENGTH as MAX_BODY_LENGTH
 from ieum.core.markdown import extract_mentions, to_plaintext
 from ieum.core.markdown import normalize as normalize_markdown
-from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate
+from ieum.core.markdown.anchors import Anchor, AnchorMatch, locate, relocate_all
 from ieum.core.markdown.diff import DiffResult, diff_lines
 from ieum.core.markdown.links import ISSUE as ISSUE_SCHEME
 from ieum.core.markdown.links import extract_links
@@ -498,7 +499,10 @@ class PageService:
             )
 
         siblings = await self._pages.children_of(parent.id if parent else None, space.id)
-        slug = unique_slug(slugify(title), {s.slug for s in siblings})
+        slug = unique_slug(
+            slugify(title),
+            await self._taken_slugs(space_id=space.id, parent_id=parent.id if parent else None),
+        )
         parent_path = parent.path if parent else ""
 
         page = self._pages.add(
@@ -545,6 +549,24 @@ class PageService:
             )
         log.info("wiki.page_created", actor=str(actor.user_id), page=str(page.id))
         return await self.to_view(page, space=space)
+
+    async def _taken_slugs(
+        self, *, space_id: UUID, parent_id: UUID | None, exclude: UUID | None = None
+    ) -> set[str]:
+        """트리 문서가 못 쓰는 slug.
+
+        형제(보관된 것 포함)에 더해, **최상위에서는 `blog` 를 비워 둔다.**
+        블로그 글의 주소가 `blog/<slug>` 라서, 최상위 문서가 `blog` 를
+        가져가면 그 아래 하위 문서 경로(`blog/보고서`)가 블로그 글 경로와
+        글자 그대로 같아진다. 그러면 경로로 문서를 찾는 자리에서 두 행이
+        나오고 500 이 난다 — 유일 인덱스는 `kind` 가 달라 안 막아 준다.
+        """
+        taken = await self._pages.sibling_slugs(
+            space_id=space_id, parent_id=parent_id, exclude=exclude
+        )
+        if parent_id is None:
+            taken.add(BLOG_PREFIX)
+        return taken
 
     @staticmethod
     def _validate_kind(kind: str) -> str:
@@ -687,6 +709,12 @@ class PageService:
 
         if publish is not None and publish and page.status != "published":
             page.status = "published"
+            if page.published_at is None:
+                # **여기서 적어야 한다.** 블로그 목록은 이 값으로 정렬하는데,
+                # 만들 때만 적으면 초안으로 써 뒀다가 나중에 공개한 글은
+                # 영영 NULL 이다. 포스트그레스는 내림차순에서 NULL 을 맨 앞에
+                # 놓으므로, 그 글이 블로그 맨 위에 박혀 안 내려온다.
+                page.published_at = utcnow()
             if page.current_version_id is None:
                 latest = await self._versions.history(page.id, limit=1)
                 if latest:
@@ -859,8 +887,11 @@ class PageService:
                 details={"max": MAX_DEPTH},
             )
 
-        siblings = await self._pages.children_of(parent.id if parent else None, page.space_id)
-        taken = {s.slug for s in siblings if s.id != page.id}
+        taken = await self._taken_slugs(
+            space_id=page.space_id,
+            parent_id=parent.id if parent else None,
+            exclude=page.id,
+        )
         slug = unique_slug(page.slug, taken)
         old_path = page.path
         new_path = join_path(parent.path if parent else "", slug)
@@ -1090,7 +1121,12 @@ class PageService:
                 # 글은 멀쩡한데 그림 하나 때문에 임포트가 실패하면 곤란하다.
                 log.info("wiki.asset_skipped", page=str(view.page.id), path=resolved)
                 continue
-            replacements[target] = f"attachment:{row.id}/{row.filename}"
+            # **파일명을 그대로 넣지 않는다.** 이 글자는 마크다운 링크 목적지
+            # 안에 들어가는데, 공백이나 괄호가 있으면 링크가 그 자리에서
+            # 끝난다 — `[그림](attachment:<id>/보고서 최종.png)` 은
+            # `…/보고서` 까지만 링크이고 나머지는 글자로 남는다. 읽는 쪽
+            # (`attachment_refs`)은 이미 `unquote` 로 되돌리고 있었다.
+            replacements[target] = f"attachment:{row.id}/{encode_target(row.filename)}"
 
         if not replacements:
             return
@@ -1926,13 +1962,21 @@ class PageCommentService:
         rows = await self._comments.for_page(page_id)
         plain = await self._plaintext(page)
 
+        # **스레드로 내보낸다.** 퍼지 재앵커링은 `difflib` 이고, 긴 문서에서는
+        # 한 건이 초 단위로 걸린다(40만 자에서 2.5초를 쟀다). 그동안 이벤트
+        # 루프가 멈추면 이 워커가 받아 둔 **다른 모든 요청**이 같이 선다 —
+        # 코멘트 목록 하나가 서버를 멈추는 셈이다.
+        found = await asyncio.to_thread(relocate_all, plain, [row.anchor for row in rows])
+
         views: list[CommentView] = []
-        for row in rows:
-            match = locate(plain, Anchor.from_json(row.anchor)) if row.anchor else None
-            status = "ok" if row.anchor is None or match else "orphaned"
-            if row.anchor_status != status:
-                row.anchor_status = status
-            views.append(CommentView(comment=row, match=match))
+        for row, got in zip(rows, found, strict=True):
+            if got.decided:
+                # 안 찾아본 건(`decided=False`)은 저장된 상태를 그대로 둔다.
+                # 모르는 것을 "고아" 로 적으면 멀쩡한 코멘트에 표시가 붙는다.
+                status = "ok" if row.anchor is None or got.match else "orphaned"
+                if row.anchor_status != status:
+                    row.anchor_status = status
+            views.append(CommentView(comment=row, match=got.match))
         return views
 
     async def edit(self, actor: Actor, comment_id: UUID, body: str) -> CommentView:

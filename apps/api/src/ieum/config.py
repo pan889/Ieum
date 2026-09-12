@@ -119,7 +119,26 @@ class Settings(BaseSettings):
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_tls: bool = False
+    #: 릴레이가 인증을 요구하면 이 둘이 있어야 한다.
+    #:
+    #: **설치본은 처음부터 이 둘을 `.env` 에 적어 주고 있었는데 앱에 자리가
+    #: 없었다.** 그래서 깐 사람은 값을 채워 넣고도 메일이 안 나갔고, 릴레이는
+    #: 535 를 돌려주는데 화면에는 아무 말도 없었다 — 초대·알림·다이제스트가
+    #: 통째로 조용히 멈추는 모양이다.
+    smtp_user: str = ""
+    smtp_password: SecretStr = SecretStr("")
     mail_from: str = "ieum@example.com"
+
+    #: 웹훅을 **사설·루프백 주소로도** 보낼 수 있게 할지.
+    #:
+    #: 기본은 막는다. 웹훅은 우리 서버가 대신 요청을 보내 주는 기능이고,
+    #: 전송 기록에 응답 본문 앞부분이 남아 화면에 보인다 — 둘을 합치면
+    #: 내부 주소를 아무거나 열어 읽는 도구가 된다(클라우드 메타데이터가
+    #: 제일 나쁜 경우다).
+    #:
+    #: 사내망 수신처로 보내야 하는 설치본만 켠다. 켜면 **그 위험을 아는
+    #: 사람이 켠 것**이어야 한다.
+    webhook_allow_private_targets: bool = False
 
     # 인증 정책 (docs/architecture/auth.md 1절)
     access_token_ttl_seconds: int = 900

@@ -1,10 +1,21 @@
-# 운영 오버라이드. 개발용 코드 마운트와 핫리로드를 제거한다.
+# 운영 오버라이드. 개발용 코드 마운트와 핫리로드와 **열린 포트**를 제거한다.
+#
+# **`[]` 로는 못 지운다.** compose 는 오버라이드의 배열을 밑바탕에 *덧붙인다* —
+# 빈 배열을 얹으면 아무것도 안 덧붙일 뿐, 밑바탕의 값은 그대로 남는다. 그래서
+# 이 파일은 오랫동안 `volumes: []` 와 함께 **호스트의 소스 트리를 운영 컨테이너에
+# 그대로 마운트하고** 있었고(이미지가 아니라 작업 트리가 돈다), 개발용 포트도
+# 전부 열어 두고 있었다 — postgres 5432(`postgres:postgres`), redis 6379(인증 없음),
+# minio 9000·9001(`minioadmin`), mailpit 8025(오간 메일을 통째로 보여 주는 화면).
+#
+# 지우려면 `!reset` 이 필요하다(Compose 스펙의 병합 재설정 태그). `docker compose
+# config` 로 실제 병합 결과를 찍어 보면 바로 드러난다 — 시험이 그것을 한다
+# (`test_install_agrees.py`).
 services:
   api:
     build:
       target: runtime
     command: ["uvicorn", "ieum.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
-    volumes: []
+    volumes: !reset []
     environment:
       IEUM_ENV: production
       IEUM_DEBUG: "false"
@@ -14,15 +25,31 @@ services:
       # 개발 기본값은 localhost 다. 운영 오리진을 안 넣으면 브라우저가 API 를
       # 부르는 족족 프리플라이트에서 막혀 앱이 통째로 안 뜬다.
       IEUM_CORS_ORIGINS: "${IEUM_WEB_ORIGINS:?웹 오리진이 필요하다. 예) https://ieum.example.com}"
+      # **개발 기본값을 물려받지 않는다.** 밑바탕은 `postgres:postgres` 와
+      # `minioadmin` 을 박아 둔다 — 개발 편의다. 포트를 닫아도 그 스택에
+      # 붙는 다른 컨테이너(사이드카·백업 작업·잘못 붙인 도구)에게는 그대로
+      # 열린 문이고, 무엇보다 백업 파일에 그 자격증명이 같이 굳는다.
+      IEUM_DATABASE_URL: "postgresql+asyncpg://postgres:${IEUM_DB_PASSWORD:?DB 비밀번호가 필요하다. make secret 로 하나 만든다}@postgres:5432/ieum"
+      IEUM_S3_ACCESS_KEY: "${IEUM_S3_ACCESS_KEY:?스토리지 접근 키가 필요하다}"
+      IEUM_S3_SECRET_KEY: "${IEUM_S3_SECRET_KEY:?스토리지 비밀 키가 필요하다}"
     restart: unless-stopped
+    # **밖으로 여는 포트는 web 하나다.** 화면도 API 도 첨부도 같은 오리진으로
+    # 나가고(web 의 nginx 가 `/api/` 를 넘긴다), 앞에 TLS 를 세울 곳이 한
+    # 군데여야 한다 — 한 방 설치본이 파는 것이 그 성질이고 여기도 같다.
+    ports: !reset []
 
   worker:
     build:
       target: runtime
-    volumes: []
+    volumes: !reset []
     environment:
       IEUM_ENV: production
       IEUM_DEBUG: "false"
+      # api 와 **같은 값이어야 한다.** 한쪽만 바꾸면 워커가 개발 기본값으로
+      # 붙어 조용히 다른 DB 를 본다.
+      IEUM_DATABASE_URL: "postgresql+asyncpg://postgres:${IEUM_DB_PASSWORD:?DB 비밀번호가 필요하다. make secret 로 하나 만든다}@postgres:5432/ieum"
+      IEUM_S3_ACCESS_KEY: "${IEUM_S3_ACCESS_KEY:?스토리지 접근 키가 필요하다}"
+      IEUM_S3_SECRET_KEY: "${IEUM_S3_SECRET_KEY:?스토리지 비밀 키가 필요하다}"
     restart: unless-stopped
     healthcheck:
       # **api 이미지를 그대로 쓰므로 이미지의 HEALTHCHECK 를 물려받는다** —
@@ -39,21 +66,67 @@ services:
       start_period: 20s
 
   web:
+    # **이미지 이름을 덮어쓴다.** 밑바탕의 `web` 은 개발 서버라
+    # `image: node:22-alpine` 을 쓴다. 여기서 `build` 만 더하면 compose 는
+    # 그 이름으로 빌드 결과를 태그하고, 그러면 **로컬의 `node:22-alpine` 이
+    # 우리 nginx 이미지로 덮인다** — 그 뒤로 그 태그를 쓰는 모든 빌드가
+    # 엉뚱한 것을 집는다.
+    image: ieum-web:prod
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-    command: []
-    volumes: []
-    ports: ["80:80"]
+    command: !reset []
+    volumes: !reset []
+    # **`!reset` 이 아니라 `!override` 다.** `!reset` 은 값을 지우는 태그라
+    # 뒤에 무엇을 적든 비워 버린다. 밑바탕의 5173(개발 서버)을 버리고 80 을
+    # 쓰려면 "덧붙이지 말고 갈아 끼워라" 인 `!override` 여야 한다.
+    ports: !override ["80:80"]
     restart: unless-stopped
 
+  # ── 인프라: **개발용 포트를 닫는다** ─────────────────────────────
+  #
+  # 이 파일은 밑바탕(`docker-compose.yml`)에 얹는 오버라이드다. 밑바탕은
+  # 개발 편의로 포트를 전부 호스트에 연다 — postgres 5432, redis 6379,
+  # minio 9000·9001, mailpit 1025·8025. 여기서 지우지 않으면 **운영에서도
+  # 그대로 열린다.** 게다가 그 셋은 기본 자격증명으로 뜬다(`postgres`,
+  # 인증 없는 redis, `minioadmin`), mailpit 의 8025 는 오간 메일을 통째로
+  # 보여 주는 화면이다.
+  #
+  # 서비스끼리는 compose 네트워크 안에서 서비스 이름으로 만난다 — 호스트에
+  # 열 이유가 없다. 밖에서 봐야 하면 그때 이 파일에 한 줄을 더한다.
   postgres:
     restart: unless-stopped
+    ports: !reset []
+    environment:
+      # 밑바탕은 `postgres` 를 박아 둔다. api·worker 의 접속 문자열과
+      # **같은 변수**에서 와야 한다 — 둘로 나누면 한쪽만 바꾼 날 앱이
+      # 인증 실패로 안 뜬다.
+      POSTGRES_PASSWORD: "${IEUM_DB_PASSWORD:?DB 비밀번호가 필요하다. make secret 로 하나 만든다}"
   redis:
     restart: unless-stopped
+    ports: !reset []
   minio:
     restart: unless-stopped
+    ports: !reset []
     environment:
+      # api·worker 가 쓰는 것과 같은 변수. 기본값(`minioadmin`)을 남기지 않는다.
+      MINIO_ROOT_USER: "${IEUM_S3_ACCESS_KEY:?스토리지 접근 키가 필요하다}"
+      MINIO_ROOT_PASSWORD: "${IEUM_S3_SECRET_KEY:?스토리지 비밀 키가 필요하다}"
       # 개발 기본값은 localhost 다. 운영 오리진을 안 넣으면 브라우저 업로드가
       # 프리플라이트에서 막힌다.
       MINIO_API_CORS_ALLOW_ORIGIN: "${IEUM_WEB_ORIGINS:?웹 오리진이 필요하다. 예) https://ieum.example.com}"
+  mailpit:
+    restart: unless-stopped
+    # 8025 는 **오간 메일을 전부 보여 주는 화면**이다. 개발 편의 도구이고,
+    # 운영 스택에 이 서비스를 남겨 두더라도 그 화면이 밖에서 열려서는 안 된다.
+    ports: !reset []
+
+  # **가짜 IdP 는 운영에서 뜨면 안 된다.** 아무 주체로든 토큰을 찍어 주는
+  # 도구다 — 그것이 9099 에 열려 있으면 SSO 가 걸린 설치본은 로그인 관문이
+  # 없는 것과 같다. 밑바탕의 주석은 "운영 오버라이드에는 없다" 고 적어
+  # 두었는데, 오버라이드가 그것을 빼지 않고 있었다.
+  #
+  # 아무도 켜지 않는 프로필에 넣어 세우지 못하게 한다. 개발 쪽은 그대로다 —
+  # 프로필은 이 파일에서만 붙는다.
+  fake-idp:
+    profiles: ["절대-안-뜬다"]

@@ -375,6 +375,13 @@ export function RecurrencesScreen() {
           </Card>
 
           {rows.isError ? <Alert>{describeError(rows.error)}</Alert> : null}
+          {/*
+            **켜고 끄기와 지우기도 실패한다.** 안 적어 두면 화면은 아무 말도
+            없이 그대로다 — 껐다고 생각한 반복이 계속 이슈를 만든다. 권한이
+            없거나(403) 남이 먼저 지웠거나(404) 하는 흔한 경우들이다.
+          */}
+          {toggle.isError ? <Alert>{describeError(toggle.error)}</Alert> : null}
+          {remove.isError ? <Alert>{describeError(remove.error)}</Alert> : null}
           {rows.isSuccess && rows.data.length === 0 ? (
             <p className="text-sm text-muted">{t('recurrences:empty')}</p>
           ) : null}

@@ -298,6 +298,8 @@ class ImportService:
                 unmoved.append(f"작성자를 못 이었다: {issue.source_id}")
             if issue.assignee and issue.assignee not in people:
                 unmoved.append(f"담당자를 못 이었다: {issue.source_id}")
+            # 읽는 자리에서 맞춰 자른 것. **말하지 않으면 조용히 자른 것이다.**
+            unmoved.extend(issue.trimmed)
         await self._s.flush()
 
         counted = await self._load_comments(archive, project_id, source, known, people)

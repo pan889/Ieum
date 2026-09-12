@@ -199,16 +199,26 @@ test('메일 받는 방식은 고른 대로 남는다', async ({ page, consoleEr
   // 켬/끔 하나로 두면 알림마다 한 통씩 오고 사람들은 통째로 끈다. 끈
   // 사람에게는 아무것도 못 알린다 — 그래서 가운데 칸이 있다.
   const mode = page.getByLabel(/^email$/i)
-  await expect(mode).toHaveValue('instant')
-  await mode.selectOption('daily')
-  await expect(page.getByText(/^saved\.$/i)).toBeVisible()
 
-  await page.reload()
-  await expect(page.getByLabel(/^email$/i)).toHaveValue('daily')
+  // **시작 값을 가정하지 않는다.** 시드 DB 를 다 같이 쓰는데, 앞선 시험이나
+  // 지난 판이 남긴 값이 있으면 여기서 붉어진다 — 그 실패는 이 시험이 보려는
+  // 것(고른 대로 남는가)과 아무 상관이 없고, 붉은 줄만 보고는 무엇이
+  // 망가졌는지 알 수 없다. 지금 값을 읽어 **다른 쪽**으로 바꿔 본다.
+  const before = await mode.inputValue()
+  const other = before === 'daily' ? 'instant' : 'daily'
 
-  // 시드 DB 를 공유하므로 되돌려 놓는다.
-  await page.getByLabel(/^email$/i).selectOption('instant')
-  await expect(page.getByText(/^saved\.$/i)).toBeVisible()
+  try {
+    await mode.selectOption(other)
+    await expect(page.getByText(/^saved\.$/i)).toBeVisible()
+
+    await page.reload()
+    await expect(page.getByLabel(/^email$/i)).toHaveValue(other)
+  } finally {
+    // **실패해도 되돌린다.** `finally` 가 없으면 한 번 죽은 뒤로 시드가
+    // 바뀐 채 남아서 다음 판까지 같이 붉어진다.
+    await page.getByLabel(/^email$/i).selectOption(before)
+    await expect(page.getByText(/^saved\.$/i)).toBeVisible()
+  }
 
   expect(consoleErrors).toEqual([])
 })

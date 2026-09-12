@@ -3,9 +3,9 @@ name: ieum
 description: 이음 — 이슈 추적·위키·헬프데스크를 한 설치에
 type: application
 # 차트 자신의 판. 앱 판과 따로 움직인다.
-version: 1.0.1
+version: 1.0.2
 # 기본으로 올릴 앱 판. `image.tag` 로 덮는다.
-appVersion: "1.0.1"
+appVersion: "1.0.2"
 home: https://github.com/pan889/Ieum
 sources:
   - https://github.com/pan889/Ieum

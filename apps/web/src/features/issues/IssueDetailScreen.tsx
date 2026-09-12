@@ -843,10 +843,18 @@ function Comments({
         ) : null}
         {isTicket ? (
           <div className="flex flex-wrap items-center gap-2">
+            {/*
+              **보내는 중에는 둘 다 잠근다.**
+
+              `loading` 은 누른 쪽만 잠근다. 그러면 회신을 보내는 동안 옆의
+              "내부 노트" 는 멀쩡히 눌리고, 같은 글이 회신으로 한 번 내부
+              노트로 한 번 — 두 번 올라간다. 고객은 이미 회신을 읽었으므로
+              되돌릴 수도 없다.
+            */}
             <Button
               type="button"
               loading={add.isPending && !internal}
-              disabled={body.trim() === ''}
+              disabled={body.trim() === '' || add.isPending}
               onClick={() => { setInternal(false); add.mutate(false) }}
             >
               {t('desk:agent.replyToCustomer')}
@@ -855,7 +863,7 @@ function Comments({
               type="button"
               variant="ghost"
               loading={add.isPending && internal}
-              disabled={body.trim() === ''}
+              disabled={body.trim() === '' || add.isPending}
               onClick={() => { setInternal(true); add.mutate(true) }}
             >
               {t('desk:agent.addInternalNote')}

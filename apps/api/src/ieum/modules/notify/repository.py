@@ -62,6 +62,22 @@ class NotificationRepository:
         stmt = stmt.order_by(Notification.created_at.asc()).limit(limit)
         return list((await self._s.execute(stmt)).scalars().all())
 
+    async def count_since(self, user_id: UUID, after: datetime | None) -> int:
+        """`since` 와 **같은 조건**으로 센다. 가져오는 줄 수에 걸리지 않는다.
+
+        다이제스트 본문은 스무 줄까지만 싣지만, "몇 건인지" 는 사실대로 적어야
+        한다. 가져온 행을 세면 500건이 쌓인 사람에게 "21건" 이라고 적고
+        "그리고 1건 더" 라고 덧붙이게 된다.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Notification)
+            .where(Notification.user_id == user_id, Notification.read_at.is_(None))
+        )
+        if after is not None:
+            stmt = stmt.where(Notification.created_at > after)
+        return int((await self._s.execute(stmt)).scalar_one())
+
     async def unread_count(self, user_id: UUID) -> int:
         stmt = (
             select(func.count())

@@ -61,12 +61,21 @@ class MailSender:
         message.set_content(body)
 
         try:
+            # 인증은 **값이 있을 때만** 건다. 빈 사용자로 AUTH 를 시도하면
+            # 인증을 안 요구하는 릴레이(개발의 mailpit 이 그렇다)가 거절한다.
+            #
+            # `username=None` 을 넘기는 것으로 "안 건다" 를 표현한다.
+            # `**{}` 로 키를 빼면 mypy 가 나머지 키워드까지 그 딕셔너리로
+            # 받는다고 보고 엉뚱한 자리(ssl 컨텍스트·소켓)에 맞춰 본다.
+            user = self._settings.smtp_user or None
             await aiosmtplib.send(
                 message,
                 hostname=self._settings.smtp_host,
                 port=self._settings.smtp_port,
                 start_tls=self._settings.smtp_tls,
                 timeout=10,
+                username=user,
+                password=self._settings.smtp_password.get_secret_value() if user else None,
             )
         except Exception as exc:
             log.error(

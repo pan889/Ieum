@@ -23,7 +23,7 @@
  */
 
 import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -103,9 +103,34 @@ export function ImportsScreen() {
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [loaded, setLoaded] = useState<ImportLoaded | null>(null)
 
+  // 지금 고른 것. **늦게 온 답을 가려내는 데 쓴다.**
+  //
+  // 미리 보기는 파일을 통째로 올리는 요청이라 몇 초씩 걸린다. 그 사이에
+  // 프로젝트나 파일을 바꾸면 화면은 비워지지만, 먼저 보낸 요청은 그대로
+  // 돌아와 **방금 비운 자리에 옛 미리 보기를 도로 앉힌다.** 그러면 화면은
+  // 새 파일 이름을 말하는데 짝 맞춤과 건수는 옛 파일의 것이고, 그대로
+  // "적재" 를 누르면 보고 있던 것과 다른 것이 들어간다.
+  //
+  // 상태가 아니라 ref 인 이유: `onSuccess` 가 언제 불릴지 모르므로, 그
+  // 순간의 **지금 값**을 봐야 한다.
+  const chosenNow = useRef<{ projectId: string | null; file: File | null }>({
+    projectId: null,
+    file: null,
+  })
+  useEffect(() => {
+    chosenNow.current = { projectId: project?.id ?? null, file }
+  }, [project, file])
+
   const run = useMutation({
-    mutationFn: (chosen: ImportOverrides) =>
-      importsApi.preview(project?.id as string, file as File, chosen),
+    mutationFn: async (chosen: ImportOverrides) => {
+      const forProject = project?.id as string
+      const forFile = file as File
+      return {
+        preview: await importsApi.preview(forProject, forFile, chosen),
+        forProject,
+        forFile,
+      }
+    },
     // **여기서 적재 결과를 지우지 않는다.** 적재가 끝나면 스스로 미리 보기를
     // 다시 받는데(아래), 그 응답이 방금 보여 준 결과를 지워 버린다. 처음에
     // 그렇게 썼고 브라우저 시험이 그것을 잡았다 — 화면에는 결과 카드가
@@ -113,7 +138,12 @@ export function ImportsScreen() {
     //
     // 지난 결과를 치우는 것은 **사람이 다시 시작할 때**다: 미리 보기를 새로
     // 누르거나, 짝을 바꾸거나, 프로젝트·파일을 바꿀 때.
-    onSuccess: setPreview,
+    onSuccess: ({ preview: result, forProject, forFile }) => {
+      if (forProject !== chosenNow.current.projectId || forFile !== chosenNow.current.file) {
+        return
+      }
+      setPreview(result)
+    },
   })
 
   const load = useMutation({

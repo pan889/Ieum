@@ -23,18 +23,20 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from fastapi import status
 from pycrdt import Doc, Text, create_update_message
 from redis.asyncio import Redis
 from redis.asyncio import from_url as redis_from_url
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.websockets import WebSocketDisconnect
 
 from ieum.config import Settings
 from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, Scope, set_permission_service
 from ieum.modules.identity.models import User
 from ieum.modules.org.repository import OrgPermissionResolver
-from ieum.modules.wiki import collab
+from ieum.modules.wiki import collab, collab_router
 from ieum.modules.wiki import permissions as wiki_perms
 from ieum.modules.wiki.collab_router import (
     TICKET_TTL_SECONDS,
@@ -442,3 +444,101 @@ def _typed(text: str) -> bytes:
     before = doc.get_state()
     doc[collab.BODY_KEY] += text
     return create_update_message(doc.get_update(before))
+
+
+class TestABrokenHandshakeDoesNotLeakTheRoom:
+    """**집었으면 반드시 놓는다.**
+
+    방은 참조 세기로 산다. 한 번 안 놓으면 그 문서의 방이 프로세스가 죽을
+    때까지 안 없어진다 — 문서 본문과 프레즌스 상태를 통째로 든 채로. 그리고
+    그 방은 다음 사람에게 **낡은 상태**를 그대로 내준다.
+
+    `accept()` 는 실제로 실패한다. 붙는 도중에 창을 닫거나 새로고침하면 그
+    렇다. 흔한 일이다 — 그래서 새는 자리로 딱 맞다.
+    """
+
+    class _WalksAway:
+        """핸드셰이크 도중에 가 버린 브라우저."""
+
+        def __init__(self) -> None:
+            self.closed_with: int | None = None
+
+        async def accept(self) -> None:
+            raise WebSocketDisconnect(code=1006)
+
+        async def close(self, code: int = 1000) -> None:
+            self.closed_with = code
+
+        async def send_bytes(self, data: bytes) -> None:
+            return None
+
+        async def receive_bytes(self) -> bytes:
+            raise WebSocketDisconnect(code=1006)
+
+    async def test_the_room_is_released_when_accept_fails(
+        self,
+        app_client: httpx.AsyncClient,
+        engine: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        headers = await _auth(app_client)
+        page = await _page_over_api(app_client, headers)
+        page_id = UUID(page["id"])
+
+        rooms = RoomRegistry(sessions=_sessions(engine))  # type: ignore[arg-type]
+        monkeypatch.setattr(collab_router, "registry", rooms)
+        # 표 발급은 여기서 볼 것이 아니다. 보는 것은 잡기와 놓기가 짝이 맞는가다.
+        monkeypatch.setattr(collab_router, "admit", _lets_anyone_in)
+
+        try:
+            with pytest.raises(WebSocketDisconnect):
+                await collab_router.collab_socket(
+                    self._WalksAway(),  # type: ignore[arg-type]
+                    page_id,
+                    Settings(),
+                    ticket="a" * 16,
+                )
+
+            # 샜으면 세기가 1 로 남아 있다. 그러면 아래에서 한 번 잡았다
+            # 놓아도 안 닫히고, 같은 방이 다시 나온다.
+            room = await rooms.acquire(page_id, REDIS_URL)
+            await rooms.release(page_id)
+            assert await rooms.acquire(page_id, REDIS_URL) is not room, "방이 샜다"
+        finally:
+            await rooms.aclose()
+
+    async def test_a_full_room_is_released_too(
+        self,
+        app_client: httpx.AsyncClient,
+        engine: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """꽉 차서 거절하는 갈래도 똑같이 놓아야 한다."""
+        headers = await _auth(app_client)
+        page = await _page_over_api(app_client, headers)
+        page_id = UUID(page["id"])
+
+        rooms = RoomRegistry(sessions=_sessions(engine))  # type: ignore[arg-type]
+        monkeypatch.setattr(collab_router, "registry", rooms)
+        monkeypatch.setattr(collab_router, "admit", _lets_anyone_in)
+        monkeypatch.setattr(collab.Room, "full", lambda self: True)
+
+        socket = self._WalksAway()
+        try:
+            await collab_router.collab_socket(
+                socket,  # type: ignore[arg-type]
+                page_id,
+                Settings(),
+                ticket="a" * 16,
+            )
+            assert socket.closed_with == status.WS_1013_TRY_AGAIN_LATER
+
+            room = await rooms.acquire(page_id, REDIS_URL)
+            await rooms.release(page_id)
+            assert await rooms.acquire(page_id, REDIS_URL) is not room, "방이 샜다"
+        finally:
+            await rooms.aclose()
+
+
+async def _lets_anyone_in(redis_url: str, ticket: str, page_id: UUID) -> UUID:
+    return new_id()

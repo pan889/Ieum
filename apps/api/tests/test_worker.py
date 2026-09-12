@@ -23,7 +23,9 @@ from ieum.core.ids import new_id
 from ieum.core.outbox import OutboxEvent
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import User
+from ieum.modules.notify import delivery as webhook_delivery
 from ieum.modules.notify.models import Notification, Webhook, WebhookDelivery
+from ieum.modules.notify.repository import DeliveryRepository
 from ieum.modules.org.models import Project
 from ieum.worker.tasks import deliver_webhooks, drain_outbox, sweep
 
@@ -356,6 +358,88 @@ class TestWebhookDelivery:
         async with worker_env() as s:
             row = (await s.execute(select(WebhookDelivery))).scalar_one()
         assert row.status == "abandoned"
+
+    async def test_the_http_call_does_not_hold_the_transaction(
+        self,
+        worker_env: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """보내는 동안 **트랜잭션이 열려 있으면 안 된다.**
+
+        한 배치가 50건이고 한 건이 최대 10초다. 한 덩어리로 돌리면 응답이
+        느린 수신처 몇 개에 트랜잭션 하나가 몇 분씩 열린다 — 커넥션이 묶이는
+        것보다, 열린 트랜잭션이 vacuum 의 기준선을 붙잡아 **테이블 전체의
+        정리가 밀리는** 쪽이 더 나쁘다.
+
+        재는 법: 보내는 중에 다른 세션에서 그 행을 `FOR UPDATE NOWAIT` 으로
+        잡아 본다. 1단계 트랜잭션이 아직 열려 있으면(그 행을 `FOR UPDATE` 로
+        쥔 채다) 여기서 바로 실패한다.
+        """
+        from ieum.worker import tasks as worker_tasks
+
+        await seed_event(worker_env, with_webhook=True)
+        await drain_outbox()
+
+        still_locked: list[bool] = []
+
+        async def spy(
+            webhook: Any, delivery: Any, secret: str, **kwargs: Any
+        ) -> webhook_delivery.DeliveryOutcome:
+            async with worker_env() as probe:
+                try:
+                    await probe.execute(
+                        select(WebhookDelivery)
+                        .where(WebhookDelivery.id == delivery.id)
+                        .with_for_update(nowait=True)
+                    )
+                    still_locked.append(False)
+                except Exception:
+                    still_locked.append(True)
+                finally:
+                    await probe.rollback()
+            return webhook_delivery.DeliveryOutcome(ok=True, status_code=200)
+
+        monkeypatch.setattr(worker_tasks.webhook_delivery, "post", spy)
+        assert await deliver_webhooks() == 1
+        assert still_locked == [False], "보내는 동안 트랜잭션이 열려 있었다"
+
+        # 결과는 그래도 제대로 적혀야 한다 — 트랜잭션을 나눈 대가로 결과를
+        # 잃으면 고친 게 아니다.
+        async with worker_env() as s:
+            row = (await s.execute(select(WebhookDelivery))).scalar_one()
+        assert row.status == "delivered"
+        assert row.attempts == 1
+        assert row.next_retry_at is None
+
+    async def test_a_claimed_row_is_not_picked_up_twice(
+        self, worker_env: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """세션을 닫고 보내므로 `FOR UPDATE` 가 더는 지켜 주지 않는다.
+
+        그 자리를 `next_retry_at` 을 앞으로 미는 임대가 대신한다. 임대가 없으면
+        워커 두 대가 같은 것을 동시에 보낸다.
+        """
+        from ieum.worker import tasks as worker_tasks
+
+        await seed_event(worker_env, with_webhook=True)
+        await drain_outbox()
+
+        picked: list[int] = []
+
+        async def spy(
+            webhook: Any, delivery: Any, secret: str, **kwargs: Any
+        ) -> webhook_delivery.DeliveryOutcome:
+            # 보내는 사이에 다른 워커가 한 바퀴 돈다. **세션을 반드시 닫는다** —
+            # `due()` 는 FOR UPDATE 라, 열어 둔 채 두면 그 락이 남아서 3단계가
+            # 영원히 기다린다(붉어야 할 되돌리기 검사가 멈춰 버렸다).
+            async with worker_env() as other:
+                picked.append(len(await DeliveryRepository(other).due(limit=10)))
+                await other.rollback()
+            return webhook_delivery.DeliveryOutcome(ok=True, status_code=200)
+
+        monkeypatch.setattr(worker_tasks.webhook_delivery, "post", spy)
+        await deliver_webhooks()
+        assert picked == [0], "보내는 중인 것을 다른 워커가 또 집었다"
 
     async def test_undecryptable_secret_does_not_stop_the_batch(
         self, worker_env: async_sessionmaker[AsyncSession]

@@ -96,3 +96,39 @@ describe('문서 구조', () => {
     expect(toMarkdown(toDoc(''))).toBe('')
   })
 })
+
+describe('표 셀 안의 막대', () => {
+  /*
+    **셀이 갈라지면 그 줄이 통째로 어긋난다.**
+
+    `a | b` 한 칸이 두 칸이 되면 그 뒤가 한 칸씩 밀리고, 헤더 폭을 넘어간
+    값은 어느 파서에서든 버려진다. 편집기를 한 번 열었다 닫은 것만으로
+    표 하나가 망가지고, 되돌릴 원본은 이미 없다.
+  */
+  it('편집기를 거쳐도 살아남는다', () => {
+    const source = ['| 식 | 뜻 |', '| --- | --- |', '| a \\| b | 또는 |'].join('\n')
+    const again = cycle(source)
+    expect(again).toContain('a \\| b')
+    // 렌더 결과가 같아야 "같은 문서" 다.
+    expect(renderMarkdown(again)).toBe(renderMarkdown(source))
+  })
+
+  it('칸이 늘어나지 않는다', () => {
+    const source = ['| 식 | 뜻 |', '| --- | --- |', '| a \\| b | 또는 |'].join('\n')
+    const body = cycle(source)
+      .split('\n')
+      .filter((line) => line.startsWith('|') && !line.includes('---'))
+    // 머리글과 본문 모두 칸이 둘이어야 한다. 이스케이프를 잃으면 셋이 된다.
+    for (const line of body) {
+      expect(line.split(/(?<!\\)\|/).length - 2).toBe(2)
+    }
+  })
+
+  it('인라인 코드 안의 막대도 감싼다', () => {
+    // GFM 은 표를 나누는 일을 인라인 코드보다 **먼저** 한다. 코드 안이라고
+    // 안 감싸면 거기서도 셀이 갈라진다.
+    const source = ['| 식 | 뜻 |', '| --- | --- |', '| `a \\| b` | 또는 |'].join('\n')
+    expect(cycle(source)).toContain('\\|')
+    expect(renderMarkdown(cycle(source))).toBe(renderMarkdown(source))
+  })
+})

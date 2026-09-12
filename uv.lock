@@ -708,7 +708,7 @@ wheels = [
 
 [[package]]
 name = "ieum-api"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "aiosmtplib" },

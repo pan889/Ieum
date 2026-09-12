@@ -84,16 +84,26 @@ class PageRepository:
         stmt = select(Page).where(Page.space_id == space_id).where(Page.path == path)
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
-    async def sibling_slug_taken(
+    async def sibling_slugs(
         self,
         *,
         space_id: UUID,
         parent_id: UUID | None,
-        slug: str,
         exclude: UUID | None = None,
         kind: str = "page",
-    ) -> bool:
-        stmt = select(func.count()).select_from(Page).where(Page.slug == slug)
+    ) -> set[str]:
+        """유일 인덱스가 막는 slug **전부**. 새 slug 을 고를 때 이걸 본다.
+
+        `children_of` 를 쓰면 안 된다 — 거기는 보관된 문서를 뺀다. 인덱스는
+        안 뺀다. 그래서 보관된 형제와 같은 제목으로 문서를 만들면, 화면에는
+        보이지도 않는 행과 부딪혀 **500** 이 난다(무엇과 부딪혔는지 말해 줄
+        수도 없다 — 안 보이는 문서니까).
+
+        조건은 `uq_page_parent_slug` / `uq_page_space_root_slug` 와 **글자
+        그대로 같아야** 한다. 여기가 인덱스보다 느슨하면 500 이 나고, 빡빡하면
+        멀쩡한 제목에 `-2` 가 붙는다.
+        """
+        stmt = select(Page.slug)
         if parent_id is None:
             stmt = (
                 stmt.where(Page.space_id == space_id)
@@ -104,7 +114,7 @@ class PageRepository:
             stmt = stmt.where(Page.parent_id == parent_id)
         if exclude is not None:
             stmt = stmt.where(Page.id != exclude)
-        return bool((await self._s.execute(stmt)).scalar_one())
+        return set((await self._s.execute(stmt)).scalars().all())
 
     def add(self, page: Page) -> Page:
         self._s.add(page)

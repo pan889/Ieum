@@ -500,12 +500,14 @@ function tableToMarkdown(rows: DocNode[], indent: string): string {
   rows.forEach((row, rowIndex) => {
     if (isText(row)) return
     const cells = (row.content ?? []).map((cell) => {
-      if (isText(cell)) return cell.text
+      if (isText(cell)) return escapePipes(cell.text)
       if (rowIndex === 0) {
         aligns.push((cell.attrs as { align?: string } | undefined)?.align ?? null)
       }
       // 셀 안의 개행은 표를 깨뜨린다. 한 줄로 만든다.
-      return blocksToMarkdown(cell.content ?? [], '').replace(/\s*\n\s*/g, ' ').trim()
+      return escapePipes(
+        blocksToMarkdown(cell.content ?? [], '').replace(/\s*\n\s*/g, ' ').trim(),
+      )
     })
     grid.push(cells)
   })
@@ -517,6 +519,20 @@ function tableToMarkdown(rows: DocNode[], indent: string): string {
 
   const divider = `${indent}| ${Array.from({ length: width }, (_, i) => dashes(aligns[i] ?? null)).join(' | ')} |`
   return [line(grid[0] as string[]), divider, ...grid.slice(1).map((row) => line(row))].join('\n')
+}
+
+/**
+ * 표 셀 안의 막대를 이스케이프한다.
+ *
+ * **안 하면 그 자리에서 셀이 갈라진다.** `a | b` 한 칸이 두 칸이 되어 그
+ * 줄의 나머지가 한 칸씩 밀리고, 헤더 폭을 넘어간 값은 어느 파서에서든
+ * 버려진다 — 표 하나가 통째로 어긋난 채 저장되고, 되돌릴 원본은 이미 없다.
+ *
+ * GFM 에서 표 안에 진짜 막대를 넣는 방법은 `\|` 하나뿐이고, **코드 스팬
+ * 안에서도 그렇다**(표를 나누는 일이 인라인 코드보다 먼저 일어난다).
+ */
+function escapePipes(cell: string): string {
+  return cell.replace(/\|/g, '\\|')
 }
 
 function dashes(align: string | null): string {

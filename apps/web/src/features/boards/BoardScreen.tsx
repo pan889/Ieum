@@ -63,7 +63,11 @@ export function BoardScreen() {
     onSuccess: () => {
       setPending(null)
       setMoveError(null)
-      void queryClient.invalidateQueries({ queryKey: ['boards', 'content', boardId] })
+      // **다시 받아 올 때까지 기다린다.** 안 기다리면 옮기기가 끝나는 순간
+      // 단추가 다시 눌리는데, 화면의 카드는 아직 **옛 `version`** 을 들고
+      // 있다. 그 값으로 다음 이동을 보내면 서버가 "누가 먼저 고쳤다"(409)
+      // 로 막는다 — 아무도 안 고쳤는데.
+      return queryClient.invalidateQueries({ queryKey: ['boards', 'content', boardId] })
     },
     onError: (error) => { setMoveError(describeError(error)); },
   })
@@ -111,7 +115,9 @@ export function BoardScreen() {
         </p>
       ) : null}
 
-      {moveError ? <Alert>{moveError}</Alert> : null}
+      {/* 대화상자가 떠 있으면 그 안에서 말한다. 여기 띄우면 덮개(`inset-0`)에
+          가려서 **아무 말도 없이 실패한 것처럼 보인다.** */}
+      {moveError !== null && pending === null ? <Alert>{moveError}</Alert> : null}
 
       {content.data.lanes.map((lane) => (
         <Lane
@@ -138,7 +144,8 @@ export function BoardScreen() {
           }
           stateById={stateById}
           pending={move.isPending}
-          onCancel={() => { setPending(null); }}
+          error={moveError}
+          onCancel={() => { setPending(null); setMoveError(null) }}
           onPick={(transitionId) => { move.mutate({ card: pending.card, transitionId }); }}
         />
       ) : null}
@@ -395,6 +402,7 @@ function MoveDialog({
   column,
   stateById,
   pending,
+  error,
   onCancel,
   onPick,
 }: {
@@ -403,6 +411,8 @@ function MoveDialog({
   column: BoardColumnContent | null
   stateById: Map<string, { id: string; name: string; category: string }>
   pending: boolean
+  /** 옮기다 실패한 이유. **여기서 말한다** — 뒤쪽 알림은 이 덮개에 가린다. */
+  error: string | null
   onCancel: () => void
   onPick: (transitionId: string) => void
 }) {
@@ -429,6 +439,12 @@ function MoveDialog({
         <h2 className="text-sm font-medium">
           {column === null ? card.key : `${card.key} → ${column.name}`}
         </h2>
+
+        {error !== null ? (
+          <div className="mt-3">
+            <Alert>{error}</Alert>
+          </div>
+        ) : null}
 
         {transitions.isPending ? (
           <p className="mt-3 text-sm text-muted">{t('common:state.loading')}</p>

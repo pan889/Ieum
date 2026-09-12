@@ -18,6 +18,10 @@ from ieum.migrate.archive import (
     FORMAT_VERSION,
     ISSUES_NAME,
     MANIFEST_NAME,
+    MAX_LABEL,
+    MAX_PROGRESS,
+    MAX_SUMMARY,
+    MIN_PROGRESS,
     PEOPLE_NAME,
     Archive,
     ArchiveError,
@@ -207,3 +211,113 @@ class TestUnknownRelations:
         )
         back = read_archive(_tamper({ISSUES_NAME: lines}))
         assert back.issues[0].relations == [Relation(kind="따라한다", target="3")]
+
+
+class TestItFitsValuesToWhatTheOtherSideCanHold:
+    """소스마다 상한이 다르다. **읽는 자리에서** 맞춘다.
+
+    안 맞추면 이슈를 만드는 도중에 DB 가 거절하고, 그때는 이미 앞의 수백 건이
+    들어간 뒤다 — 절반만 옮겨진 프로젝트가 남는다. 그리고 미리 보기는 그 사고를
+    예고하지 못한다(같은 읽기를 쓰므로 여기서 맞춰야 둘이 같은 것을 본다).
+
+    **조용히 자르지는 않는다.** 자른 것은 `trimmed` 로 나오고 적재 보고의
+    "안 옮겨진 것" 에 그대로 실린다.
+    """
+
+    @staticmethod
+    def _one(**overrides: object) -> Issue:
+        base = {"source_id": "7", "summary": "제목"}
+        return read_archive(
+            write_archive(_replace_issues([Issue(**{**base, **overrides})]))
+        ).issues[0]
+
+    def test_a_long_summary_is_cut_and_reported(self) -> None:
+        issue = self._one(summary="가" * (MAX_SUMMARY + 200))
+        assert len(issue.summary) == MAX_SUMMARY
+        assert any("제목이 길어" in line for line in issue.trimmed)
+
+    def test_a_summary_that_fits_is_left_alone(self) -> None:
+        issue = self._one(summary="가" * MAX_SUMMARY)
+        assert len(issue.summary) == MAX_SUMMARY
+        assert issue.trimmed == ()
+
+    @pytest.mark.parametrize(("given", "expected"), [(-30, 0), (500, 100), (0, 0), (100, 100)])
+    def test_progress_lands_inside_the_allowed_range(self, given: int, expected: int) -> None:
+        issue = self._one(done_ratio=given)
+        assert issue.done_ratio == expected
+        assert bool(issue.trimmed) is (given != expected)
+
+    def test_a_label_too_long_is_dropped_not_cut(self) -> None:
+        """라벨은 글자가 곧 이름이다. 자르면 **다른 라벨**이 된다."""
+        issue = self._one(labels=["짧은것", "나" * (MAX_LABEL + 1)])
+        assert issue.labels == ["짧은것"]
+        assert any("라벨이 길어" in line for line in issue.trimmed)
+
+
+class TestACommentNeedsItsOwnId:
+    """빈 `source_id` 는 "이미 옮겼나" 를 가릴 수 없게 만든다.
+
+    그리고 지금 적재는 그런 코멘트를 **첫 하나만 넣고 나머지를 이미 옮긴 것으로
+    보고 버린다.** 조용히 사라지는 쪽이 거절보다 나쁘므로 읽는 자리에서 막는다.
+    """
+
+    def test_a_blank_one_is_refused(self) -> None:
+        archive = _replace_issues(
+            [
+                Issue(
+                    source_id="7",
+                    summary="제목",
+                    comments=[
+                        Comment(source_id="", body="첫 줄", created_at="", author=""),
+                        Comment(source_id="", body="둘째 줄", created_at="", author=""),
+                    ],
+                )
+            ]
+        )
+        with pytest.raises(ArchiveError, match="코멘트의 `source_id`"):
+            read_archive(write_archive(archive))
+
+    def test_a_real_one_goes_through(self) -> None:
+        archive = _replace_issues(
+            [
+                Issue(
+                    source_id="7",
+                    summary="제목",
+                    comments=[Comment(source_id="c1", body="한 줄", created_at="", author="")],
+                )
+            ]
+        )
+        assert read_archive(write_archive(archive)).issues[0].comments[0].source_id == "c1"
+
+
+class TestTheLimitsMatchTheColumns:
+    """여기 상수가 받는 쪽 열보다 크면 **아무것도 못 막는다.**
+
+    맞대어 보지 않으면 언젠가 갈라진다 — 열을 줄이는 쪽은 모델만 고치고,
+    이관은 그때부터 조용히 절반씩 들어간다.
+    """
+
+    def test_summary_and_label_match(self) -> None:
+        from ieum.modules.issues.models import Issue as IssueRow
+        from ieum.modules.issues.models import IssueLabel
+
+        assert IssueRow.__table__.c.summary.type.length == MAX_SUMMARY
+        assert IssueLabel.__table__.c.label.type.length == MAX_LABEL
+
+    def test_the_progress_range_matches_the_check_constraint(self) -> None:
+        from ieum.modules.issues.models import Issue as IssueRow
+
+        # 이름은 규약이 앞에 `ck_<표>_` 를 붙인다. 이름을 통째로 적으면 규약이
+        # 바뀔 때 이 시험이 먼저 붉어진다 — 여기서 지킬 것은 이름이 아니라 범위다.
+        checks = [
+            str(c.sqltext)
+            for c in IssueRow.__table__.constraints
+            if "progress_range" in (getattr(c, "name", "") or "")
+        ]
+        assert checks, "progress 범위 제약이 사라졌다"
+        assert f"BETWEEN {MIN_PROGRESS} AND {MAX_PROGRESS}" in checks[0]
+
+
+def _replace_issues(issues: list[Issue]) -> Archive:
+    base = _archive()
+    return Archive(manifest=base.manifest, people=base.people, issues=issues)

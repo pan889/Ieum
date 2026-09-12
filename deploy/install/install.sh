@@ -15,7 +15,7 @@
 
 set -eu
 
-VERSION_DEFAULT="1.0.1"
+VERSION_DEFAULT="1.0.2"
 IMAGE_OWNER_DEFAULT="pan889"
 PORT_DEFAULT="8080"
 RAW_BASE="https://raw.githubusercontent.com/pan889/Ieum"
@@ -235,18 +235,33 @@ IEUM_SMTP_TLS=true
 IEUM_SMTP_USER=
 IEUM_SMTP_PASSWORD=
 IEUM_MAIL_FROM=ieum@example.com
+
+# 웹훅을 **사내망 주소로도** 보낼지. 기본은 막는다 — 웹훅은 이 서버가 대신
+# 요청을 보내 주는 기능이고, 전송 기록에 응답 본문 앞부분이 남아 화면에
+# 보인다. 둘을 합치면 내부 주소를 아무거나 열어 읽는 도구가 된다.
+# 사내 수신처로 보내야 할 때만, 그 위험을 알고 켠다.
+IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS=false
 ENV
     chmod 600 "$env_file"
     umask "$_umask"
     say "$env_file (0600)"
 else
     # 판만 바꿔 넣는다. 나머지는 손대지 않는다.
+    #
+    # **임시 파일에도 비밀이 전부 들어간다.** `.env` 를 통째로 베끼기 때문이다.
+    # 기본 umask 로 만들면 0644 가 되고, 그 몇 밀리초 동안 같은 호스트의 아무
+    # 계정이나 시크릿 키·DB 비밀번호·스토리지 열쇠를 읽을 수 있다. 원본은
+    # 0600 인데 사본만 열리는 셈이다.
+    _umask=$(umask)
+    umask 077
     tmp="$env_file.tmp.$$"
     if grep -q '^IEUM_VERSION=' "$env_file"; then
         sed "s/^IEUM_VERSION=.*/IEUM_VERSION=$version/" "$env_file" > "$tmp"
     else
         { cat "$env_file"; printf 'IEUM_VERSION=%s\n' "$version"; } > "$tmp"
     fi
+    umask "$_umask"
+    # 원본의 권한을 지키려고 **덮어쓴다**(`mv` 는 임시 파일의 것을 가져온다).
     cat "$tmp" > "$env_file" && rm -f "$tmp"
 fi
 

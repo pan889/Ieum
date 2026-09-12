@@ -147,8 +147,13 @@ function RoleCard({
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['roles'] })
 
   const save = useMutation({
+    // **다시 받아 올 때까지 기다린다.** `void refresh()` 로 두면 저장이 끝나는
+    // 순간 `isPending` 이 내려가 칸이 다시 눌리는데, 그때 `role.grants` 는
+    // 아직 옛 값이다. 거기서 다음 칸을 켜면 **방금 켠 권한이 빠진 목록**이
+    // 통째로 저장된다 — 켠 사람은 켠 줄 알고, 받은 사람은 안 된다고 한다.
+    // `onSuccess` 가 돌려주는 약속은 라이브러리가 기다려 준다.
     mutationFn: (grants: string[]) => rolesApi.update(role.id, { grants }),
-    onSuccess: () => { void refresh() },
+    onSuccess: () => refresh(),
   })
 
   const remove = useMutation({

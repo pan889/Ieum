@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, set_permission_service
+from ieum.core.time import utcnow
 from ieum.modules.desk import clock as desk_clock
 from ieum.modules.desk.models import BusinessCalendarRow, SlaClock, SlaPolicy, TicketExt
 from ieum.modules.identity.models import User
@@ -460,10 +461,27 @@ class TestPausing:
         issue.state_id = other.id
         await session.flush()
 
+        # **기다린 만큼이 진짜로 더해지는지 본다.**
+        #
+        # 여기 있던 `paused_seconds >= 0` 은 아무것도 안 지켰다. 그건 카운터라
+        # 늘 참이고, 멈춤 계산을 통째로 빼도 초록이었다. 멈춘 시각을 두 시간
+        # 뒤로 돌려 놓고 그만큼이 더해지는지 — 그리고 목표도 같이 밀리는지 —
+        # 를 본다. 달력은 `ALWAYS_OPEN` 이라 실제 경과가 곧 업무 시간이다.
+        row.paused_at = utcnow() - timedelta(hours=2)
+        target_before = row.target_at
+        await session.flush()
+
         await desk_clock.on_transition(session, issue.id, to_state_category="in_progress")
         assert row.paused_at is None
-        # 기다린 만큼이 기록된다.
-        assert row.paused_seconds >= 0
+        # 아래 60초는 달력 탓이다: `ALWAYS_OPEN` 이 하루를 `00:00~23:59` 로
+        # 적어서 **자정마다 1분이 빈다.** 두 시간 창이 자정을 넘는지는 시험이
+        # 도는 시각에 달렸으므로 그 한 칸만 봐준다. 그래도 "멈춤을 안 셌다"
+        # (0초)나 "엉뚱한 만큼 셌다" 는 여기서 걸린다.
+        assert 2 * HOUR - 70 <= row.paused_seconds <= 2 * HOUR + 2, row.paused_seconds
+        # 목표가 그만큼 밀려야 한다. 안 밀리면 고객을 기다린 시간이 그대로
+        # 깎이고, 답하자마자 위반인 티켓이 나온다.
+        moved = (row.target_at - target_before).total_seconds()
+        assert abs(moved - row.paused_seconds) < 2, (moved, row.paused_seconds)
 
 
 async def _person(session: AsyncSession) -> User:

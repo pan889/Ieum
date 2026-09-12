@@ -26,6 +26,8 @@ from typing import Any
 import pytest
 import yaml
 
+from compose_files import read_compose
+
 REPO = Path(__file__).resolve().parents[3]
 
 INSTALL_COMPOSE = REPO / "deploy" / "install" / "compose.yml"
@@ -36,10 +38,7 @@ RELEASE_WORKFLOW = REPO / ".github" / "workflows" / "release.yml"
 
 
 def _compose(path: Path) -> dict[str, Any]:
-    """`${VAR:?...}` 가 들어 있어도 YAML 로는 그냥 문자열이라 그대로 읽힌다."""
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-    return loaded
+    return read_compose(path)
 
 
 def _size_to_bytes(text: str) -> int:
@@ -157,6 +156,122 @@ class TestTheInstallerOnlyPulls:
         assert list(publishing) == ["web"], publishing
 
 
+class TestTheProdOverrideActuallyOverrides:
+    """**`[]` 로는 아무것도 못 지운다.**
+
+    compose 는 오버라이드의 배열을 밑바탕에 *덧붙인다.* 그래서
+    `deploy/compose/prod.yml` 의 `volumes: []` 는 오랫동안 아무 일도 하지
+    않았고, 운영 스택은 **호스트의 소스 트리를 컨테이너에 그대로 마운트한
+    채** 돌았다 — 이미지가 아니라 작업 트리가 도는 셈이다. 개발용 포트도
+    전부 열려 있었다: postgres 5432(`postgres:postgres`), redis 6379(인증
+    없음), minio 9000·9001(`minioadmin`), mailpit 8025(오간 메일을 통째로
+    보여 주는 화면), 그리고 **아무 주체로든 토큰을 찍어 주는 가짜 IdP** 9099.
+
+    파일을 읽어서는 못 잡는다 — 잡히는 자리는 **병합 결과**다. 그래서 이
+    시험은 `docker compose config` 가 내놓는 것을 본다.
+    """
+
+    @staticmethod
+    def _merged() -> dict[str, Any]:
+        import json
+        import os
+        import shutil
+        import subprocess
+
+        # 절대 경로로 부른다 — 시험이 PATH 를 믿지 않게 한다.
+        docker = shutil.which("docker")
+        if docker is None:
+            pytest.skip("docker 가 없다")
+        env = {
+            **os.environ,
+            "IEUM_SECRET_KEY": "x" * 32,
+            "IEUM_S3_PUBLIC_ENDPOINT_URL": "https://files.example.com",
+            "IEUM_WEB_ORIGINS": "https://ieum.example.com",
+            "IEUM_DB_PASSWORD": "db-password",
+            "IEUM_S3_ACCESS_KEY": "access",
+            "IEUM_S3_SECRET_KEY": "secret",
+        }
+        done = subprocess.run(  # noqa: S603 - 인자가 전부 우리가 적은 상수다
+            [
+                docker,
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "-f",
+                "deploy/compose/prod.yml",
+                "config",
+                "--format",
+                "json",
+            ],
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if done.returncode != 0:
+            pytest.skip(f"compose config 가 안 돈다: {done.stderr[:200]}")
+        loaded = json.loads(done.stdout)
+        assert isinstance(loaded, dict)
+        return loaded
+
+    def test_only_the_web_port_is_published(self) -> None:
+        services = self._merged()["services"]
+        published = {
+            name: [p.get("published") for p in spec.get("ports", [])]
+            for name, spec in services.items()
+            if spec.get("ports")
+        }
+        assert published == {"web": ["80"]}, published
+
+    def test_nothing_mounts_the_source_tree(self) -> None:
+        """호스트 경로를 마운트하는 순간 그 컨테이너는 이미지가 아니다."""
+        services = self._merged()["services"]
+        mounted = {
+            name: [v.get("source") for v in spec.get("volumes", []) if v.get("type") == "bind"]
+            for name, spec in services.items()
+        }
+        offenders = {
+            name: paths
+            for name, paths in mounted.items()
+            # postgres 의 초기화 스크립트만 예외다 — 읽기 전용 설정 파일이고
+            # 앱 코드가 아니다.
+            if name != "postgres" and paths
+        }
+        assert offenders == {}, offenders
+
+    def test_the_fake_idp_is_not_in_the_production_stack(self) -> None:
+        """아무 주체로든 토큰을 찍어 주는 도구다. 떠 있으면 SSO 관문이 없다."""
+        assert "fake-idp" not in self._merged()["services"]
+
+    def test_the_web_image_does_not_squat_on_an_upstream_tag(self) -> None:
+        """밑바탕의 `web` 은 개발 서버라 `node:22-alpine` 을 쓴다. 여기에
+        `build` 만 더하면 빌드 결과가 **그 이름으로** 태그돼, 그 뒤로 그
+        태그를 쓰는 모든 빌드가 우리 nginx 이미지를 집는다."""
+        image = self._merged()["services"]["web"].get("image", "")
+        assert image.startswith("ieum-"), image
+
+    @pytest.mark.parametrize(
+        "leftover", ["postgres:postgres@", "minioadmin"], ids=["db", "storage"]
+    )
+    def test_no_development_credential_reaches_a_container(self, leftover: str) -> None:
+        """포트를 닫아도 기본 자격증명은 백업 파일과 사이드카에 그대로 남는다.
+
+        **컨테이너에 실제로 들어가는 것만 본다.** 최상위 `x-api-env` 는 YAML
+        앵커의 정의일 뿐이고 `config` 출력에 그대로 찍히는데, 그것까지 세면
+        개발 파일이 개발 기본값을 갖고 있다는 이유로 붉어진다.
+        """
+        import json
+
+        services = self._merged()["services"]
+        offenders = {
+            name: [k for k, v in spec.get("environment", {}).items() if leftover in str(v)]
+            for name, spec in services.items()
+            if leftover in json.dumps(spec.get("environment", {}), ensure_ascii=False)
+        }
+        assert offenders == {}, offenders
+
+
 class TestTheScriptDefaultsToADeclaredVersion:
     def test_the_fallback_version_is_one_we_have_declared(self) -> None:
         """`--version` 없이 쳤을 때 받아 오는 판. 선언한 판이어야 한다 —
@@ -168,6 +283,33 @@ class TestTheScriptDefaultsToADeclaredVersion:
         found = re.search(r'^VERSION_DEFAULT="([^"]+)"', text, re.M)
         assert found is not None
         assert found.group(1) == declared
+
+
+class TestTheReadmePointsAtThisVersion:
+    """**README 의 고정 URL 이 판 게이트 밖에 있었다.**
+
+    깔아 보는 한 줄은 `raw.githubusercontent.com/.../v1.0.0/...` 처럼 태그를
+    박아 부른다 — 재현 가능해서 좋은 모양인데, 판을 올릴 때 같이 안 고치면
+    **새로 까는 사람은 계속 옛 판을 깐다.** 그 스크립트의 `VERSION_DEFAULT`
+    가 옛 판이라 이미지까지 옛것으로 간다. 우리 화면에는 아무것도 안 나타나고,
+    "최신을 깔았는데 왜 그 버그가 있냐" 로만 돌아온다.
+    """
+
+    README = REPO / "README.md"
+
+    def _pins(self) -> list[str]:
+        text = self.README.read_text(encoding="utf-8")
+        return re.findall(r"raw\.githubusercontent\.com/[^/]+/[^/]+/v(\d+\.\d+\.\d+)/", text)
+
+    def test_there_is_at_least_one_pin_to_check(self) -> None:
+        """0개를 0개와 견주면서 통과하는 것을 막는다."""
+        assert self._pins(), "README 에 고정 URL 이 없다 — 이 시험이 아무것도 안 본다"
+
+    def test_every_pin_is_this_version(self) -> None:
+        declared = tomllib.loads(
+            (REPO / "apps" / "api" / "pyproject.toml").read_text(encoding="utf-8")
+        )["project"]["version"]
+        assert set(self._pins()) == {declared}, self._pins()
 
 
 class TestTheInstallerPullsWhatTheReleasePushes:
@@ -227,6 +369,30 @@ class TestTheInstallerPullsWhatTheReleasePushes:
         triggers = workflow[True] if True in workflow else workflow["on"]
         assert "workflow_dispatch" in triggers
         assert "version" in triggers["workflow_dispatch"]["inputs"]
+
+    def test_the_changelog_is_checked_before_anything_is_pushed(self) -> None:
+        """**반쪽 릴리스가 남던 자리다.**
+
+        릴리스 노트는 CHANGELOG 의 그 판 절에서 잘라 온다. 그 검사가 `notes`
+        에만 있던 동안은, 절을 안 쓴 채로 돌리면 ghcr 에 이미지 두 개가 먼저
+        올라간 뒤에 거기서 멈췄다 — 태그도 릴리스도 없는 이미지만 남고,
+        고쳐서 다시 돌리면 **같은 태그를 다른 바이트로 덮어쓴다.**
+        """
+        workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        guard_steps = " ".join(
+            str(step.get("run", "")) for step in workflow["jobs"]["guard"]["steps"]
+        )
+        assert "release-notes.py" in guard_steps, "guard 가 CHANGELOG 절을 안 본다"
+        # 그 검사가 이미지보다 **앞선다**는 것이 요점이다.
+        assert workflow["jobs"]["images"]["needs"] == "guard"
+
+    def test_the_notes_use_the_same_extractor(self) -> None:
+        """규칙이 두 벌이면 한쪽만 고쳐지는 날이 온다."""
+        workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        notes_steps = " ".join(
+            str(step.get("run", "")) for step in workflow["jobs"]["notes"]["steps"]
+        )
+        assert "release-notes.py" in notes_steps
 
     def test_the_release_names_itself_from_the_guard_not_the_ref(self) -> None:
         """손으로 돌리면 `github.ref_name` 은 `main` 이다. 그것을 제목으로

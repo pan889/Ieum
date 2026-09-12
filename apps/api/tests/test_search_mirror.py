@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import secrets
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -169,7 +170,28 @@ class TestTheQueue:
         await _index(session, space, title="waiting")
         count, age = await mirror.backlog(session)
         assert count == 1
-        assert age >= 0.0
+        # 갓 넣은 것이므로 나이는 0 에 가깝다.
+        assert age < 5.0, age
+
+        # **나이가 진짜로 가장 오래된 것에서 나오는가.**
+        #
+        # 여기 있던 `age >= 0.0` 은 아무것도 안 지켰다 — 값이 `max(0.0, …)` 로
+        # 깎여 나오니 늘 참이고, 이 함수가 늘 0 을 돌려줘도 초록이었다. 그런데
+        # 이 숫자가 곧 경보 문턱이다: 0 으로 굳으면 "새 문서가 안 뜬다" 를
+        # 아무도 못 잡는다.
+        stale = (await session.execute(select(SearchMirrorQueue))).scalars().one()
+        stale.queued_at = utcnow() - timedelta(minutes=30)
+        await session.flush()
+
+        count, age = await mirror.backlog(session)
+        assert count == 1
+        assert 30 * 60 - 5 <= age <= 30 * 60 + 5, age
+
+        # 새 것이 하나 더 들어와도 나이는 **오래된 쪽**을 말해야 한다.
+        await _index(session, space, title="newer")
+        count, age = await mirror.backlog(session)
+        assert count == 2
+        assert 30 * 60 - 5 <= age <= 30 * 60 + 5, age
 
 
 @pytest_asyncio.fixture

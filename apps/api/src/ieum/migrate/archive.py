@@ -41,6 +41,21 @@ from typing import Any
 #: 어제 뽑아 둔 파일이 오늘 판에서 안 읽히면 그건 우리 잘못이다.
 FORMAT_VERSION = 1
 
+#: 받는 쪽 열의 길이. **여기서 맞춰 자른다.**
+#:
+#: 소스마다 상한이 다르다(레드마인의 제목은 255자지만 다른 데는 더 길다).
+#: 안 맞춰 두면 이슈를 만드는 도중에 DB 가 거절하고, 그때는 이미 앞의 수백
+#: 건이 들어간 뒤다 — 절반만 옮겨진 프로젝트가 남고 어디까지 갔는지 사람이
+#: 세어 봐야 한다. 미리 보기에서도 같은 값을 보게 하려고 **읽는 자리**에서
+#: 자른다.
+#:
+#: 값은 `modules/issues/models.py` 의 열과 같아야 한다 —
+#: `test_migrate_archive.py` 가 둘을 맞대어 본다.
+MAX_SUMMARY = 500
+MAX_LABEL = 100
+#: 진행률은 0~100 이다(`issue_progress_range` 체크 제약).
+MIN_PROGRESS, MAX_PROGRESS = 0, 100
+
 MANIFEST_NAME = "manifest.json"
 PEOPLE_NAME = "people.jsonl"
 ISSUES_NAME = "issues.jsonl"
@@ -140,6 +155,9 @@ class Issue:
     labels: list[str] = field(default_factory=list)
     relations: list[Relation] = field(default_factory=list)
     comments: list[Comment] = field(default_factory=list)
+    #: 읽으면서 맞춰 자른 것들. 사람이 읽을 한 줄씩이고, 적재 보고의
+    #: "안 옮겨진 것" 으로 그대로 올라간다. **조용히 자르지 않는다.**
+    trimmed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,9 +341,15 @@ def _comments(body: dict[str, Any], *, where: str) -> list[Comment]:
     for item in raw:
         if not isinstance(item, dict):
             raise ArchiveError(f"{where}: `comments` 항목이 객체가 아니다")
+        source_id = _need_str(item, "source_id", where=where)
+        if not source_id:
+            # **여기서 막는다.** 빈 id 는 "이미 옮겼나" 를 가릴 수 없게 만들고,
+            # 지금 코드는 그런 코멘트를 첫 하나만 넣고 나머지를 **이미 옮긴
+            # 것으로 보고 버린다.** 조용히 사라지는 쪽이 거절보다 나쁘다.
+            raise ArchiveError(f"{where}: 코멘트의 `source_id` 가 비었다")
         out.append(
             Comment(
-                source_id=_need_str(item, "source_id", where=where),
+                source_id=source_id,
                 body=_need_str(item, "body", where=where),
                 created_at=_need_str(item, "created_at", where=where),
                 author=_need_str(item, "author", where=where),
@@ -347,6 +371,24 @@ def _issue(body: dict[str, Any], *, where: str) -> Issue:
     labels = body.get("labels", [])
     if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
         raise ArchiveError(f"{where}: `labels` 는 문자열 목록이라야 한다")
+
+    trimmed: list[str] = []
+    if len(summary) > MAX_SUMMARY:
+        trimmed.append(f"제목이 길어 {MAX_SUMMARY}자로 잘렸다: {source_id}")
+        summary = summary[:MAX_SUMMARY]
+    if not MIN_PROGRESS <= done <= MAX_PROGRESS:
+        fitted = min(MAX_PROGRESS, max(MIN_PROGRESS, done))
+        trimmed.append(f"진행률 {done}% 를 {fitted}% 로 맞췄다: {source_id}")
+        done = fitted
+    kept: list[str] = []
+    for label in labels:
+        if len(label) > MAX_LABEL:
+            # 라벨은 글자가 곧 이름이라 자르면 다른 라벨이 된다. 그럴 바에는
+            # 빼고 말한다 — 엉뚱한 이름으로 묶이는 것보다 없는 편이 낫다.
+            trimmed.append(f"라벨이 길어 뺐다: {label[:20]}… ({source_id})")
+            continue
+        kept.append(label)
+
     return Issue(
         source_id=source_id,
         summary=summary,
@@ -363,9 +405,10 @@ def _issue(body: dict[str, Any], *, where: str) -> Issue:
         due_date=_need_str(body, "due_date", where=where),
         done_ratio=done,
         parent=_need_str(body, "parent", where=where),
-        labels=list(labels),
+        labels=kept,
         relations=_relations(body, where=where),
         comments=_comments(body, where=where),
+        trimmed=tuple(trimmed),
     )
 
 

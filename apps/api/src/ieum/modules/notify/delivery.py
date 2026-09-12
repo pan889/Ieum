@@ -17,6 +17,7 @@ import httpx
 from ieum.core.logging import get_logger
 from ieum.core.time import utcnow
 from ieum.modules.notify.models import Webhook, WebhookDelivery
+from ieum.modules.notify.targets import BlockedTargetError, pin
 
 log = get_logger(__name__)
 
@@ -58,7 +59,12 @@ class DeliveryOutcome:
 
 
 async def post(
-    webhook: Webhook, delivery: WebhookDelivery, secret: str, *, client: httpx.AsyncClient
+    webhook: Webhook,
+    delivery: WebhookDelivery,
+    secret: str,
+    *,
+    client: httpx.AsyncClient,
+    allow_private_targets: bool = False,
 ) -> DeliveryOutcome:
     timestamp = str(int(utcnow().timestamp()))
     body = json.dumps(
@@ -81,9 +87,26 @@ async def post(
         "User-Agent": "Ieum-Webhook/1",
     }
 
+    # **보내기 직전에** 이름을 풀어 확인하고, 확인한 IP 로 바로 붙는다.
+    # 등록할 때 한 번 보는 것으로는 부족하다 — 그때 공개 주소였던 이름이
+    # 지금 내부 주소를 가리킬 수 있다.
+    try:
+        target = await pin(webhook.url, allow_private=allow_private_targets)
+    except BlockedTargetError as exc:
+        log.warning("webhook.target_blocked", webhook_id=str(webhook.id), reason=str(exc)[:200])
+        return DeliveryOutcome(ok=False, error=f"보낼 수 없는 주소: {exc}"[:500])
+
+    headers["Host"] = target.host_header
+
     try:
         response = await client.post(
-            webhook.url, content=body, headers=headers, timeout=TIMEOUT_SECONDS
+            target.url,
+            content=body,
+            headers=headers,
+            timeout=TIMEOUT_SECONDS,
+            # 증명서는 **원래 이름**에 대고 검사한다. IP 로 붙었다고 IP 앞으로
+            # 나온 증명서를 요구하면 멀쩡한 수신처가 전부 막힌다.
+            extensions={"sni_hostname": target.sni_hostname},
         )
     except Exception as exc:
         return DeliveryOutcome(ok=False, error=f"{type(exc).__name__}: {exc}"[:500])
