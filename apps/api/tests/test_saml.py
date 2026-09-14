@@ -157,6 +157,24 @@ class TestCertificates:
             saml.normalize_certificate("이건 인증서가 아니다")
         assert raised.value.code == "identity.saml_certificate_invalid"
 
+    def test_the_fake_idp_mints_its_certificate_once(self, idp: FakeIdp) -> None:
+        """**두 번 읽어도 같은 인증서여야 한다.**
+
+        `@property` 였을 때는 읽을 때마다 새로 발급했고, 유효기간에 `now()` 가
+        들어가므로 초가 바뀌면 다른 바이트가 나왔다. 그래서 한 시험 안에서 두
+        번 읽으면 이따금 서로 다른 것을 견주게 됐다 — CI 에서 그렇게 붉었다
+        (두 값이 `184800Z` 와 `184801Z` 로 1초 달랐다).
+
+        메타데이터 시험만의 문제가 아니었다. `sign()` 이 응답에 박는 인증서와
+        `config()` 가 "이게 우리 IdP 다" 로 내놓는 인증서도 서로 다른 것이 될
+        수 있었고, 그러면 서명 검증 시험이 이유 없이 붉어진다.
+
+        `is` 로 본다. 값 비교는 초가 안 바뀌면 그냥 통과하므로 아무것도 못
+        지킨다 — **같은 객체인가**는 캐시된 것만 만족할 수 있고, 시계와
+        상관없이 결정적이다.
+        """
+        assert idp.certificate_pem is idp.certificate_pem
+
 
 class TestMetadata:
     def test_reads_issuer_sso_and_certificate(self, idp: FakeIdp) -> None:
