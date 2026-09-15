@@ -1,3 +1,6 @@
+/* 글꼴이 먼저다 — `@tailwind base` 의 `font-family` 가 이 이름을 쓴다. */
+@import "./pretendard.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

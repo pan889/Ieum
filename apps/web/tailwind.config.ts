@@ -42,9 +42,42 @@ export default {
         success: 'rgb(var(--ieum-success) / <alpha-value>)',
         'success-soft': 'rgb(var(--ieum-success-soft) / <alpha-value>)',
       },
+      /**
+       * **부르는 이름과 싣는 이름이 같아야 한다.** 전에는 `Pretendard` 와
+       * `Inter` 를 적어 두고 **둘 다 안 실었다.** 그래서 늘 `system-ui` 로
+       * 떨어졌고, 한글이 무엇으로 찍히는지는 보는 사람의 기계가 정했다.
+       *
+       * 이제 `Pretendard Variable` 은 우리가 함께 배포한다
+       * (`src/styles/pretendard.css`). 뒤는 **못 받았을 때의 사다리**다:
+       * 폰트가 안 왔거나 조각이 늦을 때 한글이 중국어 폰트로 찍히지 않도록
+       * 플랫폼별 한글 글꼴을 이름으로 적는다 — `system-ui` 하나만 두면
+       * 리눅스에서 문泉驛(WenQuanYi)이 잡히고 한글이 뭉개진다(실제로 그랬다).
+       */
       fontFamily: {
-        sans: ['Pretendard', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        sans: [
+          'Pretendard Variable',
+          'Pretendard',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'system-ui',
+          'Apple SD Gothic Neo',
+          'Malgun Gothic',
+          'Noto Sans KR',
+          'Noto Sans CJK KR',
+          'sans-serif',
+        ],
+        // 코드는 라틴이 정본이지만, 주석에 한글이 섞인다. 고정폭 뒤에도
+        // 한글 사다리를 둔다 — 없으면 그 줄만 다른 폰트로 튄다.
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'Consolas',
+          'monospace',
+          'Pretendard Variable',
+          'Apple SD Gothic Neo',
+          'Malgun Gothic',
+        ],
       },
       /**
        * 글자 크기 단계. 전에는 사실상 14px 하나였고, 제목은 굵기만 달랐다 —
