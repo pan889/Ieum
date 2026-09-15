@@ -76,7 +76,7 @@ plugins:
 # `https://pan889.github.io/Ieum/` → HTML 태그 방식이 주는 `content` 값을
 # 아래에 붙인다. 네이버는 서치어드바이저에서 같은 방식으로 준다.
 extra:
-  google_site_verification: ''
+  google_site_verification: 'kaGh5lCO1tgG82FZyXTL4xkG4nJhVH87L4Fg_bpuvcQ'
   naver_site_verification: ''
 
 validation:
