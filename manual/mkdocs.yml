@@ -66,6 +66,19 @@ plugins:
       # 찾는다.
       separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;'
 
+# 검색 엔진 소유 확인. **값을 여기 적는 것이 맞다** — 공개 사이트의 머리말에
+# 그대로 나가는 것이고 비밀이 아니다(검색 콘솔이 주는 확인용 문자열일 뿐).
+#
+# 비워 두면 `overrides/main.html` 이 태그 자체를 안 쓴다. 빈 `content` 를
+# 내보내면 검색 콘솔이 "확인 실패" 를 돌려주고 원인이 화면에 안 보인다.
+#
+# 넣는 법: Google Search Console → 속성 추가 → URL 접두어
+# `https://pan889.github.io/Ieum/` → HTML 태그 방식이 주는 `content` 값을
+# 아래에 붙인다. 네이버는 서치어드바이저에서 같은 방식으로 준다.
+extra:
+  google_site_verification: ''
+  naver_site_verification: ''
+
 validation:
   nav:
     omitted_files: warn

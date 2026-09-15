@@ -59,6 +59,13 @@ jobs:
         with:
           node-version: '22'
 
+      - name: 검색에 걸릴 모양인지
+        # 이 확인이 없으면 **조용히 사라진다.** `custom_dir: overrides` 한 줄만
+        # 지워도 og 태그가 통째로 없어지는데 화면은 아무렇지도 않고, 몇 달 뒤
+        # 검색 결과가 이상한 것을 보고서야 안다. 되돌려 확인해 두었다.
+        run: node tools/check-seo.mjs site
+        working-directory: manual
+
       - name: 브라우저 준비
         run: npm install --no-save playwright@1.56.0 && npx playwright install --with-deps chromium
         working-directory: manual

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{#-
+  검색에 걸리기 위해 필요한 머리말.
+
+  테마가 이미 내주는 것: `<meta name="description">`(쪽마다), `canonical`,
+  `sitemap.xml`, `404.html`, `lang="ko"`. **확인하고 적은 것이다** — 빌드
+  결과를 열어 보고 없는 것만 여기서 채운다.
+
+  여기서 채우는 것:
+  - Open Graph / 트위터 카드. 링크를 붙였을 때 제목·설명·그림이 뜬다.
+    구글 순위에 직접 들어가지는 않지만, 사람이 공유하고 그 링크가 쌓이는 것이
+    결국 검색에 걸리는 길이다.
+  - JSON-LD. 이 사이트가 **무엇에 대한 것인지**를 기계에 직접 말한다.
+  - 검색 콘솔 소유 확인 태그. 값은 `mkdocs.yml` 의 `extra` 에서 온다.
+
+  **그림은 우리 것만 쓴다.** 밖에서 가져오면 `tools/check-site.mjs` 가
+  잡는다 — 이 문서는 폐쇄망에서도 열려야 하고, 방문자마다 밖에 알리지
+  않겠다는 것이 제품이 한 약속이다.
+-#}
+
+{% block extrahead %}
+  {#- 쪽 제목. 첫 화면은 사이트 이름 하나로 둔다 — "Ieum · Ieum" 은 우습다. -#}
+  {%- if page and page.title and not page.is_homepage -%}
+    {%- set og_title = page.title | striptags ~ " · " ~ config.site_name -%}
+  {%- else -%}
+    {%- set og_title = config.site_name ~ " — " ~ config.site_description -%}
+  {%- endif -%}
+  {%- if page and page.meta and page.meta.description -%}
+    {%- set og_description = page.meta.description -%}
+  {%- else -%}
+    {%- set og_description = config.site_description -%}
+  {%- endif -%}
+  {%- set og_url = page.canonical_url if page and page.canonical_url else config.site_url -%}
+  {%- set og_image = config.site_url ~ "assets/og.png" -%}
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:locale" content="ko_KR">
+  <meta property="og:title" content="{{ og_title }}">
+  <meta property="og:description" content="{{ og_description }}">
+  <meta property="og:url" content="{{ og_url }}">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Ieum 의 위키 문서 — 본문 안에 이슈 목록이 표로 살아서 그려져 있다">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ og_title }}">
+  <meta name="twitter:description" content="{{ og_description }}">
+  <meta name="twitter:image" content="{{ og_image }}">
+
+  {#- 소유 확인. 값을 안 넣으면 태그 자체를 안 쓴다 — 빈 `content` 를 두면
+      검색 콘솔이 "확인 실패" 를 돌려주고 원인이 안 보인다. -#}
+  {%- if config.extra.google_site_verification %}
+  <meta name="google-site-verification" content="{{ config.extra.google_site_verification }}">
+  {%- endif %}
+  {%- if config.extra.naver_site_verification %}
+  <meta name="naver-site-verification" content="{{ config.extra.naver_site_verification }}">
+  {%- endif %}
+
+  {#- 첫 화면에서만 제품 자체를 설명한다. 속쪽까지 같은 것을 반복하면
+      "이 쪽이 무엇인가" 가 흐려진다. -#}
+  {%- if page and page.is_homepage %}
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Ieum",
+      "alternateName": "이음",
+      "applicationCategory": "BusinessApplication",
+      "applicationSubCategory": "Issue tracking, wiki, service desk",
+      "operatingSystem": "Linux (Docker)",
+      "description": {{ config.site_description | tojson }},
+      "url": {{ config.site_url | tojson }},
+      "image": {{ og_image | tojson }},
+      "inLanguage": "ko",
+      {#- 라이선스·가격은 **적지 않는다.** 저장소에 `LICENSE` 가 아직 없고,
+          없는 것을 구조화 데이터로 단언하면 기계에게 거짓말을 하는 것이다.
+          정해지면 여기에 `license` 를 더한다. -#}
+      "codeRepository": "https://github.com/pan889/Ieum"
+    }
+  </script>
+  {%- else %}
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": {{ (page.title | striptags) | tojson }},
+      "description": {{ og_description | tojson }},
+      "url": {{ og_url | tojson }},
+      "inLanguage": "ko",
+      "isPartOf": {
+        "@type": "WebSite",
+        "name": {{ config.site_name | tojson }},
+        "url": {{ config.site_url | tojson }}
+      }
+    }
+  </script>
+  {%- endif %}
+{% endblock %}
