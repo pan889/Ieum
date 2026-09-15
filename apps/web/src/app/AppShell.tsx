@@ -11,6 +11,7 @@ import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/shared/i18n'
 import { GLOBAL_SHORTCUTS, type GlobalShortcutId } from '@/shared/keys/catalog'
 import { applyTheme, readTheme, THEMES, writeTheme, type Theme } from '@/shared/theme'
 import { useShortcuts } from '@/shared/keys/useHotkeys'
+import { SOURCE_URL } from '@/shared/source'
 import { Button } from '@/shared/ui/primitives'
 
 /** 사이드바 바닥의 작은 고르개들. 둘이 같은 모양이어야 한 줄로 읽힌다. */
@@ -323,6 +324,19 @@ export function AppShell() {
               {t('common:nav.signOut')}
             </Button>
           </div>
+
+          {/* **라이선스 의무다.** AGPL-3.0 13조는 이 프로그램을 네트워크로
+              서비스하는 사람에게 "쓰는 모든 사용자에게 소스를 받을 길을 눈에
+              띄게 제안하라" 고 요구한다. 고쳐서 돌리는 곳은 `VITE_SOURCE_URL`
+              로 자기 소스를 가리킨다(`shared/source.ts`). */}
+          <a
+            className="mt-2 block text-2xs text-subtle underline-offset-2 hover:text-muted hover:underline"
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t('common:source.label')}
+          </a>
         </div>
       </nav>
 

@@ -107,5 +107,6 @@
   "state.notFoundHint": "The address may have changed, or what was here has since been removed.",
   "state.pickProject": "Pick a project first",
   "state.pickProjectHint": "Choose one above and this screen fills in with that project’s work.",
-  "theme.label": "Appearance"
+  "theme.label": "Appearance",
+  "source.label": "Source code (AGPL-3.0)"
 }

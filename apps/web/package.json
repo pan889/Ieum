@@ -1,6 +1,7 @@
 {
   "name": "@ieum/web",
   "version": "1.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "scripts": {

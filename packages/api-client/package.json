@@ -1,11 +1,14 @@
 {
   "name": "@ieum/api-client",
   "version": "1.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "generate": "openapi-typescript ../../apps/api/openapi.json -o src/generated/schema.ts",
     "typecheck": "tsc --noEmit"

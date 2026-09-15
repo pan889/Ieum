@@ -1,6 +1,7 @@
 {
   "name": "@ieum/i18n",
   "version": "1.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "en/ko 번역 카탈로그. 프론트와 백엔드가 같은 파일을 본다.",

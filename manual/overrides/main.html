@@ -74,9 +74,9 @@
       "url": {{ config.site_url | tojson }},
       "image": {{ og_image | tojson }},
       "inLanguage": "ko",
-      {#- 라이선스·가격은 **적지 않는다.** 저장소에 `LICENSE` 가 아직 없고,
-          없는 것을 구조화 데이터로 단언하면 기계에게 거짓말을 하는 것이다.
-          정해지면 여기에 `license` 를 더한다. -#}
+      {#- 이제 `LICENSE` 가 실제로 있으므로 적는다. 없을 때는 비워 두었다 —
+          없는 것을 구조화 데이터로 단언하면 기계에게 거짓말이다. -#}
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
       "codeRepository": "https://github.com/pan889/Ieum"
     }
   </script>

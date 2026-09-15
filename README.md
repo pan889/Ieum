@@ -160,4 +160,22 @@ pnpm --filter @ieum/web exec playwright test    # 브라우저 267개
 
 ## 라이선스
 
-AGPL-3.0-only
+**[AGPL-3.0-only](LICENSE)** — GNU Affero General Public License v3.0.
+
+쉬운 말로:
+
+- **써도 됩니다.** 개인이든 회사든, 사내에 깔아 쓰는 것에 돈을 받지 않습니다.
+- **고쳐도 됩니다.** 마음대로 고치고, 고친 것을 돌려도 됩니다.
+- **다만 고쳐서 남에게 서비스하면 그 소스를 공개해야 합니다.** 이것이 13조이고,
+  이 라이선스를 고른 이유입니다. 웹 앱은 배포 없이 서비스만 해도 남이 쓰게
+  되는데, 보통의 GPL 은 그 자리에서 아무것도 요구하지 못합니다.
+
+그래서 **고쳐서 돌리는 곳은 화면에 자기 소스 주소를 걸어야 합니다.** 웹을
+빌드할 때 `VITE_SOURCE_URL` 로 주면 사이드바 아래 링크가 그리로 바뀝니다.
+안 고치고 그대로 쓰는 곳은 아무것도 안 해도 됩니다 — 기본값이 이 저장소를
+가리키고, 그게 그 판의 소스가 맞습니다.
+
+의존성은 전부 이것과 어긋나지 않습니다(MIT·BSD·Apache·MPL·ISC). 다만 조판에
+쓰는 `pyphen` 은 GPL2+/LGPL2.1+/MPL1.1 삼중 라이선스라 LGPL 쪽으로 받고,
+한글 글꼴 Pretendard 는 SIL OFL 1.1 로 따로 동봉합니다
+(`apps/web/public/fonts/pretendard/OFL.txt`).
