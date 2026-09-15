@@ -95,13 +95,15 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      # **Pages 를 여기서 켠다.** 저장소 설정에서 손으로 켜 두지 않아도
-      # 첫 실행이 스스로 켜고 소스를 "GitHub Actions" 로 맞춘다. 설정을
-      # 사람 기억에 맡기면, 저장소를 다시 만든 날 아무도 이유를 모른 채
-      # 배포가 실패한다.
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
+      # **Pages 는 사람이 한 번 켜야 한다.**
+      #
+      # `actions/configure-pages` 의 `enablement: true` 로 자동으로 켜 보려
+      # 했고 안 됐다 — Pages 사이트를 **만드는** API 는 저장소 관리 권한을
+      # 요구하는데 `GITHUB_TOKEN` 에는 그것이 붙지 않는다(붙일 수도 없다).
+      # 로그에 남은 말은 `Create Pages site failed. Error: Resource not
+      # accessible by integration` 이다. 다시 시도하지 말라고 여기 적어 둔다.
+      #
+      # 켜는 법 (한 번): 저장소 Settings → Pages → Build and deployment →
+      # Source 를 **GitHub Actions** 로. 그 뒤로는 이 워크플로가 알아서 낸다.
       - uses: actions/deploy-pages@v4
         id: deploy
