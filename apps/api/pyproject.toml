@@ -1,6 +1,6 @@
 [project]
 name = "ieum-api"
-version = "1.0.2"
+version = "1.1.0"
 description = "Ieum — 셀프호스팅 팀 협업 플랫폼 API"
 requires-python = ">=3.12,<3.13"
 license = { text = "AGPL-3.0-only" }

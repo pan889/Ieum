@@ -70,7 +70,7 @@ Jira + Confluence + JSM(서비스데스크)를 대체하는 **셀프호스팅** 
 Docker 와 Compose(v2)만 있으면 한 줄로 섭니다.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.0.2/deploy/install/install.sh
+curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.1.0/deploy/install/install.sh
 sh install.sh --url https://ieum.example.com
 ```
 
