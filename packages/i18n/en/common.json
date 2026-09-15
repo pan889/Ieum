@@ -98,5 +98,14 @@
   "keys.detailEdit": "Edit summary and description",
   "keys.detailAssignee": "Change assignee",
   "keys.detailStatus": "Go to transitions",
-  "keys.detailPriority": "Go to priority"
+  "keys.detailPriority": "Go to priority",
+  "action.goHome": "Go to Today",
+  "nav.group.places": "Places",
+  "nav.group.work": "Work",
+  "nav.group.you": "You",
+  "state.notFound": "Nothing lives at this address",
+  "state.notFoundHint": "The address may have changed, or what was here has since been removed.",
+  "state.pickProject": "Pick a project first",
+  "state.pickProjectHint": "Choose one above and this screen fills in with that project’s work.",
+  "theme.label": "Appearance"
 }

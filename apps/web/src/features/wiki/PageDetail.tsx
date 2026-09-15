@@ -498,7 +498,7 @@ function History({ page, onRestored }: { page: WikiPage; onRestored: () => void 
 
   return (
     <Card className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium text-muted">{t('wiki:page.history')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('wiki:page.history')}</h2>
       {restore.isError ? <Alert>{describeError(restore.error)}</Alert> : null}
       {history.isPending ? (
         <p className="text-sm text-muted">{t('common:state.loading')}</p>

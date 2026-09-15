@@ -8,7 +8,17 @@ import type { IssueSummary, Project, Sprint, SprintState } from '@ieum/api-clien
 import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { searchApi, sprintsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Checkbox, Field, Select } from '@/shared/ui/primitives'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  EmptyState,
+  Field,
+  PageHeader,
+  Select,
+} from '@/shared/ui/primitives'
 
 import { BurndownChart } from './BurndownChart'
 import { CloseSprintForm } from './CloseSprintForm'
@@ -152,19 +162,27 @@ export function SprintsScreen() {
 
   return (
     <section className="mx-auto flex max-w-4xl flex-col gap-5">
-      <h1 className="text-xl font-semibold">{t('sprints:title')}</h1>
+      <PageHeader title={t('sprints:title')} />
 
       <ProjectPicker label={t('issues:list.project')} chosen={project} onPick={setProject} />
 
-      {projectId === null ? null : sprints.isPending ? (
+      {/* **빈 화면을 그냥 비워 두지 않는다.** 프로젝트를 고르기 전의 이
+          화면은 제목 한 줄과 고르는 줄만 남은 백지였고, 처음 온 사람은
+          고장인지 아직 안 고른 것인지 알 수 없다(`BoardsScreen` 과 같다). */}
+      {projectId === null ? (
+        <EmptyState
+          title={t('common:state.pickProject')}
+          description={t('common:state.pickProjectHint')}
+        />
+      ) : sprints.isPending ? (
         <p className="text-sm text-muted">{t('common:state.loading')}</p>
       ) : sprints.isError ? (
         <Alert>{describeError(sprints.error)}</Alert>
       ) : sprints.data.length === 0 ? (
-        <Card className="text-center">
-          <p className="font-medium">{t('sprints:list.empty')}</p>
-          <p className="mt-1 text-sm text-muted">{t('sprints:list.emptyHint')}</p>
-        </Card>
+        <EmptyState
+          title={t('sprints:list.empty')}
+          description={t('sprints:list.emptyHint')}
+        />
       ) : (
         <ul className="flex flex-col gap-2">
           {sprints.data.map((row) => (
@@ -262,7 +280,7 @@ export function SprintsScreen() {
           )}
           {pull.isError ? <Alert>{describeError(pull.error)}</Alert> : null}
 
-          <h2 className="text-sm font-medium text-muted">{t('sprints:burndown.title')}</h2>
+          <h2 className="text-sm font-semibold text-fg">{t('sprints:burndown.title')}</h2>
           {burndown.isPending ? (
             <p className="text-sm text-muted">{t('common:state.loading')}</p>
           ) : burndown.isError ? (
@@ -278,7 +296,7 @@ export function SprintsScreen() {
 
       {project === null ? null : (
         <Card className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium text-muted">{t('sprints:backlog.title')}</h2>
+          <h2 className="text-sm font-semibold text-fg">{t('sprints:backlog.title')}</h2>
           {backlog.isPending ? (
             <p className="text-sm text-muted">{t('common:state.loading')}</p>
           ) : backlog.isError ? (
@@ -342,7 +360,7 @@ export function SprintsScreen() {
             className="flex flex-col gap-4"
             onSubmit={(event) => { event.preventDefault(); create.mutate() }}
           >
-            <h2 className="text-sm font-medium text-muted">{t('sprints:create.title')}</h2>
+            <h2 className="text-sm font-semibold text-fg">{t('sprints:create.title')}</h2>
             {create.isError ? <Alert>{describeError(create.error)}</Alert> : null}
             <Field
               label={t('sprints:create.name')}

@@ -60,7 +60,7 @@ export function Approvals({ issueId }: { issueId: string }) {
 
   return (
     <Card className="flex flex-col gap-3" data-testid="issue-approvals">
-      <h2 className="text-sm font-medium text-muted">{t('desk:approval.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('desk:approval.title')}</h2>
       {rows.isError ? <Alert>{describeError(rows.error)}</Alert> : null}
       {cancel.isError ? <Alert>{describeError(cancel.error)}</Alert> : null}
 

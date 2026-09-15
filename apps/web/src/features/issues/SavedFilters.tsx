@@ -56,14 +56,14 @@ export function SavedFilters({ activeIql, onLoad }: SavedFiltersProps) {
   const canSave = activeIql.trim() !== '' && name.trim() !== ''
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 px-3 py-2">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="w-16 shrink-0 text-xs font-medium text-muted">
+        <span className="w-[4.5rem] shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
           {t('issues:filters.saved')}
         </span>
 
         {rows.length === 0 ? (
-          <span className="text-xs text-muted">{t('issues:filters.none')}</span>
+          <span className="text-xs text-subtle">{t('issues:filters.none')}</span>
         ) : (
           rows.map((filter) => (
             <span key={filter.id} className="inline-flex items-center">
@@ -90,7 +90,8 @@ export function SavedFilters({ activeIql, onLoad }: SavedFiltersProps) {
         {/* 지금 URL 이 곧 이 목록이다. 주소창을 긁게 하지 않는다. */}
         <Button
           variant="ghost"
-          className="ml-auto text-xs"
+          size="sm"
+          className="ml-auto"
           onClick={() => {
             void copyLink().then((ok) => {
               if (ok) {
@@ -105,7 +106,7 @@ export function SavedFilters({ activeIql, onLoad }: SavedFiltersProps) {
 
         <Button
           variant="ghost"
-          className="text-xs"
+          size="sm"
           // 빈 질의를 저장하면 "전체 이슈" 라는 이름뿐인 필터가 생긴다.
           disabled={activeIql.trim() === ''}
           title={activeIql.trim() === '' ? t('issues:filters.needsQuery') : undefined}

@@ -16,7 +16,7 @@ import { EMAIL_MODES, type EmailMode } from '@ieum/api-client'
 import { formatDateTime } from '@/features/issues/format'
 import { notificationsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Select } from '@/shared/ui/primitives'
+import { Alert, Button, Card, EmptyState, PageHeader, Select } from '@/shared/ui/primitives'
 
 export function useUnreadCount() {
   return useQuery({
@@ -52,53 +52,56 @@ export function NotificationsScreen() {
 
   return (
     <div className="flex max-w-3xl flex-col gap-4">
-      <div className="flex items-baseline gap-3">
-        <h1 className="text-xl font-semibold">{t('notifications:list.title')}</h1>
-        {unread > 0 ? (
-          <span className="text-sm text-muted">
-            {t('notifications:list.unreadCount', { count: unread })}
-          </span>
-        ) : null}
-        <div className="ml-auto flex gap-2">
-          <Button
-            variant="ghost"
-            className="text-xs"
-            aria-pressed={unreadOnly}
-            onClick={() => { setUnreadOnly((v) => !v) }}
-          >
-            {t('notifications:list.unreadOnly')}
-          </Button>
-          <Button
-            variant="secondary"
-            className="text-xs"
-            disabled={unread === 0}
-            loading={markRead.isPending}
-            onClick={() => { markRead.mutate(undefined) }}
-          >
-            {t('notifications:action.markAllRead')}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t('notifications:list.title')}
+        description={
+          unread > 0 ? t('notifications:list.unreadCount', { count: unread }) : undefined
+        }
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              aria-pressed={unreadOnly}
+              onClick={() => { setUnreadOnly((v) => !v) }}
+            >
+              {t('notifications:list.unreadOnly')}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={unread === 0}
+              loading={markRead.isPending}
+              onClick={() => { markRead.mutate(undefined) }}
+            >
+              {t('notifications:action.markAllRead')}
+            </Button>
+          </>
+        }
+      />
 
       {list.isError ? <Alert>{describeError(list.error)}</Alert> : null}
       {markRead.isError ? <Alert>{describeError(markRead.error)}</Alert> : null}
 
-      {items.length === 0 && !list.isPending ? (
-        <p className="text-sm text-muted">{t('notifications:list.empty')}</p>
-      ) : null}
-
       <Preferences />
 
-      <ul className="flex flex-col gap-2">
-        {items.map((row) => (
-          <li key={row.id}>
-            <Card
+      {items.length === 0 && !list.isPending ? (
+        <EmptyState title={t('notifications:list.empty')} />
+      ) : (
+        /*
+          알림 하나에 카드 하나였다. 한 줄 반짜리 글에 88픽셀을 쓰면 한
+          화면에 여덟 개가 들어가고, 서른한 개를 훑는 데 네 번 스크롤한다.
+          한 상자 안에서 줄로 나누고, **안 읽은 것은 왼쪽 띠**로 말한다 —
+          테두리 전체를 강조색으로 두르면 줄마다 상자가 번쩍인다.
+        */
+        <ul className="divide-y divide-border overflow-hidden rounded-card border border-border bg-surface shadow-raised">
+          {items.map((row) => (
+            <li
+              key={row.id}
               className={clsx(
-                'flex items-baseline gap-3',
-                row.read_at === null ? 'border-accent' : null,
+                'flex items-center gap-3 border-l-2 px-3 py-2 hover:bg-surface-raised',
+                row.read_at === null ? 'border-l-accent' : 'border-l-transparent',
               )}
             >
-              <div className="flex min-w-0 flex-col gap-0.5">
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 {row.link ? (
                   // 링크는 앱 내부 경로다. 눌렀으면 읽은 것으로 본다.
                   <Link
@@ -111,21 +114,24 @@ export function NotificationsScreen() {
                 ) : (
                   <span className="truncate text-sm text-fg">{row.title}</span>
                 )}
-                <span className="text-xs text-muted">{formatDateTime(row.created_at)}</span>
+                <span className="text-xs tabular-nums text-subtle">
+                  {formatDateTime(row.created_at)}
+                </span>
               </div>
               {row.read_at === null ? (
                 <Button
                   variant="ghost"
-                  className="ml-auto shrink-0 text-xs"
+                  size="sm"
+                  className="shrink-0"
                   onClick={() => { markRead.mutate([row.id]) }}
                 >
                   {t('notifications:action.markRead')}
                 </Button>
               ) : null}
-            </Card>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

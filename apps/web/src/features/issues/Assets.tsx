@@ -74,21 +74,19 @@ export function Assets({ issueId }: { issueId: string }) {
   // 오류는 숨기지 않는다 — 못 읽은 것과 없는 것은 다르다.
   if (!linked.isError && rows.length === 0 && !adding) {
     return (
-      <div>
-        <Button
-          variant="ghost"
-          className="text-xs"
-          onClick={() => { setAdding(true) }}
-        >
+      // 카드 사이에 **맨 글자**로 떠 있었다. 다른 칸은 전부 카드인데 이
+      // 손잡이만 배경 위에 놓여 있으면, 어느 칸에 딸린 것인지 안 보인다.
+      <Card className="py-2">
+        <Button variant="ghost" size="sm" onClick={() => { setAdding(true) }}>
           {t('desk:asset.linkAdd')}
         </Button>
-      </div>
+      </Card>
     )
   }
 
   return (
     <Card className="flex flex-col gap-3" data-testid="issue-assets">
-      <h2 className="text-sm font-medium text-muted">{t('desk:asset.linkTitle')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('desk:asset.linkTitle')}</h2>
       {linked.isError ? <Alert>{describeError(linked.error)}</Alert> : null}
       {link.isError ? <Alert>{describeError(link.error)}</Alert> : null}
       {unlink.isError ? <Alert>{describeError(unlink.error)}</Alert> : null}

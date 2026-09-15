@@ -76,8 +76,10 @@ export function FilterBar({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end gap-3">
+    // 상자는 화면이 씌운다(`IssuesScreen` 의 조작 상자). 여기서 또 테두리를
+    // 그리면 상자 안에 상자가 생긴다.
+    <div className="flex flex-col gap-2 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
         <ProjectPicker
           label={t('issues:list.project')}
           chosen={project}
@@ -99,20 +101,32 @@ export function FilterBar({
           }
         />
 
+        {/*
+          라벨은 접근성 트리에만 둔다. 도구 막대 한 줄에 선 것들 사이에서 이
+          칸만 라벨을 위로 세우면 "Text" 라는 글자가 아무것도 안 붙은 채로
+          허공에 떴다 — 자리표시자가 같은 말을 이미 하고 있다.
+        */}
         <div className="min-w-48 flex-1">
           <Field
             label={t('issues:filter.text')}
+            labelHidden
             placeholder={t('issues:filter.textPlaceholder')}
             value={filters.text}
             onChange={(e) => { patch({ text: e.target.value }); }}
+            className="w-full"
           />
         </div>
 
-        <Button variant="secondary" onClick={() => { onIqlDraftChange(toIql(filters)); }}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => { onIqlDraftChange(toIql(filters)); }}
+        >
           {t('issues:filter.toIql')}
         </Button>
         <Button
           variant="ghost"
+          size="sm"
           disabled={isEmptyFilters(filters)}
           onClick={() => { onFiltersChange(EMPTY_FILTERS); }}
         >
@@ -179,10 +193,16 @@ export function FilterBar({
   )
 }
 
+/**
+ * 칩 한 줄. 라벨은 **고정 폭 도랑**에 세운다 — 줄마다 라벨 길이가 달라
+ * 칩이 들쭉날쭉 시작하면, 눈은 매 줄마다 시작점을 다시 찾는다.
+ */
 function ChipRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="w-16 shrink-0 text-xs font-medium text-muted">{label}</span>
+      <span className="w-[4.5rem] shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+        {label}
+      </span>
       {children}
     </div>
   )

@@ -4,32 +4,71 @@
 
 /* 디자인 토큰. 값은 여기서만 정의하고 컴포넌트는 토큰 이름만 쓴다. */
 @layer base {
+  /* **단계가 있어야 깊이가 보인다.**
+     전에는 배경 250 에 표면 255 였다 — 2% 차이라 눈에 안 띄고, 그래서 카드도
+     표도 팝오버도 전부 같은 평면에 떠 있는 것처럼 보였다. 배경을 한 칸 더
+     내리고, 올라온 면과 가라앉은 면을 따로 둔다. */
   :root {
-    --ieum-bg: 250 250 250;
+    --ieum-bg: 246 247 249;
     --ieum-surface: 255 255 255;
-    --ieum-surface-raised: 255 255 255;
-    --ieum-border: 226 228 232;
-    --ieum-fg: 24 27 32;
-    --ieum-muted: 106 112 124;
-    --ieum-accent: 43 96 214;
+    /* 줄 위에 마우스를 올렸을 때, 코드 배경처럼 **살짝 떠 보이는** 면. */
+    --ieum-surface-raised: 248 249 251;
+    /* 표 머리글·필터 막대처럼 **가라앉은** 면. 내용보다 뒤로 물러난다. */
+    --ieum-sunken: 241 243 246;
+
+    /* 테두리도 두 단계다. 대부분은 거의 안 보여야 하고(칸을 나누는 선),
+       입력 칸처럼 "여기를 만진다" 는 자리만 뚜렷해야 한다. */
+    --ieum-border: 226 229 234;
+    --ieum-border-strong: 203 208 216;
+
+    /* 글자는 세 단계. 전에는 둘뿐이라 메타 정보가 본문과 같은 무게였다. */
+    --ieum-fg: 22 24 29;
+    --ieum-muted: 92 99 112;
+    --ieum-subtle: 138 145 158;
+
+    --ieum-accent: 45 91 208;
     --ieum-accent-fg: 255 255 255;
-    --ieum-danger: 197 48 48;
-    --ieum-warning: 176 118 8;
-    --ieum-success: 32 128 80;
+    /* 강조색 배경. `accent/15` 를 쓰면 배경 위에서 색이 탁해진다. */
+    --ieum-accent-soft: 233 239 253;
+    --ieum-danger: 190 46 46;
+    --ieum-danger-soft: 253 235 235;
+    --ieum-warning: 166 110 8;
+    --ieum-warning-soft: 253 244 227;
+    --ieum-success: 27 118 72;
+    --ieum-success-soft: 231 246 238;
+
+    /* 그림자. 전부 `shadow-sm` 이면 아무것도 안 떠 있는 것과 같다. */
+    --ieum-shadow-raised: 0 1px 2px 0 rgb(18 22 31 / 0.04);
+    --ieum-shadow-overlay:
+      0 10px 15px -3px rgb(18 22 31 / 0.08), 0 4px 6px -4px rgb(18 22 31 / 0.06);
   }
 
   [data-theme='dark'] {
-    --ieum-bg: 17 19 23;
-    --ieum-surface: 24 27 32;
-    --ieum-surface-raised: 32 36 43;
-    --ieum-border: 48 53 62;
+    --ieum-bg: 15 17 21;
+    --ieum-surface: 23 26 31;
+    --ieum-surface-raised: 30 34 41;
+    --ieum-sunken: 19 22 27;
+
+    --ieum-border: 45 50 59;
+    --ieum-border-strong: 65 72 84;
+
     --ieum-fg: 233 235 239;
-    --ieum-muted: 148 155 167;
-    --ieum-accent: 106 152 255;
+    --ieum-muted: 150 157 169;
+    --ieum-subtle: 116 123 136;
+
+    --ieum-accent: 122 162 255;
     --ieum-accent-fg: 12 16 24;
+    --ieum-accent-soft: 30 42 70;
     --ieum-danger: 248 113 113;
+    --ieum-danger-soft: 60 30 32;
     --ieum-warning: 224 168 62;
+    --ieum-warning-soft: 58 45 22;
     --ieum-success: 74 190 132;
+    --ieum-success-soft: 22 48 37;
+
+    --ieum-shadow-raised: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+    --ieum-shadow-overlay:
+      0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
   }
 
   html { color-scheme: light; }
@@ -74,12 +113,12 @@
   .ieum-markdown li.task-list-item { @apply flex items-baseline gap-2; }
 
   .ieum-markdown code {
-    @apply rounded bg-surface-raised px-1 py-0.5 font-mono text-[0.85em];
+    @apply rounded border border-border bg-sunken px-1 py-0.5 font-mono text-[0.85em];
   }
   .ieum-markdown pre {
-    @apply my-2 overflow-x-auto rounded-md bg-surface-raised p-3;
+    @apply my-2 overflow-x-auto rounded-md border border-border bg-sunken p-3;
   }
-  .ieum-markdown pre code { @apply bg-transparent p-0; }
+  .ieum-markdown pre code { @apply border-0 bg-transparent p-0; }
 
   .ieum-markdown blockquote {
     @apply my-2 border-l-2 border-border pl-3 text-muted;
@@ -90,21 +129,23 @@
   .ieum-markdown table { @apply my-2 block w-full overflow-x-auto border-collapse text-sm; }
   .ieum-markdown th,
   .ieum-markdown td { @apply border border-border px-2 py-1 text-left; }
-  .ieum-markdown th { @apply bg-surface-raised font-medium; }
+  .ieum-markdown th { @apply bg-sunken font-semibold; }
 
   .ieum-markdown img { @apply max-w-full rounded; }
 }
 
 @layer components {
-  /* 멘션 칩. 링크가 아니라 사람을 가리키는 표시다. */
+  /* 멘션 칩. 링크가 아니라 사람을 가리키는 표시다.
+     투명도(`accent/15`)가 아니라 **단색 토큰**을 쓴다 — 표 줄 위와 카드
+     위에서 같은 칩이 다른 색으로 보였다(`Badge` 와 같은 이유). */
   .ieum-mention {
-    @apply rounded bg-accent/15 px-1 py-0.5 font-medium text-accent;
+    @apply rounded bg-accent-soft px-1 py-0.5 font-medium text-accent;
   }
 
   /* 코멘트가 달린 인용. 배경만 얹고 글자는 건드리지 않는다 — 본문을
      읽는 흐름을 끊으면 코멘트가 방해물이 된다. */
   .ieum-quote {
-    @apply rounded-sm bg-accent/15 text-inherit;
+    @apply rounded-sm bg-accent-soft text-inherit;
   }
 
   /* 디렉티브(매크로) 블록. 본문과 구별되게 살짝 들여 놓는다. */

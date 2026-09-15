@@ -98,5 +98,14 @@
   "keys.detailEdit": "제목·본문 편집",
   "keys.detailAssignee": "담당자 바꾸기",
   "keys.detailStatus": "상태 전이로",
-  "keys.detailPriority": "우선순위로"
+  "keys.detailPriority": "우선순위로",
+  "action.goHome": "첫 화면으로",
+  "nav.group.places": "공간",
+  "nav.group.work": "일",
+  "nav.group.you": "내 설정",
+  "state.notFound": "이 주소에는 아무것도 없습니다",
+  "state.notFoundHint": "주소가 바뀌었거나, 그 사이에 지워졌을 수 있습니다.",
+  "state.pickProject": "먼저 프로젝트를 고르세요",
+  "state.pickProjectHint": "위에서 프로젝트를 하나 고르면 이 화면이 그 프로젝트의 것으로 채워집니다.",
+  "theme.label": "화면 색"
 }

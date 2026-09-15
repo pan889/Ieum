@@ -80,19 +80,26 @@ export function LoginScreen() {
           value={password}
           onChange={(e) => { setPassword(e.target.value); }}
         />
-        <Button type="submit" loading={login.isPending}>
+        <Button type="submit" size="lg" className="w-full" loading={login.isPending}>
           {login.isPending ? t('auth:login.submitting') : t('auth:login.submit')}
         </Button>
       </form>
 
       {(providers.data ?? []).length > 0 ? (
         <div className="mt-6 flex flex-col gap-2">
-          <p className="text-center text-xs text-muted">{t('auth:sso.divider')}</p>
+          {/* 가운데 "or" 글자 하나가 허공에 떠 있었다. 선을 그어야 그것이
+              **갈림길**이라는 것이 보인다. */}
+          <p className="flex items-center gap-3 text-xs text-subtle">
+            <span aria-hidden="true" className="h-px flex-1 bg-border" />
+            {t('auth:sso.divider')}
+            <span aria-hidden="true" className="h-px flex-1 bg-border" />
+          </p>
           {startSso.isError ? <Alert>{describeError(startSso.error)}</Alert> : null}
           {(providers.data ?? []).map((provider) => (
             <Button
               key={provider.id}
               variant="secondary"
+              className="w-full"
               loading={startSso.isPending}
               onClick={() => { startSso.mutate({ id: provider.id, kind: provider.kind }) }}
             >
@@ -105,6 +112,14 @@ export function LoginScreen() {
   )
 }
 
+/**
+ * 로그인·MFA·초대 수락이 함께 쓰는 바깥틀.
+ *
+ * **여기가 제품의 첫인상이다.** 전에는 회색 벌판 한가운데에 흰 상자 하나가
+ * 놓여 있었고, 그 상자에는 이름도 표식도 없었다 — 어느 회사의 무엇에
+ * 로그인하는 중인지 화면만 보고는 알 수 없었다. 표식을 상자 위에 세우고,
+ * 배경에 아주 옅은 강조색 물을 들여 상자가 **떠 있게** 한다.
+ */
 export function AuthLayout({
   title,
   subtitle,
@@ -115,12 +130,33 @@ export function AuthLayout({
   children: React.ReactNode
 }) {
   return (
-    <main className="flex min-h-dvh items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-sm">
-        <h1 className="text-xl font-semibold text-fg">{title}</h1>
-        {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}
-        <div className="mt-6">{children}</div>
-      </Card>
+    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-12">
+      {/*
+        배경 물. `aria-hidden` 인 순수 장식이고, 토큰 색에 투명도를 얹으므로
+        다크 모드에서도 따로 정의할 것이 없다.
+      */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-[28rem] bg-gradient-to-b from-accent/[0.07] to-transparent"
+      />
+
+      <div className="relative flex w-full max-w-sm flex-col items-center gap-6">
+        <div className="flex items-center gap-2 text-lg font-semibold tracking-tight text-fg">
+          <span
+            aria-hidden="true"
+            className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-accent-fg shadow-raised"
+          >
+            I
+          </span>
+          Ieum
+        </div>
+
+        <Card className="w-full p-6 shadow-overlay">
+          <h1 className="text-lg font-semibold text-fg">{title}</h1>
+          {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}
+          <div className="mt-5">{children}</div>
+        </Card>
+      </div>
     </main>
   )
 }

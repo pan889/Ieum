@@ -8,7 +8,7 @@ import type { CalendarEntry, CalendarSprint, Project } from '@ieum/api-client'
 import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { calendarApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, EmptyState, Field } from '@/shared/ui/primitives'
 
 import { WEEK_STARTS_ON, isoOf, monthWindow, stackIn, weeksOf } from './grid'
 
@@ -70,7 +70,13 @@ export function CalendarScreen() {
         </div>
       </header>
 
-      {project === null ? null : (
+      {/* 고르기 전에도 무엇을 해야 하는지 말한다(`BoardsScreen` 과 같다). */}
+      {project === null ? (
+        <EmptyState
+          title={t('common:state.pickProject')}
+          description={t('common:state.pickProjectHint')}
+        />
+      ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" onClick={() => { step(-1) }}>

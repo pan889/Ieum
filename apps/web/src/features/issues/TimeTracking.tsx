@@ -74,7 +74,7 @@ export function TimeTracking({
 
   return (
     <Card className="flex flex-col gap-4">
-      <h2 className="text-sm font-medium text-muted">{t('issues:time.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:time.title')}</h2>
 
       {summary ? (
         <div className="flex flex-col gap-2">
@@ -215,7 +215,14 @@ export function TimeTracking({
             />
           </div>
         </div>
-        <Button type="submit" loading={add.isPending} disabled={minutes === null}>
+        {/* 폼 폭을 꽉 채운 파란 막대였다. 전송 단추는 자기 글자만큼만
+            넓다 — 꽉 찬 막대는 손가락으로 누르는 화면의 모양이다. */}
+        <Button
+          type="submit"
+          className="self-start"
+          loading={add.isPending}
+          disabled={minutes === null}
+        >
           {t('issues:time.submit')}
         </Button>
       </form>

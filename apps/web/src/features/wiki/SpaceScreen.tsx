@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
-import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Button, EmptyState, Field, Select } from '@/shared/ui/primitives'
 
 import { BlogList } from './Blog'
 import { PageDetail } from './PageDetail'
@@ -165,10 +165,10 @@ export function SpaceScreen() {
             }}
           />
         ) : !path ? (
-          <Card className="text-center">
-            <p className="font-medium">{t('wiki:page.pickOne')}</p>
-            <p className="mt-1 text-sm text-muted">{t('wiki:page.pickOneHint')}</p>
-          </Card>
+          <EmptyState
+            title={t('wiki:page.pickOne')}
+            description={t('wiki:page.pickOneHint')}
+          />
         ) : page.isPending ? (
           <p className="text-sm text-muted">{t('common:state.loading')}</p>
         ) : page.isError ? (

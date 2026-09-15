@@ -42,7 +42,7 @@ export function Templates({ spaceId }: { spaceId: string }) {
   return (
     <Card className="flex flex-col gap-2">
       <div className="flex items-baseline gap-2">
-        <h2 className="text-sm font-medium text-muted">{t('wiki:template.title')}</h2>
+        <h2 className="text-sm font-semibold text-fg">{t('wiki:template.title')}</h2>
         <Button
           variant="ghost"
           className="ml-auto text-xs"

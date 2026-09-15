@@ -10,7 +10,7 @@ import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
 import { LIST_SHORTCUTS, type ListShortcutId } from '@/shared/keys/catalog'
 import { useShortcuts } from '@/shared/keys/useHotkeys'
-import { Alert, Badge, Button, Card, Chip } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Chip, EmptyState } from '@/shared/ui/primitives'
 
 import { BulkBar } from './BulkBar'
 import { FilterBar } from './FilterBar'
@@ -177,7 +177,7 @@ export function IssuesScreen() {
   return (
     <section className="mx-auto flex max-w-6xl flex-col gap-5">
       <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('issues:list.title')}</h1>
+        <h1 className="text-xl font-semibold text-fg">{t('issues:list.title')}</h1>
         <div className="flex items-center gap-2">
           <Button
             variant="secondary"
@@ -188,55 +188,67 @@ export function IssuesScreen() {
           >
             {t('issues:export.csv')}
           </Button>
+          {/* 이 화면의 **주 행동**이다. 단추처럼 보여야 하고, 다른 화면의
+              주 단추와 크기가 같아야 한다 — 여기만 손으로 여백을 적어 두면
+              화면을 옮길 때마다 단추가 조금씩 커졌다 작아진다. */}
           <Link
             to="/issues/new"
-            className="rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-accent-fg"
+            className="inline-flex h-8 shrink-0 items-center rounded-md bg-accent px-3 text-sm font-medium text-accent-fg shadow-raised hover:brightness-110"
           >
             {t('issues:create.title')}
           </Link>
         </div>
       </header>
 
-      <FilterBar
-        filters={filters}
-        onFiltersChange={(next) => { setTyping(null); go(toSearch(next)) }}
-        iqlDraft={iqlDraft}
-        onIqlDraftChange={(next) => {
-          setTyping(next)
-          // 칩으로 돌아가면 URL 도 칩 모드로 되돌린다.
-          if (next === null) go(toSearch(filters))
-        }}
-        onRun={(iql) => { setTyping(null); go(toIqlSearch(iql, filters)) }}
-        invalid={results.isError ? describeError(results.error) : undefined}
-      />
+      {/*
+        **조작은 한 덩어리다.** 필터·저장 필터·보는 방식이 각자 배경 위에
+        떠 있었고, 표가 시작되기 전까지 3백 픽셀이 맨 화면이었다 — 무엇이
+        조작이고 무엇이 내용인지 경계가 없으니 화면이 짜여 있다는 느낌
+        자체가 없었다. 가라앉은 한 상자에 담고 안에서 줄로 나눈다.
+      */}
+      <div className="divide-y divide-border rounded-card border border-border bg-sunken">
+        <FilterBar
+          filters={filters}
+          onFiltersChange={(next) => { setTyping(null); go(toSearch(next)) }}
+          iqlDraft={iqlDraft}
+          onIqlDraftChange={(next) => {
+            setTyping(next)
+            // 칩으로 돌아가면 URL 도 칩 모드로 되돌린다.
+            if (next === null) go(toSearch(filters))
+          }}
+          onRun={(iql) => { setTyping(null); go(toIqlSearch(iql, filters)) }}
+          invalid={results.isError ? describeError(results.error) : undefined}
+        />
 
-      <SavedFilters
-        activeIql={activeIql}
-        onLoad={(iql) => { setTyping(null); go(toIqlSearch(iql)) }}
-      />
+        <SavedFilters
+          activeIql={activeIql}
+          onLoad={(iql) => { setTyping(null); go(toIqlSearch(iql)) }}
+        />
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="w-16 shrink-0 text-xs font-medium text-muted">
-          {t('issues:list.columns')}
-        </span>
-        {COLUMNS.map((id) => (
-          <Chip key={id} pressed={columns.includes(id)} onClick={() => { toggleColumn(id); }}>
-            {t(`issues:list.column.${id}`)}
-          </Chip>
-        ))}
+        {/* 보는 방식(칸·묶음)은 필터가 아니지만 **같은 종류의 조작**이다. */}
+        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2">
+          <span className="w-[4.5rem] shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+            {t('issues:list.columns')}
+          </span>
+          {COLUMNS.map((id) => (
+            <Chip key={id} pressed={columns.includes(id)} onClick={() => { toggleColumn(id); }}>
+              {t(`issues:list.column.${id}`)}
+            </Chip>
+          ))}
 
-        <span className="ml-4 shrink-0 text-xs font-medium text-muted">
-          {t('issues:list.groupBy')}
-        </span>
-        {GROUP_FIELDS.map((field) => (
-          <Chip
-            key={field}
-            pressed={groupBy === field}
-            onClick={() => { setGroupBy(field) }}
-          >
-            {t(`issues:list.group.${field}`)}
-          </Chip>
-        ))}
+          <span className="ml-4 shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+            {t('issues:list.groupBy')}
+          </span>
+          {GROUP_FIELDS.map((field) => (
+            <Chip
+              key={field}
+              pressed={groupBy === field}
+              onClick={() => { setGroupBy(field) }}
+            >
+              {t(`issues:list.group.${field}`)}
+            </Chip>
+          ))}
+        </div>
       </div>
 
       {selected.length > 0 ? (
@@ -283,19 +295,23 @@ export function IssuesScreen() {
       ) : results.isError ? (
         <Alert>{describeError(results.error)}</Alert>
       ) : results.data.items.length === 0 ? (
-        <Card className="text-center">
-          <p className="font-medium">{t('issues:list.empty')}</p>
-          <p className="mt-1 text-sm text-muted">{t('issues:list.emptyHint')}</p>
-        </Card>
+        <EmptyState
+          title={t('issues:list.empty')}
+          description={t('issues:list.emptyHint')}
+        />
       ) : (
         <>
-          <p className="text-xs text-muted">
+          <p className="text-xs tabular-nums text-subtle">
             {t('issues:list.count', { count: results.data.items.length })}
           </p>
-          <div className="overflow-x-auto rounded-card border border-border">
+          <div className="overflow-x-auto rounded-card border border-border bg-surface shadow-raised">
             <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="border-b border-border bg-surface-raised text-left">
+                {/*
+                  표 머리는 **가라앉은 면**이다. 전에는 본문과 거의 같은 흰
+                  색이라, 스크롤을 조금만 내려도 어디까지가 머리인지 몰랐다.
+                */}
+                <tr className="border-b border-border bg-sunken text-left">
                   {/* 표의 고르기 칸은 `Checkbox` 를 쓰지 않는다. 프리미티브는
                       보이는 라벨을 요구하지만 이 칸에는 체크박스 하나 만큼의
                       너비밖에 없다. 대신 `aria-label` 로 이름을 준다 — 힌트를
@@ -316,7 +332,11 @@ export function IssuesScreen() {
                     />
                   </th>
                   {columns.map((id) => (
-                    <th key={id} scope="col" className="px-3 py-2 text-xs font-medium text-muted">
+                    <th
+                      key={id}
+                      scope="col"
+                      className="whitespace-nowrap px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-subtle"
+                    >
                       {t(`issues:list.column.${id}`)}
                     </th>
                   ))}
@@ -330,7 +350,7 @@ export function IssuesScreen() {
                         <th
                           scope="colgroup"
                           colSpan={columns.length + 1}
-                          className="px-3 py-1.5 text-left text-xs font-medium"
+                          className="px-3 py-1.5 text-left text-xs font-semibold text-fg"
                         >
                           {groupLabel(group, groupBy, t, names.data)}
                           {/* 이 페이지에 이만큼. 전체 개수가 아니다 — 서버가
@@ -355,10 +375,12 @@ export function IssuesScreen() {
                       onFocus={() => {
                         setPicked({ of: orderKey, at })
                       }}
+                      // 짚은 줄은 **단색 토큰**으로 칠한다. `accent/10` 은
+                      // 투명도라, 줄무늬나 그룹 머리 위에 겹치면 색이 달라졌다.
                       className={
                         at === rowAt
-                          ? 'border-b border-border bg-accent/10 outline-none last:border-0'
-                          : 'border-b border-border outline-none last:border-0'
+                          ? 'border-b border-border bg-accent-soft outline-none last:border-0'
+                          : 'border-b border-border outline-none last:border-0 hover:bg-surface-raised'
                       }
                     >
                       <td className="px-2 align-top">
@@ -376,7 +398,17 @@ export function IssuesScreen() {
                         />
                       </td>
                       {columns.map((id) => (
-                        <td key={id} className="px-3 py-2 align-top">
+                        // 키·상태·우선순위·날짜는 **내용만큼만** 넓다.
+                        // 전에는 모든 칸이 똑같이 늘어나서, `WEB-1` 한 칸이
+                        // 160px 을 먹고 요약은 잘렸다.
+                        <td
+                          key={id}
+                          className={
+                            id === 'summary'
+                              ? 'w-full px-3 py-2 align-top'
+                              : 'whitespace-nowrap px-3 py-2 align-top'
+                          }
+                        >
                           {id === 'key' ? (
                             <Link
                               to="/issues/$issueKey"
@@ -401,14 +433,14 @@ export function IssuesScreen() {
                             issue.assignee_id ? (
                               (names.data?.get(issue.assignee_id) ?? '…')
                             ) : (
-                              <span className="text-muted">{t('issues:detail.unassigned')}</span>
+                              <span className="text-subtle">{t('issues:detail.unassigned')}</span>
                             )
                           ) : id === 'priority' ? (
                             priorityLabel(issue.priority)
                           ) : id === 'due' ? (
-                            (formatDate(issue.due_date) || <span className="text-muted">—</span>)
+                            (formatDate(issue.due_date) || <span className="text-subtle">—</span>)
                           ) : (
-                            <span className="text-muted">{formatRelative(issue.updated_at)}</span>
+                            <span className="text-subtle">{formatRelative(issue.updated_at)}</span>
                           )}
                         </td>
                       ))}

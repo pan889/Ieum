@@ -6,7 +6,7 @@ import { formatDateTime, formatRelative } from '@/features/issues/format'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { apiTokensApi, rolesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Chip, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Chip, EmptyState, Field, Select } from '@/shared/ui/primitives'
 
 const EXPIRY_CHOICES = [30, 90, 365] as const
 
@@ -162,7 +162,7 @@ export function ApiTokensScreen() {
       ) : tokens.isError ? (
         <Alert>{describeError(tokens.error)}</Alert>
       ) : tokens.data.length === 0 ? (
-        <Card className="text-center text-sm text-muted">{t('auth:tokens.empty')}</Card>
+        <EmptyState title={t('auth:tokens.empty')} />
       ) : (
         <ul className="flex flex-col gap-2">
           {tokens.data.map((token) => (

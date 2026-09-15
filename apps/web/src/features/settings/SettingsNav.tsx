@@ -46,12 +46,21 @@ export function SettingsNav() {
   const { t } = useTranslation(['auth', 'admin', 'desk', 'vcs', 'imports'])
 
   return (
-    <div className="flex flex-col gap-1">
+    /*
+      **한 상자에 담는다.** 전에는 밑줄 탭 스무 개가 맨 배경 위에서 네 줄로
+      접혔고, 본문이 시작되기까지 190픽셀이 링크였다 — 화면마다 그 덩어리가
+      제일 먼저 보이니 "설정" 이 아니라 "링크 목록" 이 주인공이 됐다.
+      필터 막대와 같은 언어를 쓴다: 가라앉은 면, 도랑 라벨, 작은 알약.
+    */
+    <div className="flex flex-col divide-y divide-border rounded-card border border-border bg-sunken">
       <Group label={t('admin:nav.mine')} tabs={MINE} />
       <Group label={t('admin:nav.organization')} tabs={ORG} />
     </div>
   )
 }
+
+const TAB = 'rounded-md px-2 py-1 text-xs font-medium text-muted hover:bg-surface hover:text-fg'
+const TAB_ON = 'rounded-md bg-surface px-2 py-1 text-xs font-semibold text-accent shadow-raised'
 
 function Group({
   label,
@@ -63,15 +72,12 @@ function Group({
   const { t } = useTranslation(['auth', 'admin', 'desk', 'vcs', 'imports'])
 
   return (
-    <nav className="flex flex-wrap items-baseline gap-1 border-b border-border" aria-label={label}>
-      <span className="pr-2 text-xs font-medium uppercase tracking-wide text-muted">{label}</span>
+    <nav className="flex flex-wrap items-center gap-1 px-3 py-2" aria-label={label}>
+      <span className="w-[6.5rem] shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+        {label}
+      </span>
       {tabs.map((tab) => (
-        <Link
-          key={tab.to}
-          to={tab.to}
-          className="-mb-px border-b-2 border-transparent px-3 py-2 text-sm text-muted hover:text-fg"
-          activeProps={{ className: '-mb-px border-b-2 border-accent px-3 py-2 text-sm text-fg' }}
-        >
+        <Link key={tab.to} to={tab.to} className={TAB} activeProps={{ className: TAB_ON }}>
           {t(tab.labelKey)}
         </Link>
       ))}

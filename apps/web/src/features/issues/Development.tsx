@@ -48,7 +48,7 @@ export function Development({ issueId }: { issueId: string }) {
 
   return (
     <Card className="flex flex-col gap-2" data-testid="issue-development">
-      <h2 className="text-sm font-medium text-muted">{t('issues:development.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:development.title')}</h2>
       {links.isError ? <Alert>{describeError(links.error)}</Alert> : null}
       <ul className="flex flex-col gap-2 text-sm">
         {(links.data ?? []).map((row) => (

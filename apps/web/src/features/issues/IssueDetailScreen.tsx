@@ -172,7 +172,7 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
     return (
       <Card className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted">{t('issues:detail.description')}</h2>
+          <h2 className="text-sm font-semibold text-fg">{t('issues:detail.description')}</h2>
           <Button variant="ghost" onClick={startEditing}>
             {t('issues:detail.edit')}
           </Button>
@@ -244,7 +244,7 @@ function Transitions({ issue, onMoved }: { issue: Issue; onMoved: () => void }) 
 
   return (
     <Card className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium text-muted">{t('issues:transition.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:transition.title')}</h2>
       {move.isError ? <Alert>{describeError(move.error)}</Alert> : null}
       {transitions.data.length === 0 ? (
         <p className="text-sm text-muted">{t('issues:transition.none')}</p>
@@ -344,7 +344,7 @@ function Details({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
 
   return (
     <Card className="flex h-fit flex-col gap-4 p-4">
-      <h2 className="text-sm font-medium text-muted">{t('issues:detail.details')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:detail.details')}</h2>
 
       <Row label={t('issues:detail.type')}>{issue.type_name}</Row>
 
@@ -523,7 +523,11 @@ function CustomFields({ issue, onSaved }: { issue: Issue; onSaved: () => void })
 
   return (
     <div className="flex flex-col gap-3 border-t border-border pt-3">
-      <h3 className="text-xs font-medium text-muted">{t('issues:detail.customFields')}</h3>
+      {/* 칸 안의 작은 구획. 카드 제목(`text-sm font-semibold`)과 같은
+          모양이면 둘이 나란히 섰을 때 어느 쪽이 위인지 안 보인다. */}
+      <h3 className="text-2xs font-semibold uppercase tracking-wide text-subtle">
+        {t('issues:detail.customFields')}
+      </h3>
       {rows.map((definition) => (
         <CustomField
           key={definition.id}
@@ -606,7 +610,7 @@ function SlaRows({ rows }: { rows: SlaStanding[] }) {
 
   return (
     <Card className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium text-muted">{t('desk:sla.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('desk:sla.title')}</h2>
       {rows.map((row) => (
         <Row key={`${row.policy_name}-${row.metric}`} label={row.policy_name}>
           {row.completed ? (
@@ -652,7 +656,7 @@ function TicketFacts({ ticket }: { ticket: AgentTicket }) {
 
   return (
     <Card className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium text-muted">{t('desk:agent.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('desk:agent.title')}</h2>
       {/* **SLA 를 맨 위에 둔다.** 상담원이 이 티켓에서 먼저 알아야 하는 것은
           "언제까지인가" 다 — 누가 냈는지보다 그것이 먼저 시간에 쫓긴다. */}
       {ticket.sla.length > 0 ? <SlaRows rows={ticket.sla} /> : null}
@@ -778,7 +782,7 @@ function Comments({
 
   return (
     <Card className="flex flex-col gap-4">
-      <h2 className="text-sm font-medium text-muted">{t('issues:comment.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:comment.title')}</h2>
 
       {comments.isPending ? null : comments.isError ? (
         <Alert>{describeError(comments.error)}</Alert>
@@ -902,7 +906,7 @@ function History({ issueId }: { issueId: string }) {
 
   return (
     <Card className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium text-muted">{t('issues:history.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:history.title')}</h2>
       {history.data.length === 0 ? (
         <p className="text-sm text-muted">{t('issues:history.empty')}</p>
       ) : (

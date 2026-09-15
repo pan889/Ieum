@@ -1,5 +1,7 @@
 {
   "calm": "Nothing overdue and nothing due today.",
+  "due.overdue": "Overdue",
+  "due.today": "Due today",
   "endsAt": "Ends {when}",
   "myIssues": "Assigned to me",
   "mySprints": "Sprints with my work",

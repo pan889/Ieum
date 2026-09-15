@@ -9,7 +9,7 @@ import { useUserNames } from '@/features/issues/hooks'
 import { reportsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { CountBars } from '@/shared/ui/CountBars'
-import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Button, Card, Field, PageHeader, Select } from '@/shared/ui/primitives'
 
 /** 기준 목록은 **서버가 준다**. 손으로 들면 새 기준이 늘 때 화면만 모른다. */
 const FALLBACK_GROUPS = ['status', 'assignee', 'priority', 'type'] as const
@@ -26,22 +26,30 @@ export function CountScreen() {
 
   return (
     <section className="mx-auto flex max-w-3xl flex-col gap-5">
-      <h1 className="text-xl font-semibold">{t('reports:title')}</h1>
+      <PageHeader title={t('reports:title')} />
 
       <Card>
+        {/*
+          질의 한 줄과 고르개 하나에 폭 768을 다 쓰고, **꽉 찬 파란 막대**가
+          바닥에 깔려 있었다. 전송 단추는 자기 글자만큼만 넓다 — 폼 폭을 꽉
+          채운 단추는 손가락으로 누르는 화면의 모양이지 업무 도구가 아니다.
+        */}
         <form
-          className="flex flex-col gap-4"
+          className="flex flex-wrap items-end gap-3"
           onSubmit={(event) => {
             event.preventDefault()
             run.mutate({ iql, group_by: groupBy })
           }}
         >
-          <Field
-            label={t('reports:query')}
-            hint={t('reports:queryHint')}
-            value={iql}
-            onChange={(e) => { setIql(e.target.value) }}
-          />
+          <div className="min-w-64 flex-1">
+            <Field
+              label={t('reports:query')}
+              hint={t('reports:queryHint')}
+              className="w-full"
+              value={iql}
+              onChange={(e) => { setIql(e.target.value) }}
+            />
+          </div>
           <Select
             label={t('reports:groupBy')}
             value={groupBy}
@@ -53,7 +61,9 @@ export function CountScreen() {
               </option>
             ))}
           </Select>
-          <Button type="submit" loading={run.isPending}>
+          {/* 힌트 한 줄이 입력 아래에 붙으므로 `items-end` 만으로는 밑변이
+              안 맞는다. 입력 칸과 같은 높이로 세운다. */}
+          <Button type="submit" className="mb-px" loading={run.isPending}>
             {t('reports:run')}
           </Button>
         </form>

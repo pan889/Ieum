@@ -134,6 +134,23 @@ async function reuse(find, make) {
 /** 목록 응답은 맨 배열일 때도 `{ items }` 일 때도 있다. */
 const asList = (body) => (Array.isArray(body) ? body : (body.items ?? []))
 
+/**
+ * 키·메일로 **서버에 물어서** 찾는다. 앞 N개를 받아 훑지 않는다.
+ *
+ * `?limit=100` 으로 받아 `find` 하고 있었고, 개발 DB 의 프로젝트가 백 개를
+ * 넘자 WEB 을 못 찾아 새로 만들려다 409 로 죽었다 — `ux-principles` 의
+ * "잘린 선택 목록" 과 **같은 자리, 다섯 번째**다. 서버가 `q` 로 찾아 주므로
+ * 한 번만 물으면 된다.
+ *
+ * `q` 는 부분 일치다(`WEB` 이 `WEBX` 에도 맞는다). 그래서 받은 것 중에서
+ * 다시 정확히 고른다 — 비슷한 것을 대신 쓰면 사진이 엉뚱한 프로젝트를
+ * 보여 준다.
+ */
+async function findBy(path, term, matches) {
+  const page = await call('GET', `${path}${path.includes('?') ? '&' : '?'}q=${encodeURIComponent(term)}&limit=20`)
+  return asList(page).find(matches) ?? null
+}
+
 async function seedDemo() {
   const signedIn = await call('POST', '/api/v1/auth/login', { email: EMAIL, password: PASSWORD })
   token = signedIn.access_token
@@ -149,8 +166,7 @@ async function seedDemo() {
   }
 
   const project = await reuse(
-    async () =>
-      (await call('GET', '/api/v1/projects?limit=100')).items?.find((p) => p.key === 'WEB'),
+    () => findBy('/api/v1/projects', 'WEB', (p) => p.key === 'WEB'),
     () =>
       call('POST', '/api/v1/projects', {
         key: 'WEB',
@@ -182,9 +198,17 @@ async function seedDemo() {
   })
 
   // 배정할 사람. 초대만 된 계정도 담당자로 붙는다.
-  const everyone = (await call('GET', '/api/v1/users?limit=50')).items ?? []
-  const me = everyone.find((u) => u.email === EMAIL)
-  const mates = PEOPLE.map((p) => everyone.find((u) => u.email === p.email)).filter(Boolean)
+  //
+  // 여기도 앞 50명을 받아 훑고 있었다. 개발 DB 에 사람이 수백이 되자 시드
+  // 관리자조차 그 50 안에 없었고, `me` 가 `undefined` 가 되어 "내게 배정된
+  // 이슈" 칸이 빈 채로 찍혔다. 메일로 서버에 묻는다.
+  const me = await findBy('/api/v1/users', EMAIL, (u) => u.email === EMAIL)
+  if (!me) throw new Error(`시드 관리자를 못 찾았다: ${EMAIL}`)
+  const mates = []
+  for (const person of PEOPLE) {
+    const found = await findBy('/api/v1/users', person.email, (u) => u.email === person.email)
+    if (found) mates.push(found)
+  }
 
   const listed = await call('GET', `/api/v1/issues?project_id=${project.id}&limit=100`)
   let made = listed.items ?? []

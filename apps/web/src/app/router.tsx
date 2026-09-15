@@ -47,6 +47,7 @@ import { GanttScreen } from '@/features/gantt/GanttScreen'
 import { CountScreen } from '@/features/reports/CountScreen'
 
 import { AppShell } from './AppShell'
+import { NotFound } from './NotFound'
 
 const rootRoute = createRootRoute({ component: AppShell })
 
@@ -395,7 +396,9 @@ const routeTree = rootRoute.addChildren([
   notificationsRoute,
 ])
 
-export const router = createRouter({ routeTree })
+// 없는 주소도 **앱 안에서** 받는다. 기본값은 "Not Found" 네 글자뿐이라,
+// 돌아갈 길이 없다(`NotFound` 주석).
+export const router = createRouter({ routeTree, defaultNotFoundComponent: NotFound })
 
 declare module '@tanstack/react-router' {
   interface Register {

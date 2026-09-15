@@ -26,7 +26,7 @@ export function LinkedDocs({ issueId }: { issueId: string }) {
 
   return (
     <Card className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium text-muted">{t('issues:linkedDocs.title')}</h2>
+      <h2 className="text-sm font-semibold text-fg">{t('issues:linkedDocs.title')}</h2>
       {docs.isError ? <Alert>{describeError(docs.error)}</Alert> : null}
       <ul className="flex flex-col gap-1 text-sm">
         {(docs.data ?? []).map((doc) => (

@@ -107,7 +107,7 @@ export function Attachments({
       }}
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-muted">{t('issues:attachments.title')}</h2>
+        <h2 className="text-sm font-semibold text-fg">{t('issues:attachments.title')}</h2>
         <Button
           variant="ghost"
           className="text-xs"

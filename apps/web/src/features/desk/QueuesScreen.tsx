@@ -26,7 +26,7 @@ import { categoryTone, formatDateTime, priorityLabel } from '@/features/issues/f
 import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { deskApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, EmptyState, Field, PageHeader } from '@/shared/ui/primitives'
 
 import { CannedResponses } from './CannedResponses'
 
@@ -89,14 +89,21 @@ export function QueuesScreen() {
 
   return (
     <section className="flex flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">{t('desk:queues.title')}</h1>
-        <p className="text-sm text-muted">{t('desk:queues.description')}</p>
-        {/* 리포트는 상담원이 여는 자리라 설정이 아니라 여기서 잇는다. */}
-        <Link to="/desk/reports" className="text-sm text-accent hover:underline">
-          {t('desk:report.title')}
-        </Link>
-      </header>
+      <PageHeader
+        title={t('desk:queues.title')}
+        description={t('desk:queues.description')}
+        actions={
+          /* 리포트는 상담원이 여는 자리라 설정이 아니라 여기서 잇는다.
+             전에는 설명 아래에 링크 한 줄로 붙어 있었는데, 화면 머리의
+             **조작 자리**는 오른쪽이다 — 다른 화면이 전부 그렇다. */
+          <Link
+            to="/desk/reports"
+            className="text-sm font-medium text-accent hover:underline"
+          >
+            {t('desk:report.title')}
+          </Link>
+        }
+      />
 
       <ProjectPicker label={t('desk:queues.project')} chosen={project} onPick={setPicked} />
 
@@ -104,7 +111,21 @@ export function QueuesScreen() {
       {/* 조회가 성공했을 때만 "아직 없다" 를 말한다. 403 과 나란히 그리면
           있는지 없는지 **모르는** 상태를 "없다" 로 단정하게 된다. */}
       {queues.isSuccess && rows.length === 0 && !adding ? (
-        <p className="text-sm text-muted">{t('desk:queues.empty')}</p>
+        <EmptyState
+          title={t('desk:queues.empty')}
+          action={
+            <Button
+              type="button"
+              onClick={() => {
+                setEditing(null)
+                setForm(EMPTY)
+                setAdding(true)
+              }}
+            >
+              {t('desk:queues.add')}
+            </Button>
+          }
+        />
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -112,15 +133,18 @@ export function QueuesScreen() {
           <Button
             key={queue.id}
             type="button"
-            variant={open?.id === queue.id ? 'primary' : 'ghost'}
+            variant={open?.id === queue.id ? 'primary' : 'secondary'}
             onClick={() => { setOpenQueue(queue.id) }}
           >
             {queue.name}
           </Button>
         ))}
+        {/* 빈 화면에서는 위 `EmptyState` 가 같은 단추를 이미 낸다. 둘 다
+            그리면 "새 큐" 가 한 화면에 두 번 보인다. */}
         <Button
           type="button"
           variant="ghost"
+          hidden={rows.length === 0 && !adding}
           onClick={() => {
             setEditing(null)
             setForm(EMPTY)

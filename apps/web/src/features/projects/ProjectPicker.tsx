@@ -77,12 +77,16 @@ export function ProjectPicker({
 
   if (!open) {
     return (
-      <div className="flex items-baseline gap-2">
-        <span className="text-xs font-medium text-muted">{label}</span>
-        <span className="text-sm">
+      // 라벨은 필터 막대의 다른 도랑 라벨과 **같은 모양**이다. 화면마다
+      // 조금씩 다른 회색 글자가 서 있으면 그 자체가 덜 만든 티가 난다.
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+          {label}
+        </span>
+        <span className="text-sm font-medium text-fg">
           {chosen ? `${chosen.key} · ${chosen.name}` : (unresolvedLabel ?? nothing)}
         </span>
-        <Button variant="ghost" className="text-xs" onClick={() => { setOpen(true) }}>
+        <Button variant="ghost" size="sm" onClick={() => { setOpen(true) }}>
           {chosen ? t('projects:pick.change') : t('common:action.choose')}
         </Button>
       </div>

@@ -1,5 +1,7 @@
 {
   "calm": "지난 기한도, 오늘까지 할 일도 없습니다.",
+  "due.overdue": "기한 지남",
+  "due.today": "오늘까지",
   "endsAt": "끝: {when}",
   "myIssues": "내게 배정된 이슈",
   "mySprints": "내 일이 든 스프린트",

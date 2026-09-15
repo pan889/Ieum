@@ -7,7 +7,7 @@ import type { Project } from '@ieum/api-client'
 import { WatchButton } from '@/features/notifications/WatchButton'
 import { notificationsApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Button, Card, EmptyState, Field, PageHeader } from '@/shared/ui/primitives'
 
 export function ProjectsScreen() {
   const { t } = useTranslation(['projects', 'common'])
@@ -42,17 +42,26 @@ export function ProjectsScreen() {
   const items = projects.data.pages.flatMap((page) => page.items)
 
   return (
-    <section className="mx-auto max-w-3xl">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('projects:list.title')}</h1>
-        <Button onClick={() => { setCreating((v) => !v); }}>{t('projects:create.title')}</Button>
-      </header>
+    <section className="mx-auto flex max-w-3xl flex-col gap-4">
+      <PageHeader
+        title={t('projects:list.title')}
+        actions={
+          <Button onClick={() => { setCreating((v) => !v); }}>
+            {t('projects:create.title')}
+          </Button>
+        }
+      />
 
       {/* 페이지를 넘겨 가며 찾게 하지 않는다. 프로젝트가 수십 개만 돼도
-          "더 보기" 를 몇 번씩 누르는 건 검색이 아니다. */}
+          "더 보기" 를 몇 번씩 누르는 건 검색이 아니다.
+
+          라벨은 접근성 트리에만 둔다 — 같은 말을 자리표시자가 이미 하고
+          있는데 위에 또 적으면, 상자 위에 글자 한 줄이 떠 있게 된다. */}
       <Field
         label={t('projects:list.search')}
-        className="mt-4"
+        labelHidden
+        placeholder={t('projects:list.search')}
+        className="max-w-sm"
         value={search}
         onChange={(e) => { setSearch(e.target.value); }}
       />
@@ -73,16 +82,12 @@ export function ProjectsScreen() {
       ) : null}
 
       {items.length === 0 ? (
-        <Card className="mt-6 text-center">
-          {/* 검색 결과가 없는 것과 프로젝트가 없는 것은 다른 상황이다.
-              "첫 프로젝트를 만드세요" 라고 하면 있는 걸 없다고 말하는 셈이다. */}
-          <p className="font-medium">
-            {search.trim() ? t('projects:list.noMatch') : t('projects:list.empty')}
-          </p>
-          {search.trim() ? null : (
-            <p className="mt-1 text-sm text-muted">{t('projects:list.emptyHint')}</p>
-          )}
-        </Card>
+        /* 검색 결과가 없는 것과 프로젝트가 없는 것은 다른 상황이다.
+           "첫 프로젝트를 만드세요" 라고 하면 있는 걸 없다고 말하는 셈이다. */
+        <EmptyState
+          title={search.trim() ? t('projects:list.noMatch') : t('projects:list.empty')}
+          description={search.trim() ? undefined : t('projects:list.emptyHint')}
+        />
       ) : (
         <ProjectRows items={items} />
       )}
@@ -90,7 +95,7 @@ export function ProjectsScreen() {
       {projects.hasNextPage ? (
         <Button
           variant="secondary"
-          className="mt-3 self-start"
+          className="self-start"
           loading={projects.isFetchingNextPage}
           onClick={() => { void projects.fetchNextPage() }}
         >
@@ -126,23 +131,32 @@ function ProjectRows({ items }: { items: Project[] }) {
   const watching = watched.data ? new Set(watched.data.watching) : null
 
   return (
-    <ul className="mt-6 flex flex-col gap-2" data-testid="projects">
+    /*
+      **한 줄짜리 정보를 카드 하나씩 주지 않는다.** 전에는 프로젝트마다
+      카드가 하나였고, 글자 한 줄에 66픽셀을 썼다 — 화면에 열두 개가 들어
+      갔다. 목록은 한 상자 안에서 줄로 나뉘는 것이 맞다.
+    */
+    <ul
+      className="divide-y divide-border overflow-hidden rounded-card border border-border bg-surface shadow-raised"
+      data-testid="projects"
+    >
       {items.map((project) => (
-        <li key={project.id}>
-          <Card className="flex items-baseline gap-3 py-3">
-            <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-muted">
-              {project.key}
-            </code>
-            <span className="font-medium">{project.name}</span>
-            {project.archived_at ? (
-              <span className="text-xs text-muted">{t('projects:detail.archived')}</span>
+        <li
+          key={project.id}
+          className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-surface-raised"
+        >
+          <code className="shrink-0 rounded border border-border bg-sunken px-1.5 py-0.5 font-mono text-xs text-muted">
+            {project.key}
+          </code>
+          <span className="min-w-0 flex-1 truncate font-medium text-fg">{project.name}</span>
+          {project.archived_at ? (
+            <span className="shrink-0 text-xs text-subtle">{t('projects:detail.archived')}</span>
+          ) : null}
+          <span className="shrink-0">
+            {watching ? (
+              <WatchButton target="project" id={project.id} known={watching.has(project.id)} />
             ) : null}
-            <span className="ml-auto shrink-0">
-              {watching ? (
-                <WatchButton target="project" id={project.id} known={watching.has(project.id)} />
-              ) : null}
-            </span>
-          </Card>
+          </span>
         </li>
       ))}
     </ul>
@@ -160,7 +174,7 @@ function CreateProjectForm({ onCreated }: { onCreated: () => void }) {
   })
 
   return (
-    <Card className="mt-4">
+    <Card>
       <form
         className="flex flex-col gap-4"
         onSubmit={(event) => {

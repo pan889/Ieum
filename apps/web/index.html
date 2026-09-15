@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ieum</title>
+    <!--
+      테마를 **첫 칠하기 전에** 정한다. React 가 붙은 뒤에 찍으면 어두운
+      설정인 사람에게 흰 화면이 한 번 번쩍인다. 규칙은 `shared/theme.ts` 와
+      같아야 한다(키 이름, 'system' 의 뜻).
+    -->
+    <script>
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('ieum.theme')
+          var dark =
+            saved === 'dark' ||
+            ((saved === null || saved === 'system') &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
+        } catch (err) {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
   </head>
   <body class="bg-bg text-fg">
     <div id="root"></div>

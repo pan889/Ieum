@@ -22,7 +22,7 @@ import { formatRelative } from '@/features/issues/format'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { usersApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Card, Field, PageHeader } from '@/shared/ui/primitives'
 
 const EMPTY_INVITE = { email: '', display_name: '' }
 
@@ -78,19 +78,18 @@ export function UsersScreen() {
   return (
     <section className="mx-auto flex max-w-4xl flex-col gap-5">
       <SettingsNav />
-      <header className="flex items-baseline gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">{t('admin:users.title')}</h1>
-          <p className="mt-1 text-sm text-muted">{t('admin:users.description')}</p>
-        </div>
-        <Button
-          className="ml-auto shrink-0 text-xs"
-          variant={inviting ? 'ghost' : 'primary'}
-          onClick={() => { setInviting(!inviting) }}
-        >
-          {inviting ? t('common:action.cancel') : t('admin:users.invite')}
-        </Button>
-      </header>
+      <PageHeader
+        title={t('admin:users.title')}
+        description={t('admin:users.description')}
+        actions={
+          <Button
+            variant={inviting ? 'secondary' : 'primary'}
+            onClick={() => { setInviting(!inviting) }}
+          >
+            {inviting ? t('common:action.cancel') : t('admin:users.invite')}
+          </Button>
+        }
+      />
 
       {users.isError ? <Alert>{describeError(users.error)}</Alert> : null}
       {send.isError ? <Alert>{describeError(send.error)}</Alert> : null}
@@ -131,15 +130,21 @@ export function UsersScreen() {
 
       <Field
         label={t('admin:users.search')}
+        labelHidden
+        placeholder={t('admin:users.search')}
+        className="max-w-sm"
         value={query}
         onChange={(event) => { setQuery(event.target.value) }}
       />
 
       {/* 이름을 붙인다. 화면에 목록이 여럿이면 "목록" 만으로는 어느 쪽인지
           알 수 없다 — 보조 기술에도, 테스트에도 똑같이 그렇다. */}
-      <ul className="flex flex-col gap-2" aria-label={t('admin:users.title')}>
+      <ul
+        className="divide-y divide-border overflow-hidden rounded-card border border-border bg-surface shadow-raised"
+        aria-label={t('admin:users.title')}
+      >
         {rows.map((user) => (
-          <li key={user.id}>
+          <li key={user.id} className="hover:bg-surface-raised">
             <UserCard
               user={user}
               busy={
@@ -187,7 +192,9 @@ function UserCard({
   const suspended = user.status === 'suspended'
 
   return (
-    <Card className="flex flex-wrap items-center gap-3">
+    // 사람 하나에 카드 하나가 아니라 **한 상자 안의 한 줄**이다. 조직에
+    // 사람이 백 명이면 카드 백 개를 스크롤하게 된다.
+    <div className="flex flex-wrap items-center gap-3 px-3 py-2">
       <div className="flex min-w-0 flex-col gap-0.5">
         <p className="truncate text-sm font-medium">
           {user.display_name}
@@ -211,7 +218,7 @@ function UserCard({
       <div className="ml-auto flex shrink-0 flex-wrap gap-1">
         <Button
           variant="ghost"
-          className="text-xs"
+          size="sm"
           aria-label={t('users.mfaToggleLabel', { name: user.display_name })}
           loading={busy}
           onClick={onRequireMfa}
@@ -222,7 +229,7 @@ function UserCard({
             본인도 못 들어온다 — 필요한 것은 그 기기를 끊는 것뿐이다. */}
         <Button
           variant="ghost"
-          className="text-xs"
+          size="sm"
           aria-label={t('users.revokeLabel', { name: user.display_name })}
           loading={busy}
           onClick={onRevoke}
@@ -235,7 +242,7 @@ function UserCard({
         {user.status === 'suspended' ? null : (
           <Button
             variant="ghost"
-            className="text-xs"
+            size="sm"
             aria-label={t('users.reinviteLabel', { name: user.display_name })}
             loading={busy}
             onClick={onReinvite}
@@ -245,7 +252,7 @@ function UserCard({
         )}
         <Button
           variant={suspended ? 'primary' : 'secondary'}
-          className="text-xs"
+          size="sm"
           aria-label={
             suspended
               ? t('users.reactivateLabel', { name: user.display_name })
@@ -257,7 +264,7 @@ function UserCard({
           {suspended ? t('users.reactivate') : t('users.suspend')}
         </Button>
       </div>
-    </Card>
+    </div>
   )
 }
 

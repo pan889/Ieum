@@ -16,7 +16,7 @@ import type { SearchHit, SearchKind } from '@ieum/api-client'
 import { formatDateTime } from '@/features/issues/format'
 import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Badge, Button, Card, Field } from '@/shared/ui/primitives'
+import { Alert, Badge, Button, Chip, EmptyState, Field, PageHeader } from '@/shared/ui/primitives'
 
 import { splitByKeywords } from './highlight'
 
@@ -63,46 +63,68 @@ function SearchView() {
 
   return (
     <section className="mx-auto flex max-w-3xl flex-col gap-4">
+      {/* 화면에 이름이 없었다. 작은 라벨 하나와 상자가 위에 떠 있으면
+          여기가 어디인지 말해 주는 것이 아무것도 없다. */}
+      <PageHeader title={t('search:query')} />
+
       <form
-        className="flex items-end gap-2"
+        className="flex items-center gap-2"
         onSubmit={(event) => { event.preventDefault(); go({ q: draft }) }}
       >
-        <Field
-          label={t('search:query')}
-          className="flex-1"
-          autoFocus
-          value={draft}
-          onChange={(e) => { setDraft(e.target.value) }}
-        />
+        {/* `Field` 의 `className` 은 **입력에** 붙는다. 감싸개에 `flex-1` 을
+            주려면 감싸개를 여기서 만들어야 한다 — 전에는 상자가 안 늘어나
+            검색창이 화면 폭의 1/3 이었다. */}
+        <div className="flex-1">
+          <Field
+            label={t('search:query')}
+            labelHidden
+            className="w-full"
+            autoFocus
+            value={draft}
+            onChange={(e) => { setDraft(e.target.value) }}
+          />
+        </div>
         <Button type="submit">{t('search:run')}</Button>
       </form>
 
-      <div className="flex flex-wrap items-baseline gap-2 text-sm">
-        <KindTab active={search.kind === undefined} onClick={() => { go({ kind: undefined }) }}>
+      <div className="flex flex-wrap items-center gap-1.5 text-sm">
+        {/* 갈래는 필터 막대의 칩과 **같은 것**이다. 여기서만 손으로 그린
+            작은 알약을 쓰면, 같은 조작이 화면마다 다르게 생긴다. */}
+        <Chip pressed={search.kind === undefined} onClick={() => { go({ kind: undefined }) }}>
           {t('search:kind.all')}
-        </KindTab>
+        </Chip>
         {KINDS.map((kind) => (
-          <KindTab key={kind} active={search.kind === kind} onClick={() => { go({ kind }) }}>
+          <Chip key={kind} pressed={search.kind === kind} onClick={() => { go({ kind }) }}>
             {t(`search:kind.${kind}`)}
-          </KindTab>
+          </Chip>
         ))}
         {results.data ? (
-          <span className="ml-auto text-xs text-muted">{t('search:count', { count: total })}</span>
+          <span className="ml-auto text-xs tabular-nums text-subtle">
+            {t('search:count', { count: total })}
+          </span>
         ) : null}
       </div>
 
       {results.isError ? <Alert>{describeError(results.error)}</Alert> : null}
       {search.q.trim() === '' ? (
-        <p className="text-sm text-muted">{t('search:empty')}</p>
+        <EmptyState title={t('search:empty')} />
       ) : !results.data ? (
         <p className="text-sm text-muted">{t('common:state.loading')}</p>
       ) : results.data.items.length === 0 ? (
-        <p className="text-sm text-muted">{t('search:none', { query: search.q })}</p>
+        <EmptyState title={t('search:none', { query: search.q })} />
       ) : (
-        /* 목록에 이름을 붙인다. 사이드바 메뉴도 목록이라 이름 없이는 구분이 안 된다. */
-        <ul aria-label={t('search:results')} className="flex flex-col gap-2">
+        /* 목록에 이름을 붙인다. 사이드바 메뉴도 목록이라 이름 없이는 구분이
+           안 된다. 결과 하나에 카드 하나를 주지 않는다 — 스무 개를 훑는
+           화면에서 한 줄에 88픽셀은 세 번 스크롤이다. */
+        <ul
+          aria-label={t('search:results')}
+          className="divide-y divide-border overflow-hidden rounded-card border border-border bg-surface shadow-raised"
+        >
           {results.data.items.map((hit) => (
-            <li key={`${hit.kind}:${hit.entity_id}`}>
+            <li
+              key={`${hit.kind}:${hit.entity_id}`}
+              className="px-3 py-2 hover:bg-surface-raised"
+            >
               <Hit hit={hit} keywords={results.data.keywords} />
             </li>
           ))}
@@ -112,17 +134,19 @@ function SearchView() {
       {total > PAGE_SIZE ? (
         <div className="flex items-center gap-2">
           <Button
-            variant="ghost"
-            className="text-xs"
+            variant="secondary"
+            size="sm"
             disabled={search.offset === 0}
             onClick={() => { page(Math.max(0, search.offset - PAGE_SIZE)) }}
           >
             {t('common:action.previous')}
           </Button>
-          <span className="text-xs text-muted">{t('search:range', { shown, total })}</span>
+          <span className="text-xs tabular-nums text-subtle">
+            {t('search:range', { shown, total })}
+          </span>
           <Button
-            variant="ghost"
-            className="text-xs"
+            variant="secondary"
+            size="sm"
             disabled={shown >= total}
             onClick={() => { page(search.offset + PAGE_SIZE) }}
           >
@@ -134,50 +158,25 @@ function SearchView() {
   )
 }
 
-function KindTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      className={
-        active
-          ? 'rounded border border-accent bg-accent px-2 py-0.5 text-xs text-accent-fg'
-          : 'rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-fg'
-      }
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  )
-}
-
 function Hit({ hit, keywords }: { hit: SearchHit; keywords: string[] }) {
   const { t } = useTranslation(['search'])
   return (
-    <Card className="flex flex-col gap-1">
+    <div className="flex flex-col gap-0.5">
       <div className="flex items-baseline gap-2">
         <Badge tone={hit.kind === 'issue' ? 'in_progress' : 'neutral'}>
           {t(`search:kind.${hit.kind}`)}
         </Badge>
         <HitLink hit={hit} />
-        <span className="ml-auto shrink-0 text-xs text-muted">
+        <span className="ml-auto shrink-0 text-xs tabular-nums text-subtle">
           {formatDateTime(hit.updated_at)}
         </span>
       </div>
       {hit.snippet ? (
-        <p className="text-sm text-muted">
+        <p className="line-clamp-2 text-sm text-muted">
           <Highlighted text={hit.snippet} keywords={keywords} />
         </p>
       ) : null}
-    </Card>
+    </div>
   )
 }
 
@@ -187,9 +186,9 @@ function HitLink({ hit }: { hit: SearchHit }) {
       <Link
         to="/issues/$issueKey"
         params={{ issueKey: hit.ref }}
-        className="min-w-0 truncate font-medium text-accent hover:underline"
+        className="min-w-0 truncate text-sm font-medium text-accent hover:underline"
       >
-        <span className="mr-2 font-mono text-xs">{hit.ref}</span>
+        <span className="mr-2 font-mono text-xs text-subtle">{hit.ref}</span>
         {hit.title}
       </Link>
     )
@@ -200,9 +199,9 @@ function HitLink({ hit }: { hit: SearchHit }) {
     <Link
       to="/wiki/$spaceKey/$"
       params={{ spaceKey, _splat: rest.join('/') }}
-      className="min-w-0 truncate font-medium text-accent hover:underline"
+      className="min-w-0 truncate text-sm font-medium text-accent hover:underline"
     >
-      <span className="mr-2 font-mono text-xs">{spaceKey}</span>
+      <span className="mr-2 font-mono text-xs text-subtle">{spaceKey}</span>
       {hit.title}
     </Link>
   )

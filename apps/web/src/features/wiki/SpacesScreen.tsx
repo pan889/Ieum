@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
-import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
+import { Alert, Button, Card, EmptyState, Field, PageHeader, Select } from '@/shared/ui/primitives'
 
 import { useSpaces } from './hooks'
 
@@ -27,18 +27,34 @@ export function SpacesScreen() {
 
   return (
     <section className="mx-auto flex max-w-3xl flex-col gap-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('wiki:spaces.title')}</h1>
-        {/* 내 할 일로 가는 길. 위키의 첫 화면에 둔다 — 태스크는 문서에서
-            오므로 문서를 여는 자리에서 이어지는 것이 자연스럽다. */}
-        <Link to="/wiki/tasks" className="ml-auto text-sm text-accent hover:underline">
-          {t('wiki:tasks.mineTitle')}
-        </Link>
-        <Button onClick={() => { setCreating((v) => !v) }}>{t('wiki:spaces.create')}</Button>
-      </header>
+      <PageHeader
+        title={t('wiki:spaces.title')}
+        actions={
+          <>
+            {/* 내 할 일로 가는 길. 위키의 첫 화면에 둔다 — 태스크는 문서에서
+                오므로 문서를 여는 자리에서 이어지는 것이 자연스럽다.
+
+                전에는 `ml-auto` 로 밀어 놓은 맨 글자였고, 옆의 단추와 겹쳐
+                찍혔다("My tasks" 위에 "New space" 가 올라탔다). 머리의
+                조작 자리는 하나이고 그 안에서 나란히 선다. */}
+            <Link
+              to="/wiki/tasks"
+              className="text-sm font-medium text-accent hover:underline"
+            >
+              {t('wiki:tasks.mineTitle')}
+            </Link>
+            <Button onClick={() => { setCreating((v) => !v) }}>
+              {t('wiki:spaces.create')}
+            </Button>
+          </>
+        }
+      />
 
       <Field
         label={t('wiki:spaces.search')}
+        labelHidden
+        placeholder={t('wiki:spaces.search')}
+        className="max-w-sm"
         value={search}
         onChange={(e) => { setSearch(e.target.value) }}
       />
@@ -46,34 +62,37 @@ export function SpacesScreen() {
       {creating ? <CreateSpaceForm onCreated={() => { setCreating(false) }} /> : null}
 
       {items.length === 0 ? (
-        <Card className="text-center">
-          <p className="font-medium">
-            {search.trim() ? t('wiki:spaces.noMatch') : t('wiki:spaces.empty')}
-          </p>
-          {search.trim() ? null : (
-            <p className="mt-1 text-sm text-muted">{t('wiki:spaces.emptyHint')}</p>
-          )}
-        </Card>
+        <EmptyState
+          title={search.trim() ? t('wiki:spaces.noMatch') : t('wiki:spaces.empty')}
+          description={search.trim() ? undefined : t('wiki:spaces.emptyHint')}
+        />
       ) : (
-        <ul className="flex flex-col gap-2">
+        /* 한 줄짜리 정보에 카드를 하나씩 주지 않는다 — 목록은 한 상자 안에서
+           줄로 나뉜다(`ProjectsScreen` 과 같은 이유). */
+        <ul className="divide-y divide-border overflow-hidden rounded-card border border-border bg-surface shadow-raised">
           {items.map((space) => (
-            <li key={space.id}>
-              <Card className="flex items-baseline gap-3 py-3">
-                <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-muted">
-                  {space.key}
-                </code>
-                <span className="font-medium">{space.name}</span>
-                {space.description ? (
-                  <span className="truncate text-xs text-muted">{space.description}</span>
-                ) : null}
-                <Link
-                  to="/wiki/$spaceKey"
-                  params={{ spaceKey: space.key }}
-                  className="ml-auto shrink-0 text-sm text-accent hover:underline"
-                >
-                  {t('wiki:spaces.open')}
-                </Link>
-              </Card>
+            <li
+              key={space.id}
+              className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-surface-raised"
+            >
+              <code className="shrink-0 rounded border border-border bg-sunken px-1.5 py-0.5 font-mono text-xs text-muted">
+                {space.key}
+              </code>
+              <span className="shrink-0 font-medium text-fg">{space.name}</span>
+              {space.description ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-subtle">
+                  {space.description}
+                </span>
+              ) : (
+                <span className="flex-1" />
+              )}
+              <Link
+                to="/wiki/$spaceKey"
+                params={{ spaceKey: space.key }}
+                className="shrink-0 text-sm font-medium text-accent hover:underline"
+              >
+                {t('wiki:spaces.open')}
+              </Link>
             </li>
           ))}
         </ul>

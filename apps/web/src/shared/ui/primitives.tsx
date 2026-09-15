@@ -12,18 +12,29 @@ import { forwardRef, useId } from 'react'
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
+  size?: 'sm' | 'md' | 'lg'
   loading?: boolean
 }
 
 const VARIANTS: Record<NonNullable<ButtonProps['variant']>, string> = {
-  primary: 'bg-accent text-accent-fg hover:opacity-90',
-  secondary: 'bg-surface-raised text-fg border border-border hover:bg-bg',
-  ghost: 'text-muted hover:text-fg hover:bg-surface-raised',
-  danger: 'bg-danger text-white hover:opacity-90',
+  primary: 'bg-accent text-accent-fg shadow-raised hover:brightness-110 active:brightness-95',
+  // 보조 단추는 **표면 위에 놓인 단추**로 보여야 한다. 전에는 배경보다
+  // 밝은 회색이라 눌리는 것인지 그냥 칸인지 구별이 안 됐다.
+  secondary:
+    'bg-surface text-fg border border-border-strong shadow-raised hover:bg-surface-raised active:bg-sunken',
+  ghost: 'text-muted hover:bg-surface-raised hover:text-fg active:bg-sunken',
+  danger: 'bg-danger text-white shadow-raised hover:brightness-110 active:brightness-95',
+}
+
+const SIZES: Record<NonNullable<ButtonProps['size']>, string> = {
+  sm: 'h-7 gap-1.5 px-2.5 text-xs',
+  md: 'h-8 gap-2 px-3 text-sm',
+  lg: 'h-10 gap-2 px-4 text-base',
 }
 
 export function Button({
   variant = 'primary',
+  size = 'md',
   loading = false,
   disabled,
   className,
@@ -39,9 +50,10 @@ export function Button({
       // 네이티브 button 을 쓴다. div+onClick 은 키보드로 못 쓴다.
       type={type}
       className={clsx(
-        'inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2',
-        'text-sm font-medium transition-opacity',
-        'disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md',
+        'font-medium transition-[background-color,filter,box-shadow] duration-100',
+        'disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none',
+        SIZES[size],
         VARIANTS[variant],
         className,
       )}
@@ -68,10 +80,19 @@ type FieldProps = InputHTMLAttributes<HTMLInputElement> & {
   label: string
   hint?: string
   error?: string | undefined
+  /**
+   * 라벨을 **접근성 트리에만** 둔다. 라벨을 아예 빼는 것과 다르다 — 낭독기
+   * 사용자는 이름 없는 상자를 만나면 무엇을 적는 칸인지 알 수 없다.
+   *
+   * 도구 막대에 놓인 상자가 이것을 쓴다. 한 줄에 선 것들 사이에서 이 칸만
+   * 라벨을 위로 세우면 그 글자가 아무것도 안 붙은 채 허공에 뜬다 — 이슈
+   * 목록의 "Text" 가 정확히 그랬다.
+   */
+  labelHidden?: boolean
 }
 
 export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
-  { label, hint, error, className, ...rest },
+  { label, hint, error, labelHidden = false, className, ...rest },
   ref,
 ) {
   const id = useId()
@@ -81,7 +102,10 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-fg">
+      <label
+        htmlFor={id}
+        className={labelHidden ? 'sr-only' : 'text-sm font-medium text-fg'}
+      >
         {label}
       </label>
       <input
@@ -90,9 +114,9 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy || undefined}
         className={clsx(
-          'rounded-md border bg-surface px-3 py-2 text-sm text-fg',
-          'placeholder:text-muted',
-          error ? 'border-danger' : 'border-border',
+          'h-8 rounded-md border bg-surface px-2.5 text-sm text-fg',
+          'placeholder:text-subtle',
+          error ? 'border-danger' : 'border-border-strong',
           className,
         )}
         {...rest}
@@ -185,8 +209,11 @@ type CardProps = HTMLAttributes<HTMLDivElement> & { ref?: Ref<HTMLDivElement> }
 export function Card({ className, ...rest }: CardProps) {
   return (
     <div
+      // `p-6` 이었다. 업무 도구에서 카드 여섯 칸 여백은 한 화면에 들어가는
+      // 정보를 절반으로 줄인다 — 읽을 것이 많은 화면일수록 숨 쉴 곳은
+      // 카드 **사이**에 두고 안쪽은 조인다.
       className={clsx(
-        'rounded-card border border-border bg-surface p-6 shadow-sm',
+        'rounded-card border border-border bg-surface p-4 shadow-raised',
         className,
       )}
       {...rest}
@@ -215,8 +242,11 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         ref={ref}
         id={id}
         aria-describedby={hint ? `${id}-hint` : undefined}
+        // `Field` 와 **같은 높이·같은 테두리**여야 한다. 전에는 `py-2` 라
+        // 40px 이었고 입력 칸은 32px 이었다 — 한 줄에 나란히 놓으면 눈에
+        // 띄게 어긋났고, 이슈 상세의 오른쪽 칸이 그래서 들쭉날쭉했다.
         className={clsx(
-          'rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg',
+          'h-8 rounded-md border border-border-strong bg-surface px-2 text-sm text-fg',
           className,
         )}
         {...rest}
@@ -294,11 +324,14 @@ export function Chip({
     <button
       type="button"
       aria-pressed={pressed}
+      // 눌린 칩이 **꽉 찬 강조색**이었다. 필터 막대에 스무 개가 늘어서면
+      // 화면에서 제일 시끄러운 것이 필터가 되고, 정작 데이터가 뒤로 밀린다.
+      // 눌렸다는 것만 조용히 말한다 — 색 + 테두리 + 굵기.
       className={clsx(
-        'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+        'inline-flex h-7 items-center rounded-md border px-2.5 text-xs transition-colors',
         pressed
-          ? 'border-accent bg-accent text-accent-fg'
-          : 'border-border bg-surface text-muted hover:text-fg',
+          ? 'border-accent/35 bg-accent-soft font-semibold text-accent'
+          : 'border-border bg-surface font-medium text-muted hover:border-border-strong hover:text-fg',
         className,
       )}
       {...rest}
@@ -313,24 +346,90 @@ export function Badge({
 }: HTMLAttributes<HTMLSpanElement> & {
   tone?: 'neutral' | 'todo' | 'in_progress' | 'done' | 'info' | 'danger'
 }) {
+  // 투명도(`/15`)로 만든 배경은 어느 면 위에 놓이냐에 따라 색이 달라진다.
+  // 표 줄 위와 카드 위에서 같은 배지가 다른 색으로 보였다. 단색 토큰을 쓴다.
   const TONES: Record<string, string> = {
-    neutral: 'bg-surface-raised text-muted',
-    todo: 'bg-surface-raised text-muted',
-    in_progress: 'bg-accent/15 text-accent',
-    done: 'bg-success/15 text-success',
+    neutral: 'border-border bg-sunken text-muted',
+    todo: 'border-border bg-sunken text-muted',
+    in_progress: 'border-accent/25 bg-accent-soft text-accent',
+    done: 'border-success/25 bg-success-soft text-success',
     // 워크플로우 카테고리가 아닌 자리에도 배지가 필요하다(계정 상태 등).
     // `in_progress` 를 재사용하면 색은 맞지만 이름이 거짓말을 한다.
-    info: 'bg-accent/15 text-accent',
-    danger: 'bg-danger/15 text-danger',
+    info: 'border-accent/25 bg-accent-soft text-accent',
+    danger: 'border-danger/25 bg-danger-soft text-danger',
   }
   return (
     <span
       className={clsx(
-        'inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium',
+        'inline-flex items-center rounded border px-1.5 py-px text-2xs font-medium',
         TONES[tone] ?? TONES['neutral'],
         className,
       )}
       {...rest}
     />
+  )
+}
+
+/**
+ * 화면 머리. 제목·설명·조작이 **늘 같은 자리**에 온다.
+ *
+ * 전에는 화면마다 `<h1>` 을 각자 놓았고, 그래서 제목 크기도 아래 여백도
+ * 조작 단추의 위치도 화면마다 달랐다. 옮겨 다니는 사람은 그 흔들림을
+ * "만들다 만 것" 으로 읽는다.
+ */
+export function PageHeader({
+  title,
+  description,
+  actions,
+  className,
+}: {
+  title: ReactNode
+  description?: ReactNode
+  actions?: ReactNode
+  className?: string
+}) {
+  return (
+    <header className={clsx('flex flex-wrap items-start gap-x-4 gap-y-2', className)}>
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-xl font-semibold text-fg">{title}</h1>
+        {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
+      </div>
+      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+    </header>
+  )
+}
+
+/**
+ * 아무것도 없을 때 놓는 자리.
+ *
+ * **빈 화면을 그냥 비워 두지 않는다.** 고를 프로젝트가 없어서 비어 있는
+ * 것인지, 안 불러와진 것인지, 내가 뭘 잘못 눌러서인지 — 비어 있기만 하면
+ * 셋을 구별할 방법이 없다. 무엇이 없는지 말하고, 다음에 할 일을 준다.
+ */
+export function EmptyState({
+  title,
+  description,
+  action,
+  className,
+}: {
+  title: ReactNode
+  description?: ReactNode
+  action?: ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={clsx(
+        'flex flex-col items-center justify-center gap-1 rounded-card',
+        'border border-dashed border-border bg-surface/60 px-6 py-14 text-center',
+        className,
+      )}
+    >
+      <p className="text-md font-medium text-fg">{title}</p>
+      {description ? (
+        <p className="max-w-sm text-balance text-sm text-muted">{description}</p>
+      ) : null}
+      {action ? <div className="mt-3">{action}</div> : null}
+    </div>
   )
 }
