@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto'
 
 import { expect, test as base } from '@playwright/test'
-import type { Locator, Page } from '@playwright/test'
+import type { APIResponse, Locator, Page } from '@playwright/test'
 
 export const ADMIN_EMAIL = process.env['SEED_ADMIN_EMAIL'] ?? 'admin@example.com'
 export const ADMIN_PASSWORD = process.env['SEED_ADMIN_PASSWORD'] ?? 'seed-admin-password-1234'
@@ -289,6 +289,74 @@ async function freshCode(page: Page): Promise<string> {
 }
 
 /**
+ * 인증기 앱이 지금 보여 줄 코드. **`mfa.spec.ts` 가 쓴다.**
+ *
+ * 나머지 픽스처는 아래 주머니의 백업 코드로 지나간다. 그래서 브라우저로
+ * 인증기 코드를 넣는 길 — 제품의 기본 경로 — 은 그 스펙 하나가 지킨다.
+ */
+export async function authenticatorCode(page: Page): Promise<string> {
+  return freshCode(page)
+}
+
+/**
+ * **백업 코드 주머니.**
+ *
+ * TOTP 는 한 계정이 30초에 **한 번만** 통과할 수 있다 — 서버가 재사용을
+ * 막으려고 "맞은 코드의 스텝 이하" 를 거절하기 때문이다
+ * (`identity/service.py` 의 `_verify_totp`). 그래서 이 헬퍼들을 부르는 스펙
+ * 스무 곳이 대부분의 시간을 다음 창을 **기다리며** 보냈다. 쟀다 —
+ * `adminRoles` 의 넷째 시험은 29.5초 중 26.1초가 순수 대기였다.
+ *
+ * 백업 코드에는 그 제약이 없다. 한 번 쓰면 없어질 뿐 서로 다투지 않는다
+ * (`_consume_backup_code`). 그래서 열 개를 받아 두고 하나씩 쓰고, 떨어지기
+ * 전에 **남은 것으로 다시 열어** 열 개를 새로 받는다. 인증기 코드는 실행
+ * 전체에서 딱 한 번, 처음 주머니를 열 때만 쓴다.
+ *
+ * 2차 요소로서 값은 같다 — 서버는 둘을 같은 자리에서 받고 세션에
+ * `mfa_satisfied_at` 을 찍는다(`MFAService.verify`). 그래서 step-up 이 걸린
+ * 화면도 그대로 지나간다.
+ */
+let backupCodes: string[] = []
+
+/**
+ * 주머니를 다시 채우기 시작하는 지점. **0 이 아니다.**
+ *
+ * 채우려면 2FA 를 통과한 세션이 필요하고, 그 세션을 여는 데도 코드가 한 장
+ * 든다. 0 까지 쓰고 나서 채우려 들면 그 한 장이 없어 인증기 창을 기다린다.
+ * 여유를 남기면 그 일이 안 생긴다 — 두 장을 버리는 값으로 산다.
+ */
+const BACKUP_CODE_FLOOR = 2
+
+/**
+ * 2FA 를 증명할 코드 하나. 주머니에 있으면 백업 코드, 없으면 인증기 코드.
+ *
+ * `backup` 이 참이면 **화면의 칸이 다르다** — 백업 코드는 여섯 자리 숫자가
+ * 아니라서 제품이 따로 받는다.
+ */
+async function secondFactor(page: Page): Promise<{ code: string; backup: boolean }> {
+  const spare = backupCodes.shift()
+  if (spare !== undefined) return { code: spare, backup: true }
+  return { code: await freshCode(page), backup: false }
+}
+
+/**
+ * 주머니가 얕으면 열 개를 새로 받는다.
+ *
+ * **새로 받으면 예전 것은 전량 무효가 된다**(`issue_backup_codes`). 그래서
+ * 남은 두어 장을 버리는 셈인데, 바닥까지 쓰는 것보다 싸다 — 위 주석을 보라.
+ *
+ * 못 받아도 멈추지 않는다. 주머니가 비면 인증기로 가고, 느릴 뿐 통과는 한다.
+ */
+async function stockBackupCodes(page: Page, token: string): Promise<void> {
+  if (backupCodes.length > BACKUP_CODE_FLOOR) return
+  const issued = await page.request.post(`${API}/api/v1/auth/mfa/backup-codes`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!issued.ok()) return
+  backupCodes = ((await issued.json()) as { codes: string[] }).codes
+}
+
+/**
  * 앱의 정본 주소.
  *
  * WebAuthn 자격증명은 **호스트에 묶인다**(rp_id). 서버는 `IEUM_BASE_URL` 의
@@ -302,44 +370,55 @@ export const APP_URL = process.env['E2E_APP_URL'] ?? 'http://localhost:5173'
 const STEP_UP_REUSE_MS = 4 * 60_000
 let cached: { token: string; at: number } | null = null
 
+/** 2FA 를 통과한 세션을 API 로 하나 연다. 캐시는 부르는 쪽이 맡는다. */
+async function openStepUpSession(page: Page): Promise<string> {
+  const signedIn = await page.request.post(`${API}/api/v1/auth/login`, { data: MFA_ADMIN })
+  expect(signedIn.ok(), await signedIn.text()).toBe(true)
+  const token = ((await signedIn.json()) as { access_token: string }).access_token
+
+  const verify = async (code: string): Promise<APIResponse> =>
+    page.request.post(`${API}/api/v1/auth/mfa/verify`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { code },
+    })
+
+  // 로그인만으로는 "미완료" 세션이다. 여기서 증명해야 step-up 이 열린다.
+  //
+  // **거절당하면 다른 코드로 한 번 더 시도한다.** 백업 코드가 거절당했다면
+  // 그 묶음이 죽은 것이다 — 새로 발급하면 예전 것이 전량 무효가 되므로 한
+  // 장이 안 들으면 나머지도 안 든다. 그때는 주머니를 버리고 인증기로 간다.
+  // 인증기 코드가 거절당하는 경우는 다르다: 서버는 맞는 스텝을 ±1 에서
+  // 찾으므로 앞 시험이 방금 통과한 직후에는 새 코드도 이전 스텝으로 맞춰질
+  // 수 있고, 다음 스텝을 기다리면 지나간다.
+  let factor = await secondFactor(page)
+  let verified = await verify(factor.code)
+  for (let attempt = 0; attempt < 2 && !verified.ok(); attempt += 1) {
+    if (factor.backup) backupCodes = []
+    factor = await secondFactor(page)
+    verified = await verify(factor.code)
+  }
+  // 세 번 다 거절이면 코드 문제가 아니다 — 비밀이 어긋난 것이다.
+  expect(verified.ok(), await verified.text()).toBe(true)
+  return token
+}
+
 /**
  * step-up 을 통과할 수 있는 액세스 토큰.
  *
  * step-up 이 필요한 설정(역할·IdP·워크플로우·웹훅)은 **실제로 2FA 를 통과한**
  * 세션만 받는다 — 비밀번호만 통과한 세션은 거절한다(auth.md 6절).
  *
- * 아직 창 안이면 같은 토큰을 다시 준다. 매번 새로 만들면 코드 재사용 방지
- * 때문에 30초씩 기다리게 되고, 한 스펙이 분 단위로 늘어난다. 창을 넘기면
- * 새로 만든다 — 한 번 얻은 것을 스펙 전체에서 돌려쓰면 느린 실행에서만
- * 터지는 테스트가 된다.
+ * 아직 창 안이면 같은 토큰을 다시 준다. 창을 넘기면 새로 만든다 — 한 번 얻은
+ * 것을 스펙 전체에서 돌려쓰면 느린 실행에서만 터지는 테스트가 된다.
  */
 export async function stepUpToken(page: Page): Promise<string> {
-  if (cached && Date.now() - cached.at < STEP_UP_REUSE_MS) return cached.token
-
-  const signedIn = await page.request.post(`${API}/api/v1/auth/login`, { data: MFA_ADMIN })
-  expect(signedIn.ok(), await signedIn.text()).toBe(true)
-  const token = ((await signedIn.json()) as { access_token: string }).access_token
-
-  // 로그인만으로는 "미완료" 세션이다. 여기서 증명해야 step-up 이 열린다.
-  //
-  // **거절당하면 다음 스텝으로 한 번 더 시도한다.** `signInWithMfa` 와 같은
-  // 이유다: 서버는 "맞은 코드의 스텝 이하" 를 거절하고 맞는 스텝을 ±1 에서
-  // 찾으므로, 앞 시험이 방금 통과한 직후에는 새 코드도 이전 스텝으로
-  // 맞춰질 수 있다. 한 스펙에서 두 경로를 다 쓰면 실제로 그렇게 붉어진다.
-  let verified = await page.request.post(`${API}/api/v1/auth/mfa/verify`, {
-    headers: { Authorization: `Bearer ${token}` },
-    data: { code: await freshCode(page) },
-  })
-  for (let attempt = 0; attempt < 2 && !verified.ok(); attempt += 1) {
-    verified = await page.request.post(`${API}/api/v1/auth/mfa/verify`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { code: await freshCode(page) },
-    })
+  if (cached === null || Date.now() - cached.at >= STEP_UP_REUSE_MS) {
+    cached = { token: await openStepUpSession(page), at: Date.now() }
   }
-  // 세 번 다 거절이면 스텝 문제가 아니다 — 비밀이 어긋난 것이다.
-  expect(verified.ok(), await verified.text()).toBe(true)
-  cached = { token, at: Date.now() }
-  return token
+  // 주머니를 채울 수 있는 유일한 자리다 — 발급은 2FA 를 통과한 세션만 할 수
+  // 있다(`issue_backup_codes`).
+  await stockBackupCodes(page, cached.token)
+  return cached.token
 }
 
 /**
@@ -444,7 +523,26 @@ export async function signInAsCustomer(
   await expect(page.getByRole('link', { name: /^projects$/i })).toHaveCount(0)
 }
 
+/**
+ * 2단계 화면에서 넣을 칸을 고른다. **화면이 스스로 바꾸게 둔다** — 사람이
+ * 쓰는 것과 같은 버튼이다.
+ *
+ * 버튼 글자는 지금 어느 칸인지에 따라 바뀐다: 인증기 칸이면 "백업 코드로",
+ * 백업 칸이면 "인증 앱으로". 그래서 가고 싶은 쪽의 버튼이 보이면 누르고, 안
+ * 보이면 이미 거기 있는 것이다.
+ */
+async function chooseCodeField(page: Page, backup: boolean): Promise<Locator> {
+  const toggle = page.getByRole('button', {
+    name: backup ? /use a backup code|백업 코드로 인증/i : /use your authenticator|인증 앱으로 인증/i,
+  })
+  if (await toggle.isVisible()) await toggle.click()
+  return page.getByLabel(backup ? /backup code|백업 코드/i : /authentication code|인증 코드/i)
+}
+
 export async function signInWithMfa(page: Page): Promise<void> {
+  // 주머니가 얕으면 여기서 채운다. 채워 두어야 아래 루프가 안 기다린다.
+  if (backupCodes.length <= BACKUP_CODE_FLOOR) await stepUpToken(page)
+
   // `signIn` 을 못 쓴다: 그쪽은 앱 셸(로그아웃 버튼)이 뜰 때까지 기다리는데,
   // 이 계정은 비밀번호만으로는 2단계 화면에서 멈춘다.
   await page.goto('/')
@@ -461,34 +559,29 @@ export async function signInWithMfa(page: Page): Promise<void> {
   await page.getByRole('button', { name: /^(sign in|로그인)$/i }).click()
 
   // 로그인만으로는 "미완료" 세션이다. 앱 셸이 2단계 화면을 띄운다.
-  const code = page.getByLabel(/authentication code|인증 코드/i)
-  await expect(code).toBeVisible()
+  await expect(page.getByLabel(/authentication code|인증 코드/i)).toBeVisible()
 
-  // **거절당하면 다음 스텝으로 한 번 더 시도한다.**
-  //
-  // 서버는 재사용을 막으려고 "맞은 코드의 스텝 이하" 를 거절하고, 맞는 스텝을
-  // ±1 범위에서 찾는다. 그래서 앞 시험이 방금 통과한 직후에는, 이 쪽이 새
-  // 스텝의 코드를 보내도 서버가 그것을 이전 스텝으로 맞춰 버리는 경우가
-  // 생긴다 — 스펙 한 파일에서 2FA 로 여러 번 들어가면 실제로 그렇게 붉어진다.
-  //
-  // 한 번 더 시도하면 그 창을 확실히 벗어난다. 무한히 돌지 않는 것이
-  // 중요하다: 비밀이 틀린 것(진짜 결함)과 구별되어야 한다.
+  // **거절당하면 다른 코드로 한 번 더 시도한다.** 이유는 `openStepUpSession`
+  // 쪽 주석과 같다. 무한히 돌지 않는 것이 중요하다: 비밀이 틀린 것(진짜
+  // 결함)과 구별되어야 한다.
   const wrong = page.getByText(/code isn't right|코드가 올바르지/i)
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const digits = await freshCode(page)
+    const factor = await secondFactor(page)
+    const code = await chooseCodeField(page, factor.backup)
     // 한 글자씩 넣고 **들어간 것을 확인한다.** 이 입력은 제어 컴포넌트라
     // 값이 상태로 들어가지 않으면 폼은 빈 코드를 보내고, 서버는 그것을 422 로
     // 거절한다 — 화면에는 "코드가 틀렸다" 도 안 뜬다. 실제로 그렇게 붉어졌고,
     // 원인을 찾는 데 오래 걸렸다. `fill` 이 아니라 타이핑으로 넣는다.
     await code.clear()
-    await code.pressSequentially(digits)
-    await expect(code).toHaveValue(digits)
+    await code.pressSequentially(factor.code)
+    await expect(code).toHaveValue(factor.code)
     await page.getByRole('button', { name: /^(verify|확인)$/i }).click()
     // 앱 셸이 뜨거나, 틀렸다는 말이 뜬다. 둘 중 하나는 온다.
     await expect(out.or(wrong).first()).toBeVisible()
     if (await out.isVisible()) return
+    if (factor.backup) backupCodes = []
   }
-  // 세 번 다 거절당했으면 스텝 문제가 아니다 — 비밀이 어긋난 것이다.
+  // 세 번 다 거절당했으면 코드 문제가 아니다 — 비밀이 어긋난 것이다.
   await expect(out).toBeVisible()
 }
 
