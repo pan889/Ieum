@@ -20,6 +20,8 @@ import { chromium } from 'playwright'
 const API = process.env.IEUM_API ?? 'http://127.0.0.1:8000'
 const WEB = process.env.IEUM_WEB ?? 'http://localhost:5173'
 const OUT = 'assets/readme'
+/** 매뉴얼 사이트가 쓰는 자리. mkdocs 의 `docs_dir` 밖은 못 가리키므로 따로 둔다. */
+const MANUAL_OUT = 'manual/docs/assets'
 const EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com'
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'seed-admin-password-1234'
 
@@ -299,6 +301,53 @@ async function seedDemo() {
     await call('POST', `/api/v1/sprints/${sprint.id}/start`, {}).catch(() => undefined)
   }
 
+  /*
+   * **보드와 큐가 없으면 그 화면들은 빈 상자다.** 매뉴얼에 빈 화면을 실으면
+   * 제품이 아무것도 못 하는 것처럼 보인다 — 실제로 처음 찍었을 때 "아직
+   * 보드가 없습니다" 가 찍혔다.
+   */
+  let boards = asList(await call('GET', `/api/v1/boards?project_id=${project.id}`).catch(() => []))
+  if (boards.length === 0) {
+    boards = [await call('POST', '/api/v1/boards', {
+      project_id: project.id,
+      name: '웹 서비스',
+      columns: [
+        { name: '할 일', iql: 'status = "Open"' },
+        { name: '하는 중', iql: 'status = "In Progress"' },
+        { name: '끝', iql: 'status = "Done"' },
+      ],
+      // 스프린트로 거르면 백로그가 안 보여 컬럼이 비어 보인다.
+      sprint_mode: 'all',
+    })]
+  }
+
+  const queues = asList(await call('GET', `/api/v1/queues?project_id=${project.id}`).catch(() => []))
+  if (queues.length === 0) {
+    // 큐는 **조건**이다. 상담원이 실제로 쓰는 것들을 둔다.
+    //
+    // 순서가 중요하다: 화면은 첫 큐를 펼쳐 보여 주는데, 그것이 비어 있으면
+    // 매뉴얼 사진이 "아무 것도 없습니다" 가 된다(처음에 그랬다). 담당자가
+    // 있는 데모 데이터에서 실제로 차는 것을 앞에 둔다.
+    await call('POST', '/api/v1/queues', {
+      project_id: project.id,
+      name: '내가 맡은 것',
+      iql: 'assignee = currentUser() AND status != "Done"',
+      position: 0,
+    }).catch(() => undefined)
+    await call('POST', '/api/v1/queues', {
+      project_id: project.id,
+      name: '안 끝난 것 전부',
+      iql: 'status != "Done" ORDER BY priority DESC',
+      position: 1,
+    }).catch(() => undefined)
+    await call('POST', '/api/v1/queues', {
+      project_id: project.id,
+      name: '아직 안 맡은 것',
+      iql: 'assignee IS EMPTY AND status != "Done"',
+      position: 2,
+    }).catch(() => undefined)
+  }
+
   const space = await reuse(
     () => call('GET', '/api/v1/spaces/by-key/WEB').catch(() => null),
     () => call('POST', '/api/v1/spaces', { key: 'WEB', name: '웹 서비스 팀' }),
@@ -326,17 +375,37 @@ async function seedDemo() {
   const walk = (nodes) => nodes.flatMap((n) => [n, ...walk(n.children ?? [])])
   const flat = walk(asList(await call('GET', `/api/v1/spaces/${space.id}/tree`)))
 
-  return { project, issues: made, space, pages: flat.length ? flat : pages }
+  return { project, issues: made, space, board: boards[0], pages: flat.length ? flat : pages }
 }
 
 // ── 촬영 ──────────────────────────────────────────────────────────
 
-async function shoot(page, name, { full = false } = {}) {
+/**
+ * 프로젝트를 고른다.
+ *
+ * 보드·스프린트·데스크는 **프로젝트를 고르기 전까지 빈 화면**이다. 주소로는
+ * 못 넘긴다 — 고른 것을 화면이 들고 있기 때문이다. 그래서 사람이 하는 것과
+ * 같은 길로 간다(브라우저 시험도 이 길을 쓴다).
+ */
+async function pickProject(page, key) {
+  // **조용히 넘어가지 않는다.** 처음엔 `isVisible().catch(() => false)` 로
+  // 감쌌는데, 그러면 로케이터가 둘을 집었을 때(strict mode) 그 오류가 "안
+  // 보임" 으로 둔갑해 그냥 지나갔다 — 사진은 빈 화면으로 찍혔고 아무도 안
+  // 말해 줬다. 못 고르면 시끄럽게 실패하는 편이 낫다.
+  const change = page.getByRole('button', { name: /change|choose|바꾸기|고르세요/i }).first()
+  await change.click({ timeout: 10_000 })
+  await page.getByRole('textbox', { name: /^project$|프로젝트/i }).first().fill(key)
+  await page.getByRole('button', { name: new RegExp(key) }).first().click()
+  await page.waitForLoadState('networkidle').catch(() => undefined)
+  await page.waitForTimeout(500)
+}
+
+async function shoot(page, name, { full = false, out = OUT } = {}) {
   // 애니메이션과 늦게 오는 값이 사진마다 달라지지 않게 한 박자 기다린다.
   await page.waitForLoadState('networkidle').catch(() => undefined)
   await page.waitForTimeout(400)
-  await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: full })
-  console.log(`  ${OUT}/${name}.png`)
+  await page.screenshot({ path: `${out}/${name}.png`, fullPage: full })
+  console.log(`  ${out}/${name}.png`)
 }
 
 async function main() {
@@ -398,6 +467,54 @@ async function main() {
   await page.waitForLoadState('networkidle').catch(() => undefined)
   await page.keyboard.press('?')
   await shoot(page, '07-shortcuts')
+
+  // ── 매뉴얼 사이트가 쓰는 사진 ────────────────────────────────────
+  //
+  // README 와 겹치는 화면도 **따로 찍는다.** mkdocs 는 `docs_dir` 밖의 파일을
+  // 못 싣고, 복사해 두면 한쪽만 다시 찍은 날 두 문서가 다른 화면을 보여 준다.
+  console.log('매뉴얼 사진을 찍는다…')
+  await mkdir(MANUAL_OUT, { recursive: true })
+  const manual = (name, opts) => shoot(page, name, { ...opts, out: MANUAL_OUT })
+
+  await page.goto(`${WEB}/`)
+  await manual('home')
+
+  await page.goto(`${WEB}/issues?iql=${encodeURIComponent('project = WEB ORDER BY priority DESC')}`)
+  await manual('issues')
+
+  await page.goto(`${WEB}/issues/${demo.issues[0].key}`)
+  await manual('issue')
+
+  // `/boards` 는 **목록**이다. 보드를 보여 주려면 그 안으로 들어가야 한다 —
+  // 처음엔 목록을 찍어 놓고 "보드 화면" 이라고 할 뻔했다.
+  await page.goto(`${WEB}/boards/${demo.board.id}`)
+  await manual('board')
+
+  await page.goto(`${WEB}/sprints`)
+  await pickProject(page, demo.project.key)
+  await manual('sprints')
+
+  const deployPage = demo.pages.find((p) => p.title === '배포 절차') ?? demo.pages[1]
+  await page.goto(`${WEB}/wiki/${demo.space.key}/${encodeURI(deployPage.path)}`)
+  await manual('wiki')
+
+  await page.goto(`${WEB}/search?q=${encodeURIComponent('배포')}&offset=0`)
+  await manual('search')
+
+  await page.goto(`${WEB}/settings/people`)
+  await manual('people')
+
+  /*
+   * **데스크는 찍지 않는다.**
+   *
+   * 큐가 보는 것은 **포털로 들어온 티켓**이고, 이 데모 데이터에는 티켓이
+   * 없다(이슈만 있다). 그래서 큐를 만들어 두어도 화면은 "지금 이 큐에는 아무
+   * 것도 없습니다" 다 — 그것을 매뉴얼에 실으면 제품이 아무것도 못 하는 것처럼
+   * 보인다.
+   *
+   * 제대로 찍으려면 포털·요청 유형·고객 계정을 만들고 **고객으로 로그인해
+   * 요청을 내는** 흐름까지 데모 데이터가 있어야 한다. 그때 여기를 되살린다.
+   */
 
   await browser.close()
   await writeFile(
