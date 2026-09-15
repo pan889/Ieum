@@ -113,7 +113,27 @@ test('내보낸 ZIP 을 다시 올리면 같은 문서가 나온다', async ({ p
 
   await page.getByRole('link', { name: 'Deep' }).click()
   await expect(page).toHaveURL(new RegExp(`/wiki/${target}/top/deep$`))
-  await expect(page.getByRole('checkbox', { checked: true })).toBeVisible()
+  // 체크 상태가 살아 돌아왔다.
+  //
+  // **페이지 전체에서 "체크된 상자" 를 세지 않는다.** 같은 항목이 두 군데
+  // 그려진다: 본문의 읽기 전용 상자와 "Tasks" 칸의 조작 가능한 상자
+  // (`TaskPanel`). 예전에는 `getByRole('checkbox', { checked: true })` 하나로
+  // 봤는데, 그것은 **태스크 목록이 늦게 오면 통과하고 제때 오면 붉어지는**
+  // 단언이었다 — 혼자 돌리면 늘 초록이고 전체 스위트에서만 붉어졌다.
+  //
+  // 두 자리를 따로, 그 줄에서 본다. 줄의 글자까지 보는 이유: 순서가 뒤집혀도
+  // 체크 개수는 맞으므로, 자리만 세면 뒤집힌 왕복을 통과시킨다.
+  const body = page.locator('li').filter({ has: page.locator('input.task-list-item-checkbox') })
+  await expect(body).toHaveCount(2)
+  await expect(body.nth(0)).toHaveText('안 함')
+  await expect(body.nth(0).getByRole('checkbox')).not.toBeChecked()
+  await expect(body.nth(1)).toHaveText('함')
+  await expect(body.nth(1).getByRole('checkbox')).toBeChecked()
+
+  // 태스크 칸도 같은 것을 말한다. 본문만 맞고 칸이 어긋나면 사람은 한 문서에서
+  // 서로 다른 두 답을 보게 된다.
+  await expect(page.getByRole('checkbox', { name: '함', exact: true })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: '안 함', exact: true })).not.toBeChecked()
 
   expect(consoleErrors).toEqual([])
 })
