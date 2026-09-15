@@ -1,0 +1,114 @@
+# 매뉴얼 사이트. `mkdocs serve` 로 보고 `mkdocs build --strict` 로 낸다.
+#
+# **왜 코드 저장소에 있는가**: 개발 규칙(`CLAUDE.md` 2절 15항)이 정한 자리다.
+# 바깥 사람이 읽어야 하는 것 — 설치·판 올리기·운영·쓰는 법 — 은 공개 저장소
+# 안에 둔다. 개발 규칙·아키텍처·ADR 은 비공개 문서 저장소가 그대로 갖는다.
+#
+# 그래서 여기는 **바깥 사람이 읽을 것만** 있다. 안쪽 문서를 링크로 가리키지
+# 않는다 — 남에게는 404 이고, 그건 안내가 아니라 막다른 길이다.
+site_name: Ieum
+site_description: 이슈·문서·서비스데스크를 하나로 잇는 셀프호스팅 협업 플랫폼
+site_url: https://pan889.github.io/Ieum/
+repo_url: https://github.com/pan889/Ieum
+repo_name: pan889/Ieum
+# 이 사이트의 원본은 저장소의 `manual/docs/` 다. "이 쪽 고치기" 단추가
+# 거기로 가야 한다.
+edit_uri: edit/main/manual/docs/
+copyright: 자체 인프라에 두고 쓰는 도구입니다. 데이터는 여기서 나가지 않습니다.
+
+theme:
+  name: material
+  language: ko
+  custom_dir: overrides
+  # **글꼴을 밖에서 가져오지 않는다.** Material 기본값은 Google Fonts 를
+  # 부르는데, 그러면 이 문서를 여는 사람마다 브라우저가 구글에 알린다 —
+  # "외부 SaaS 없이 완전 동작" 을 말하는 제품의 문서가 그러면 안 된다.
+  # 그리고 폐쇄망에 설치하는 사람에게는 그냥 안 되는 요청이다.
+  #
+  # `false` 로 두면 시스템 글꼴을 쓴다. 한국어는 어차피 OS 글꼴이 낫다 —
+  # 웹폰트로 한글을 받으면 몇 MB 다.
+  font: false
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+  palette:
+    # 라이트·다크를 사람이 고른다. 하나만 두면 어두운 화면을 쓰는 절반이
+    # 눈을 찌푸린다.
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: 어두운 화면으로
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: 밝은 화면으로
+
+plugins:
+  - search:
+      # **한국어 검색은 이 검색창의 약점이다.** lunr 는 한국어를 형태소로
+      # 쪼개지 못해서, `separator` 로 공백과 문장부호만 끊는다 — `배포를` 로
+      # 적힌 낱말은 `배포` 로 검색해서 안 나온다. 제품의 검색(PGroonga)과
+      # 다른 물건이고, 그 차이를 아는 것이 문서 검색을 덜 답답하게 만든다.
+      #
+      # 그래서 문서 제목을 **찾을 낱말 그대로** 짓는다. 사람은 결국 목차로
+      # 찾는다.
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;'
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    absolute_links: ignore
+    unrecognized_links: warn
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  # **첫 화면의 카드가 이것 없이는 안 그려진다.** `<div markdown>` 안을
+  # 마크다운으로 읽게 하는 확장이고, 없으면 링크가 글자로만 남는다 —
+  # 빌드는 통과하므로 브라우저로 열어 봐야 안다.
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  # 첫 화면 카드의 아이콘(`:material-download:`). 이것 없이는 콜론째로 보인다.
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# **읽는 사람 순서로 나눈다.** 세우는 사람이 먼저고 쓰는 사람이 다음이다 —
+# 설치하러 온 사람에게 화면 설명을 먼저 내밀면 그 사람은 설치 문서를 못 찾는다.
+nav:
+  - 시작: index.md
+  - 세우기:
+      - 설치하기: install.md
+      - 올리기와 되돌리기: upgrade.md
+      - 운영: operations.md
+  - 쓰는 법:
+      - 처음 둘러보기: guide/index.md
+      - 이슈와 프로젝트: guide/issues.md
+      - 보드·스프린트·일정: guide/planning.md
+      - 위키: guide/wiki.md
+      - 서비스데스크: guide/desk.md
+      - 검색과 IQL: guide/search.md
+      - 관리자가 하는 일: guide/admin.md

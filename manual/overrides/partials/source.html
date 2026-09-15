@@ -1,0 +1,23 @@
+{#-
+  Material 기본판에서 `data-md-component="source"` 하나를 뺐다.
+
+  그 속성이 붙어 있으면 테마의 JS 가 **모든 페이지에서 `api.github.com` 을
+  부른다** — 별·포크 개수를 보여 주려는 것이다. 우리는 그걸 안 쓴다.
+
+  이유가 둘이다.
+  1. **자체 인프라에 두고 쓰는 제품의 문서다.** 방문자의 브라우저가 페이지를
+     열 때마다 밖에 알리는 것은 이 제품이 하지 않겠다고 한 것과 어긋난다.
+  2. **폐쇄망에서 안 된다.** 이 문서를 읽는 사람 중 일부는 인터넷이 없는 곳에
+     설치한다. 그곳에서는 그 요청이 실패하고, 실패한 위젯이 남는다.
+
+  링크와 저장소 이름은 그대로 둔다 — 그건 정적이고 값이 있다.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source">
+  <div class="md-source__icon md-icon">
+    {% set icon = config.theme.icon.repo or "fontawesome/brands/git-alt" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+  </div>
+</a>

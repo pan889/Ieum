@@ -33,3 +33,6 @@ playwright-report/
 
 # 로컬 인프라
 pgdata/
+
+# 매뉴얼 사이트의 빌드 결과. 소스는 `manual/docs/` 다.
+manual/site/

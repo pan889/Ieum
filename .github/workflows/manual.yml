@@ -1,0 +1,107 @@
+name: 매뉴얼
+
+# `manual/` 이 바뀔 때만 돈다. 코드만 고친 커밋마다 문서를 다시 내면 배포
+# 기록이 의미를 잃는다 — "언제 문서가 바뀌었나" 를 여기서 읽을 수 있어야 한다.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'manual/**'
+      - '.github/workflows/manual.yml'
+  pull_request:
+    paths:
+      - 'manual/**'
+      - '.github/workflows/manual.yml'
+  # 화면을 고친 판을 낸 뒤 사진만 다시 실을 때처럼, 손으로도 돌린다.
+  workflow_dispatch:
+
+# Pages 배포는 **겹치면 안 된다.** 취소하지 않고 줄을 세운다 — 나중 것이
+# 먼저 끝나면 옛 사이트가 올라간 채로 남는다.
+concurrency:
+  group: manual-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 사이트 빌드와 브라우저 확인
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          # **경로를 적어 줘야 한다.** `cache: pip` 은 기본으로
+          # `**/requirements.txt` 만 찾는데 그건 맞지만, 저장소에 여러 개가
+          # 생기면 엉뚱한 것을 잡는다. 이 사이트가 쓰는 것을 지목한다.
+          cache-dependency-path: manual/requirements.txt
+
+      - name: 의존성
+        run: pip install -r manual/requirements.txt
+
+      - name: 빌드 (--strict)
+        # **경고를 오류로 만든다.** 깨진 링크와 nav 에서 빠진 문서를 잡는다.
+        run: mkdocs build --strict
+        working-directory: manual
+
+      - name: 내부 링크 전수 확인
+        # `--strict` 는 마크다운 소스의 링크를 본다. 이건 **결과물의 href** 를
+        # 따라가서 nav·테마가 만든 경로와 절대 경로까지 본다 — 베이스 경로가
+        # `/Ieum/` 이라 거기가 먼저 깨진다.
+        run: python3 tools/check-links.py site
+        working-directory: manual
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 브라우저 준비
+        run: npm install --no-save playwright@1.56.0 && npx playwright install --with-deps chromium
+        working-directory: manual
+
+      - name: 브라우저로 몰아 본다
+        # 빌드가 통과한 것과 **그려지는 것**은 다르다. 그리고 이 확인이
+        # 붙잡는 것 중 제일 중요한 건 "밖으로 나가는 요청이 없는가" 다 —
+        # 테마를 올리면 되살아나기 쉽고, 되살아나도 화면은 멀쩡해 보인다.
+        # 자체 인프라에 두고 쓰는 제품의 문서가 방문자마다 밖에 알리면 안 된다.
+        working-directory: manual
+        run: |
+          python3 -m http.server 8899 --bind 127.0.0.1 --directory site &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8899/ >/dev/null && break
+            sleep 1
+          done
+          CHECK_SITE_REQUIRED=1 node tools/check-site.mjs http://127.0.0.1:8899
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: manual/site
+
+  deploy:
+    name: Pages 로 낸다
+    # **main 에서만.** PR 은 위의 게이트까지만 본다 — 남의 브랜치가 공개
+    # 사이트를 갈아치우면 안 된다.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      # **Pages 를 여기서 켠다.** 저장소 설정에서 손으로 켜 두지 않아도
+      # 첫 실행이 스스로 켜고 소스를 "GitHub Actions" 로 맞춘다. 설정을
+      # 사람 기억에 맡기면, 저장소를 다시 만든 날 아무도 이유를 모른 채
+      # 배포가 실패한다.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/deploy-pages@v4
+        id: deploy
