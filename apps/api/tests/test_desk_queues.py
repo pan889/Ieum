@@ -307,6 +307,104 @@ class TestSavingAQueueValidatesIt:
             )
         assert exc.value.code == "desk.queue_name_taken"
 
+    async def test_archiving_frees_the_name(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """지운 큐의 이름은 **돌려받는다.**
+
+        지우면 보관만 되는데(감사 로그가 이름을 들고 있다), 유일성 검사가
+        보관된 것까지 세고 있었다. 그래서 큐를 지우면 목록에서는 사라지는데
+        같은 이름을 다시 못 만들었고, 화면은 보이지도 않는 큐를 가리키며
+        "같은 이름의 큐가 있다" 고 했다. 보관을 푸는 길도 없어서 그 이름은
+        영영 죽었다.
+        """
+        project = await _project(session)
+        manager = await _manager(session, project)
+        service = QueueService(session, permissions)
+
+        first = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="아직 안 맡은 것",
+            iql=f"project = {project.key}",
+            position=0,
+        )
+        await service.delete(actor_for(manager), first.queue.id)
+
+        again = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="아직 안 맡은 것",
+            iql=f"project = {project.key}",
+            position=0,
+        )
+        assert again.queue.id != first.queue.id
+        # 보관된 쪽은 그대로 남아 있다 — 이름을 풀어 준 것이지 지운 것이 아니다.
+        assert (await service.list_for(actor_for(manager), project.id)) == [again.queue]
+
+    async def test_a_live_name_is_still_refused_after_another_is_archived(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """이름을 풀어 주는 것이 검사를 끄는 것이 되면 안 된다.
+
+        보관된 것이 하나 있어도, **살아 있는 것끼리는** 여전히 겹칠 수 없다.
+        """
+        project = await _project(session)
+        manager = await _manager(session, project)
+        service = QueueService(session, permissions)
+
+        buried = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="열린 요청",
+            iql=f"project = {project.key}",
+            position=0,
+        )
+        await service.delete(actor_for(manager), buried.queue.id)
+        await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="열린 요청",
+            iql=f"project = {project.key}",
+            position=0,
+        )
+        with pytest.raises(ConflictError) as exc:
+            await service.create(
+                actor_for(manager),
+                project_id=project.id,
+                name="열린 요청",
+                iql=f"project = {project.key}",
+                position=1,
+            )
+        assert exc.value.code == "desk.queue_name_taken"
+
+    async def test_renaming_onto_an_archived_name_works(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """새로 만드는 길만이 아니라 **고치는 길**도 막혀 있었다."""
+        project = await _project(session)
+        manager = await _manager(session, project)
+        service = QueueService(session, permissions)
+
+        buried = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="옛 이름",
+            iql=f"project = {project.key}",
+            position=0,
+        )
+        await service.delete(actor_for(manager), buried.queue.id)
+        living = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="쓰는 이름",
+            iql=f"project = {project.key}",
+            position=0,
+        )
+
+        renamed = await service.update(actor_for(manager), living.queue.id, name="옛 이름")
+        assert renamed.queue.name == "옛 이름"
+
 
 class TestQueuePermissions:
     async def test_working_a_queue_does_not_let_you_define_one(
@@ -361,40 +459,64 @@ class TestQueuePermissions:
         with pytest.raises(NotFoundError):
             await service.run(actor_for(manager), queue.id, PageRequest(limit=10, cursor=None))
 
-    async def test_a_deleted_name_can_be_reused(
+
+class TestCannedResponses:
+    async def test_archiving_frees_both_the_name_and_the_shortcut(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:
-        """**보관된 큐의 이름은 다시 쓸 수 없다.** 유니크 제약이
-        `archived_at` 을 모르기 때문이다.
+        """큐와 같은 결함이 정형 응답에도 있었다 — 이름에 하나, 단축어에 하나.
 
-        여기서 막지 않으면 저장이 데이터베이스 오류로 500 이 되고, 사람은
-        "같은 이름이 있다" 는 말을 못 듣는다. 지금은 409 로 답한다 — 완벽하지
-        않지만(사용자는 그 큐를 볼 수 없다) 틀린 500 보다 낫다.
+        단축어 쪽이 더 아프다. `/환불` 은 상담원이 손가락으로 외운 것이라,
+        문구를 다시 만들면서 같은 단축어를 못 쓰면 고친 것이 아니라 못 쓰게
+        된 것이다.
         """
         project = await _project(session)
         manager = await _manager(session, project)
-        service = QueueService(session, permissions)
-        queue = (
+        service = CannedResponseService(session, permissions)
+
+        old = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="환불 안내",
+            body="영업일 3일 안에 처리됩니다.",
+            shortcut="환불",
+        )
+        await service.delete(actor_for(manager), old.response.id)
+
+        again = await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="환불 안내",
+            body="영업일 2일로 줄었습니다.",
+            shortcut="환불",
+        )
+        assert again.response.id != old.response.id
+        assert again.response.shortcut == "환불"
+
+    async def test_a_live_shortcut_is_still_refused(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """이름을 풀어 주는 것이 검사를 끄는 것이 되면 안 된다."""
+        project = await _project(session)
+        manager = await _manager(session, project)
+        service = CannedResponseService(session, permissions)
+        await service.create(
+            actor_for(manager),
+            project_id=project.id,
+            name="환불 안내",
+            body="내용",
+            shortcut="환불",
+        )
+        with pytest.raises(ConflictError) as exc:
             await service.create(
                 actor_for(manager),
                 project_id=project.id,
-                name="큐",
-                iql=f"project = {project.key}",
-                position=0,
+                name="다른 이름",
+                body="내용",
+                shortcut="환불",
             )
-        ).queue
-        await service.delete(actor_for(manager), queue.id)
-        with pytest.raises(ConflictError):
-            await service.create(
-                actor_for(manager),
-                project_id=project.id,
-                name="큐",
-                iql=f"project = {project.key}",
-                position=0,
-            )
+        assert exc.value.code == "desk.canned_shortcut_taken"
 
-
-class TestCannedResponses:
     async def test_an_agent_reads_them_but_cannot_change_them(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:

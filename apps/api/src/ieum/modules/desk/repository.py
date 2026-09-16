@@ -295,9 +295,20 @@ class QueueRepository:
         return list((await self._s.execute(stmt)).scalars().all())
 
     async def name_taken(self, project_id: UUID, name: str, *, exclude: UUID | None = None) -> bool:
-        """이름 중복. 보관된 것까지 본다 — 유니크 제약이 `archived_at` 을
-        모르기 때문이다. 여기서 안 보면 저장이 500 으로 터진다."""
-        stmt = select(func.count()).where(Queue.project_id == project_id, Queue.name == name)
+        """이름 중복. **살아 있는 큐만 본다.**
+
+        전에는 보관된 것까지 셌다. 유니크 제약이 `archived_at` 을 몰라서
+        그래야 500 을 피할 수 있었는데, 그 대가로 이름이 한 번 쓰고
+        버려졌다 — 큐를 지우면 목록에서 사라지는데 같은 이름을 다시 못
+        쓰고, 화면은 보이지도 않는 큐를 가리키며 "같은 이름이 있다" 고
+        했다. 제약을 `uq_queue_live_name` 부분 인덱스로 바꿔서 DB 와 이
+        질의가 같은 것을 본다.
+        """
+        stmt = select(func.count()).where(
+            Queue.project_id == project_id,
+            Queue.name == name,
+            Queue.archived_at.is_(None),
+        )
         if exclude is not None:
             stmt = stmt.where(Queue.id != exclude)
         return bool((await self._s.execute(stmt)).scalar_one())
@@ -323,8 +334,11 @@ class CannedResponseRepository:
         return list((await self._s.execute(stmt)).scalars().all())
 
     async def name_taken(self, project_id: UUID, name: str, *, exclude: UUID | None = None) -> bool:
+        """살아 있는 것만 본다 — `uq_canned_response_live_name` 과 같은 눈이다."""
         stmt = select(func.count()).where(
-            CannedResponse.project_id == project_id, CannedResponse.name == name
+            CannedResponse.project_id == project_id,
+            CannedResponse.name == name,
+            CannedResponse.archived_at.is_(None),
         )
         if exclude is not None:
             stmt = stmt.where(CannedResponse.id != exclude)
@@ -334,7 +348,9 @@ class CannedResponseRepository:
         self, project_id: UUID, shortcut: str, *, exclude: UUID | None = None
     ) -> bool:
         stmt = select(func.count()).where(
-            CannedResponse.project_id == project_id, CannedResponse.shortcut == shortcut
+            CannedResponse.project_id == project_id,
+            CannedResponse.shortcut == shortcut,
+            CannedResponse.archived_at.is_(None),
         )
         if exclude is not None:
             stmt = stmt.where(CannedResponse.id != exclude)

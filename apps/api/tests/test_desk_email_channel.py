@@ -109,6 +109,55 @@ async def _setup(
     return project, manager, request_type
 
 
+class TestArchivingFreesTheAddress:
+    async def test_the_same_address_can_be_used_again(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """접은 채널의 주소는 **다시 걸 수 있어야 한다.**
+
+        주소가 DB 에서 통째로 유일해서, 한 번 쓴 `help@` 는 채널을 접어도
+        영영 다시 못 걸었다. 창구를 접었다 다시 여는 것은 흔한 일이다.
+
+        배달이 갈리지 않는 이유: 수신 폴러(`worker/tasks.py`)도 발신
+        고르기(`outbound.py`)도 원래부터 살아 있는 채널만 본다.
+        """
+        project, manager, request_type = await _setup(session, permissions)
+        service = EmailChannelService(session, permissions, settings)
+        body = {
+            "project_id": project.id,
+            "outbound_from": "help@ours.example",
+            "inbound": dict(GOOD_INBOUND),
+            "password": PASSWORD,
+            "default_request_type_id": request_type.id,
+        }
+        first = await service.create(actor_for(manager), address="help@ours.example", **body)  # type: ignore[arg-type]
+        await service.delete(actor_for(manager), first.channel.id)
+
+        again = await service.create(actor_for(manager), address="help@ours.example", **body)  # type: ignore[arg-type]
+        assert again.channel.id != first.channel.id
+        assert again.channel.address == "help@ours.example"
+
+    async def test_a_live_address_is_still_refused(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """두 채널이 같은 주소를 들고 있으면 들어온 메일이 어디로 갈지
+        갈린다. 살아 있는 것끼리는 여전히 막는다."""
+        project, manager, request_type = await _setup(session, permissions)
+        service = EmailChannelService(session, permissions, settings)
+        body = {
+            "project_id": project.id,
+            "address": "help@ours.example",
+            "outbound_from": "help@ours.example",
+            "inbound": dict(GOOD_INBOUND),
+            "password": PASSWORD,
+            "default_request_type_id": request_type.id,
+        }
+        await service.create(actor_for(manager), **body)  # type: ignore[arg-type]
+        with pytest.raises(ConflictError) as exc:
+            await service.create(actor_for(manager), **body)  # type: ignore[arg-type]
+        assert exc.value.code == "desk.email_address_taken"
+
+
 class TestSavingAChannel:
     async def test_a_good_channel_saves(
         self, session: AsyncSession, permissions: PermissionService, settings: Settings
@@ -375,35 +424,6 @@ class TestChangingAChannel:
         assert channel.archived_at is not None  # type: ignore[attr-defined]
         with pytest.raises(NotFoundError):
             await service.delete(actor_for(manager), channel.id)  # type: ignore[attr-defined]
-
-    async def test_an_archived_address_is_still_taken(
-        self, session: AsyncSession, permissions: PermissionService, settings: Settings
-    ) -> None:
-        """`address` 가 DB 에서 유일하다. 보관한 것을 안 보면 저장이
-        IntegrityError 로 500 이 되고, 관리자는 무엇이 막았는지 못 듣는다."""
-        project, manager, request_type = await _setup(session, permissions)
-        service = EmailChannelService(session, permissions, settings)
-        view = await service.create(
-            actor_for(manager),
-            project_id=project.id,
-            address="help@ours.example",
-            outbound_from="help@ours.example",
-            inbound=dict(GOOD_INBOUND),
-            password=PASSWORD,
-            default_request_type_id=request_type.id,  # type: ignore[attr-defined]
-        )
-        await service.delete(actor_for(manager), view.channel.id)
-
-        with pytest.raises(ConflictError):
-            await service.create(
-                actor_for(manager),
-                project_id=project.id,
-                address="help@ours.example",
-                outbound_from="help@ours.example",
-                inbound=dict(GOOD_INBOUND),
-                password=PASSWORD,
-                default_request_type_id=request_type.id,  # type: ignore[attr-defined]
-            )
 
 
 class TestPermissions:

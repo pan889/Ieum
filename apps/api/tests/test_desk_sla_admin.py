@@ -205,6 +205,96 @@ class TestSavingACalendar:
             )
 
 
+class TestArchivingFreesTheName:
+    """편도로 보관되는 것들이 이름을 한 번 쓰고 버리고 있었다.
+
+    보관하는 판단은 맞다 — 지난 티켓의 판정이 정책을 지우는 것으로 바뀌면
+    안 된다. 틀린 것은 **유일성의 범위**였다. "같은 이름의 정책이 둘이면
+    안 된다" 가 말하는 정책은 살아 있는 정책이다.
+    """
+
+    async def test_a_calendar_name_comes_back_after_archiving(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        service = SlaAdminService(session, permissions)
+        name = f"Seoul {new_id().hex[-4:]}"
+        first = await service.create_calendar(
+            actor_for(admin),
+            name=name,
+            timezone="Asia/Seoul",
+            working_hours=WEEK,
+            holidays=[],
+        )
+        await service.delete_calendar(actor_for(admin), first.calendar.id)
+
+        again = await service.create_calendar(
+            actor_for(admin),
+            name=name,
+            timezone="Asia/Seoul",
+            working_hours=WEEK,
+            holidays=[],
+        )
+        assert again.calendar.id != first.calendar.id
+
+    async def test_a_policy_name_comes_back_after_archiving(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project = await _project(session)
+        service = SlaAdminService(session, permissions)
+        goals = [{"seconds": HOUR}]
+
+        first = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=goals,
+            pause_state_ids=[],
+        )
+        await service.delete_policy(actor_for(admin), first.policy.id)
+
+        again = await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=goals,
+            pause_state_ids=[],
+        )
+        assert again.policy.id != first.policy.id
+
+    async def test_two_live_policies_still_cannot_share_a_name(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        admin = await _admin(session)
+        project = await _project(session)
+        service = SlaAdminService(session, permissions)
+        goals = [{"seconds": HOUR}]
+        await service.create_policy(
+            actor_for(admin),
+            project_id=project.id,
+            name="첫 응답",
+            metric="first_response",
+            calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+            goals=goals,
+            pause_state_ids=[],
+        )
+        with pytest.raises(ConflictError):
+            await service.create_policy(
+                actor_for(admin),
+                project_id=project.id,
+                name="첫 응답",
+                metric="resolution",
+                calendar_id=await _calendar_id(session, permissions, admin),  # type: ignore[arg-type]
+                goals=goals,
+                pause_state_ids=[],
+            )
+
+
 class TestSavingAPolicy:
     async def test_a_good_policy_saves_with_its_calendar_name(
         self, session: AsyncSession, permissions: PermissionService

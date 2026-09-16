@@ -146,6 +146,45 @@ class TestWritesActuallyPersist:
         assert back.status_code == 200, back.text
 
 
+class TestDeletingAQueueFreesItsName:
+    async def test_the_whole_round_trip_over_http(self, app_client: httpx.AsyncClient) -> None:
+        """사용자가 실제로 밟는 길을 그대로 밟는다: 만들고 → 지우고 → 다시 만든다.
+
+        전에는 마지막 단계가 409 였다. 목록은 비어 있는데 "같은 이름의 큐가
+        있다" 는 답이 왔고, 사용자가 볼 수 있는 큐는 하나도 없었다. 서비스
+        시험만으로는 이 모양이 안 잡힌다 — 사람이 보는 것은 상태 코드와
+        목록이다.
+        """
+        setup = await _setup(app_client, slug="qname", is_public=False)
+        admin = setup["admin"]
+        project_id = setup["portal"]["project_id"]
+        body = {
+            "project_id": project_id,
+            "name": "아직 안 맡은 것",
+            "iql": 'assignee IS EMPTY AND status != "Done"',
+            "position": 0,
+        }
+
+        first = await app_client.post(f"{BASE}/queues", json=body, headers=admin)
+        assert first.status_code == 201, first.text
+
+        removed = await app_client.delete(f"{BASE}/queues/{first.json()['id']}", headers=admin)
+        assert removed.status_code == 204, removed.text
+
+        listed = await app_client.get(f"{BASE}/queues?project_id={project_id}", headers=admin)
+        assert listed.status_code == 200, listed.text
+        assert listed.json() == []
+
+        again = await app_client.post(f"{BASE}/queues", json=body, headers=admin)
+        assert again.status_code == 201, again.text
+        assert again.json()["id"] != first.json()["id"]
+
+        # 살아 있는 것끼리는 여전히 막는다 — 푼 것이 검사를 끈 것이 아니다.
+        third = await app_client.post(f"{BASE}/queues", json=body, headers=admin)
+        assert third.status_code == 409, third.text
+        assert third.json()["error"]["code"] == "desk.queue_name_taken"
+
+
 class TestTheGuestPath:
     async def test_a_guest_files_a_request_without_signing_in(
         self, app_client: httpx.AsyncClient

@@ -2105,7 +2105,11 @@ class SlaAdminService:
             raise ValidationError(str(exc), code="desk.calendar_invalid") from exc
 
     async def _calendar_name_taken(self, name: str, *, exclude: UUID | None = None) -> bool:
-        stmt = select(func.count()).where(BusinessCalendarRow.name == name)
+        """살아 있는 것만 본다 — `uq_business_calendar_live_name` 과 같은 눈이다."""
+        stmt = select(func.count()).where(
+            BusinessCalendarRow.name == name,
+            BusinessCalendarRow.archived_at.is_(None),
+        )
         if exclude is not None:
             stmt = stmt.where(BusinessCalendarRow.id != exclude)
         return bool((await self._s.execute(stmt)).scalar_one())
@@ -2114,7 +2118,9 @@ class SlaAdminService:
         self, project_id: UUID, name: str, *, exclude: UUID | None = None
     ) -> bool:
         stmt = select(func.count()).where(
-            SlaPolicy.project_id == project_id, SlaPolicy.name == name
+            SlaPolicy.project_id == project_id,
+            SlaPolicy.name == name,
+            SlaPolicy.archived_at.is_(None),
         )
         if exclude is not None:
             stmt = stmt.where(SlaPolicy.id != exclude)
@@ -2293,11 +2299,18 @@ class EmailChannelService:
         return clean
 
     async def _address_taken(self, address: str) -> bool:
-        """보관한 채널까지 본다. `address` 가 DB 에서 유일하기 때문이다 —
-        보관한 것을 안 보면 저장이 IntegrityError 로 500 이 되고, 관리자는
-        무엇이 막았는지 못 듣는다."""
+        """**살아 있는 채널만** 본다.
+
+        전에는 보관한 것까지 봤다. 주소가 DB 에서 통째로 유일해서 그래야
+        500 을 피했는데, 그러면 한 번 쓴 주소를 영영 다시 못 건다 — 채널을
+        접었다 다시 여는 일은 흔하다. `uq_email_channel_live_address` 로
+        바꿨고, 배달은 원래부터 살아 있는 채널만 고른다(수신은
+        `worker/tasks.py`, 발신은 `outbound.py`).
+        """
         found = await self._s.execute(
-            select(EmailChannel.id).where(EmailChannel.address == address).limit(1)
+            select(EmailChannel.id)
+            .where(EmailChannel.address == address, EmailChannel.archived_at.is_(None))
+            .limit(1)
         )
         return found.first() is not None
 

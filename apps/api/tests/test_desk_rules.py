@@ -523,6 +523,31 @@ class TestSavingARule:
         with pytest.raises(ConflictError):
             await service.create(actor_for(manager), name="같은 이름", **body)  # type: ignore[arg-type]
 
+    async def test_archiving_frees_the_name(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """규칙은 **반대 방향으로** 깨져 있었다.
+
+        `_name_taken` 은 이미 살아 있는 것만 봤는데 DB 제약은 보관된 것까지
+        봤다. 그래서 규칙을 지우고 같은 이름으로 다시 만들면 가드는 통과하고
+        저장이 IntegrityError 로 500 이 났다 — 관리자는 무엇이 막았는지도 못
+        들었다. 이제 둘이 같은 것을 본다.
+        """
+        project, _ = await _ticket(session)
+        manager = await self._manager(session, project)
+        service = AutomationService(session, permissions)
+        body = {
+            "project_id": project.id,
+            "trigger": {"event": SUBMITTED},
+            "conditions": [],
+            "actions": [{"kind": "set_priority", "priority": 5}],
+        }
+        first = await service.create(actor_for(manager), name="접수 알림", **body)  # type: ignore[arg-type]
+        await service.delete(actor_for(manager), first.rule.id)
+
+        again = await service.create(actor_for(manager), name="접수 알림", **body)  # type: ignore[arg-type]
+        assert again.rule.id != first.rule.id
+
     async def test_another_projects_request_type_in_a_condition_is_refused(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:

@@ -23,7 +23,13 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 
 #: 이 조각이 들어 있으면 비공개 저장소를 가리키는 것이다.
-NEEDLES = ("ieum-docs", "pan889.github.io")
+#:
+#: **`pan889.github.io` 를 통째로 막을 수 없다.** 처음엔 그랬는데, 그때는 이
+#: 계정의 github.io 가 비공개 문서 사이트 하나뿐이었다. 지금은 공개 매뉴얼이
+#: `pan889.github.io/Ieum/` 에 있고 규칙 2절 15항이 README 더러 **그리로
+#: 가리키라고** 한다. 그래서 조각을 비공개 쪽 경로까지 좁힌다 — 도메인이
+#: 아니라 그 아래 어느 자리인지가 공개와 비공개를 가른다.
+NEEDLES = ("ieum-docs", "pan889.github.io/ieum-docs")
 
 #: 가리켜도 되는 자리.
 #
@@ -97,3 +103,16 @@ def test_no_public_file_points_at_the_private_repo() -> None:
 def test_every_needle_is_a_real_address_fragment(needle: str) -> None:
     """오타 난 조각은 아무것도 안 잡으면서 잡는 척한다."""
     assert needle in "https://github.com/pan889/ieum-docs https://pan889.github.io/ieum-docs/"
+
+
+def test_the_public_manual_is_not_mistaken_for_the_private_site() -> None:
+    """**공개 매뉴얼 주소는 걸리면 안 된다.**
+
+    둘이 같은 도메인에 있어서, 조각을 `pan889.github.io` 로 두면 규칙이
+    가리키라고 한 자리를 이 시험이 막는다. 실제로 그렇게 됐었다 — 매뉴얼을
+    내고 README 에 링크를 걸자마자 여기가 붉어졌다.
+    """
+    manual = "https://pan889.github.io/Ieum/"
+    assert not any(needle in manual for needle in NEEDLES), (
+        f"공개 매뉴얼 주소가 비공개 조각에 걸린다: {manual}"
+    )

@@ -304,7 +304,16 @@ class Queue(Entity, Archivable):
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
-        UniqueConstraint("project_id", "name", name="uq_queue_project_id_name"),
+        # **살아 있는 큐끼리만** 이름이 겹치면 안 된다. 보관한 것까지 세면
+        # 이름이 한 번 쓰고 버려진다 — 지운 큐는 목록에 안 보이는데 같은
+        # 이름을 다시 못 쓰고, 화면은 "같은 이름의 큐가 있다" 만 말한다.
+        Index(
+            "uq_queue_live_name",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
         Index("ix_queue_project_id", "project_id"),
     )
 
@@ -333,10 +342,22 @@ class CannedResponse(Entity, Archivable):
     shortcut: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("project_id", "name", name="uq_canned_response_project_id_name"),
+        Index(
+            "uq_canned_response_live_name",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
         # 같은 프로젝트에 같은 단축어가 둘이면 어느 것이 나올지 사람이 알 수
         # 없다. NULL 은 여러 개 허용된다(단축어 없는 응답).
-        UniqueConstraint("project_id", "shortcut", name="uq_canned_response_project_id_shortcut"),
+        Index(
+            "uq_canned_response_live_shortcut",
+            "project_id",
+            "shortcut",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
         Index("ix_canned_response_project_id", "project_id"),
     )
 
@@ -372,7 +393,14 @@ class BusinessCalendarRow(Entity, Archivable):
         ARRAY(String(10)), nullable=False, default=list, server_default="{}"
     )
 
-    __table_args__ = (UniqueConstraint("name", name="uq_business_calendar_name"),)
+    __table_args__ = (
+        Index(
+            "uq_business_calendar_live_name",
+            "name",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+    )
 
 
 class SlaPolicy(Entity, Archivable):
@@ -429,7 +457,13 @@ class SlaPolicy(Entity, Archivable):
 
     __table_args__ = (
         CheckConstraint(metric.in_(SLA_METRICS), name="sla_policy_metric"),
-        UniqueConstraint("project_id", "name", name="uq_sla_policy_project_id_name"),
+        Index(
+            "uq_sla_policy_live_name",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
         Index("ix_sla_policy_project_id", "project_id"),
         Index("ix_sla_policy_calendar_id", "calendar_id"),
     )
@@ -530,7 +564,10 @@ class EmailChannel(Entity, Archivable):
         ForeignKey("project.id", ondelete="CASCADE"), nullable=False
     )
     #: 고객이 메일을 보내는 주소. 이 주소로 받은 것이 이 채널의 티켓이 된다.
-    address: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    #: 유일성은 `uq_email_channel_live_address` 가 본다 — 보관한 채널의
+    #: 주소는 다시 쓸 수 있어야 한다. 수신·발신 모두 이미 살아 있는 채널만
+    #: 고르므로(`worker/tasks.py`, `outbound.py`) 겹쳐도 배달이 안 갈린다.
+    address: Mapped[str] = mapped_column(String(320), nullable=False)
     #: 우리가 보낼 때 쓰는 From. 받는 주소와 다를 수 있다(별칭·릴레이).
     outbound_from: Mapped[str] = mapped_column(String(320), nullable=False)
     #: 호스트·포트·사용자·폴더·TLS. **비밀번호는 여기 없다.**
@@ -555,6 +592,12 @@ class EmailChannel(Entity, Archivable):
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
+        Index(
+            "uq_email_channel_live_address",
+            "address",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
         Index("ix_email_channel_project_id", "project_id"),
         Index("ix_email_channel_request_type_id", "default_request_type_id"),
     )
@@ -634,7 +677,13 @@ class AutomationRule(Entity, Archivable):
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
-        UniqueConstraint("project_id", "name", name="uq_automation_rule_project_id_name"),
+        Index(
+            "uq_automation_rule_live_name",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
         Index("ix_automation_rule_project_id", "project_id"),
     )
 
