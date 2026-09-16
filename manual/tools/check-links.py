@@ -1,11 +1,16 @@
 """빌드된 사이트의 **내부 링크를 전부 따라가 본다.**
 
 `mkdocs build --strict` 는 마크다운 소스의 링크를 본다. 이건 결과물의
-`href` 를 본다 — 둘이 다른 것을 잡는다:
+`href` 와 `src` 를 본다 — 둘이 다른 것을 잡는다:
 
 - nav 가 만든 경로, 테마가 만든 경로(이전/다음, 편집 링크)
 - 절대 링크(`site_url` 의 경로 밑을 가리키는 것). 베이스 경로를 바꾸면
   여기가 먼저 깨진다.
+- **날 HTML 로 적은 그림.** 마크다운으로 적은 `![...](없는것.png)` 는
+  `--strict` 가 잡는다 — 넣어 보고 확인했다. 하지만
+  `<img src="없는것.png">` 는 **통과한다.** 마크다운 링크가 아니라서
+  mkdocs 의 눈에 안 들어오고, 화면에는 깨진 그림이 뜬다. 테마 오버라이드와
+  `grid cards` 처럼 HTML 을 직접 적는 자리가 있으므로 여기서 본다.
 
     python3 tools/check-links.py site
 
@@ -20,7 +25,8 @@ import sys
 import urllib.parse
 from pathlib import Path
 
-HREF = re.compile(r'href="([^"]+)"')
+#: 앞의 공백이 있어야 한다 — 없으면 `data-src="..."` 같은 테마 속성까지 집는다.
+REF = re.compile(r'\s(?:href|src)="([^"]+)"')
 EXTERNAL = ("http://", "https://", "mailto:", "#", "data:", "javascript:")
 
 
@@ -35,7 +41,7 @@ def base_path(site: Path) -> str:
     모르므로). 그래서 전부 훑어 절대 자산 경로를 하나 찾는다.
     """
     for page in sorted(site.rglob("*.html")):
-        for href in HREF.findall(page.read_text(errors="replace")):
+        for href in REF.findall(page.read_text(errors="replace")):
             if href.startswith("/") and "/assets/" in href:
                 return href.split("assets/")[0]
     return "/"
@@ -52,7 +58,7 @@ def main(argv: list[str]) -> int:
     broken: list[str] = []
 
     for page in pages:
-        for href in HREF.findall(page.read_text(errors="replace")):
+        for href in REF.findall(page.read_text(errors="replace")):
             if href.startswith(EXTERNAL):
                 continue
             target = urllib.parse.unquote(href.partition("#")[0])
@@ -72,11 +78,11 @@ def main(argv: list[str]) -> int:
                 broken.append(f"{page.relative_to(site)} → {href}")
 
     if broken:
-        print(f"깨진 내부 링크 {len(broken)}건:", file=sys.stderr)
+        print(f"깨진 내부 참조 {len(broken)}건:", file=sys.stderr)
         for line in broken:
             print(f"  - {line}", file=sys.stderr)
         return 1
-    print(f"내부 링크 확인 통과 — 페이지 {len(pages)}개, 베이스 {base}")
+    print(f"내부 링크·그림 확인 통과 — 페이지 {len(pages)}개, 베이스 {base}")
     return 0
 
 

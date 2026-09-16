@@ -49,6 +49,48 @@ async function call(method, path, body) {
 // 이름을 **읽을 만한 것**으로 짓는다. 사진에 그대로 찍히므로 여기가 곧
 // 제품의 첫인상이다.
 
+/**
+ * 고객이 포털로 내는 요청. **이름과 말투가 사진에 그대로 찍힌다** — 여기가
+ * 데스크 화면의 첫인상이다.
+ */
+const GUEST_REQUESTS = [
+  {
+    type: 0,
+    name: '정수연',
+    email: 'sooyeon@customer.example.com',
+    summary: '로그인하면 계속 로그아웃됩니다',
+    description: '어제부터 사내망에서만 그렇습니다. 집에서는 괜찮습니다.',
+  },
+  {
+    type: 0,
+    name: '오태민',
+    email: 'taemin@customer.example.com',
+    summary: '첨부파일이 10MB 넘으면 올라가다 멈춥니다',
+    description: '진행 막대가 90% 에서 멈추고 아무 말도 없습니다.',
+  },
+  {
+    type: 1,
+    name: '한지민',
+    email: 'jimin@customer.example.com',
+    summary: '요청 현황을 메일로 주간 요약해 주세요',
+    description: '월요일 아침에 열려 있는 것만 모아 받으면 좋겠습니다.',
+  },
+  {
+    type: 0,
+    name: '배승우',
+    email: 'seungwoo@customer.example.com',
+    summary: '모바일에서 글자가 잘립니다',
+    description: '아이폰 사파리에서 표가 화면 밖으로 나갑니다.',
+  },
+]
+
+/** 상담원이 실제로 쓰는 큐. **첫 번째가 화면에 펼쳐진다** — 그래서 순서가 내용이다. */
+const QUEUES = [
+  { name: '아직 안 맡은 것', iql: 'assignee IS EMPTY AND status != "Done"' },
+  { name: '내가 맡은 것', iql: 'assignee = currentUser() AND status != "Done"' },
+  { name: '안 끝난 것 전부', iql: 'status != "Done" ORDER BY priority DESC' },
+]
+
 const PEOPLE = [
   { email: 'jiwoo@example.com', display_name: '김지우' },
   { email: 'minseo@example.com', display_name: '박민서' },
@@ -131,6 +173,23 @@ function onboarding(me) {
 async function reuse(find, make) {
   const found = await find()
   return found ?? (await make())
+}
+
+/**
+ * 이미 있는 것만 넘어간다. **그 밖의 실패는 터뜨린다.**
+ *
+ * 처음엔 시드 호출이 전부 `.catch(() => undefined)` 였다. 두 번째 돌릴 때
+ * 409 가 나는 것이 정상이라 그렇게 둔 것인데, 그 그물이 진짜 실패까지
+ * 삼켰다 — 큐가 하나도 안 만들어졌는데 도구는 "끝." 을 찍었고, 매뉴얼에는
+ * "아직 큐가 없습니다" 가 실렸다. 아는 코드만 적어서 삼킨다.
+ */
+async function idempotent(work, ...codes) {
+  try {
+    return await work()
+  } catch (error) {
+    if (codes.some((code) => String(error.message).includes(code))) return undefined
+    throw error
+  }
 }
 
 /** 목록 응답은 맨 배열일 때도 `{ items }` 일 때도 있다. */
@@ -321,31 +380,81 @@ async function seedDemo() {
     })]
   }
 
-  const queues = asList(await call('GET', `/api/v1/queues?project_id=${project.id}`).catch(() => []))
+  // 큐는 **조건**이다. 상담원이 실제로 쓰는 것들을 둔다.
+  //
+  // 화면은 **첫 큐를 펼쳐** 보여 준다. 그것이 비어 있으면 매뉴얼 사진이
+  // "아무 것도 없습니다" 가 된다(처음에 그랬다). 포털로 막 들어온 티켓은
+  // 담당자가 없으므로 "아직 안 맡은 것" 이 실제로 차는 큐다.
+  const queues = asList(await call('GET', `/api/v1/queues?project_id=${project.id}`))
   if (queues.length === 0) {
-    // 큐는 **조건**이다. 상담원이 실제로 쓰는 것들을 둔다.
-    //
-    // 순서가 중요하다: 화면은 첫 큐를 펼쳐 보여 주는데, 그것이 비어 있으면
-    // 매뉴얼 사진이 "아무 것도 없습니다" 가 된다(처음에 그랬다). 담당자가
-    // 있는 데모 데이터에서 실제로 차는 것을 앞에 둔다.
-    await call('POST', '/api/v1/queues', {
+    for (const [position, spec] of QUEUES.entries()) {
+      await idempotent(
+        () => call('POST', '/api/v1/queues', { project_id: project.id, ...spec, position }),
+        'desk.queue_name_taken',
+      )
+    }
+  }
+
+  /*
+   * **서비스데스크 데모.**
+   *
+   * 큐가 보는 것은 **티켓**이고, 티켓의 정의는 `ticket_ext` 행이 있는 이슈다
+   * (`desk/service.py` 의 `_tickets_only`). 이름이 아니라 그 행이 근거라서,
+   * 이슈를 아무리 만들어 두어도 큐는 안 찬다 — 처음에 그걸 모르고 큐만 만들어
+   * 놓고 빈 화면을 찍었다.
+   *
+   * 그래서 **실제로 포털에 요청을 낸다.** 게스트 접수(`guest-requests`)는
+   * 로그인 없이 되는 길이라 고객 계정을 만들 필요가 없다.
+   */
+  const portals = asList(await call('GET', `/api/v1/portals?project_id=${project.id}`))
+  let portal = portals[0]
+  const freshPortal = portal === undefined
+  if (freshPortal) {
+    portal = await call('POST', '/api/v1/portals', {
       project_id: project.id,
-      name: '내가 맡은 것',
-      iql: 'assignee = currentUser() AND status != "Done"',
-      position: 0,
-    }).catch(() => undefined)
-    await call('POST', '/api/v1/queues', {
-      project_id: project.id,
-      name: '안 끝난 것 전부',
-      iql: 'status != "Done" ORDER BY priority DESC',
-      position: 1,
-    }).catch(() => undefined)
-    await call('POST', '/api/v1/queues', {
-      project_id: project.id,
-      name: '아직 안 맡은 것',
-      iql: 'assignee IS EMPTY AND status != "Done"',
-      position: 2,
-    }).catch(() => undefined)
+      name: '고객 지원',
+      slug: 'support',
+      is_public: true,
+    })
+  }
+
+  const requestTypes = asList(
+    await call('GET', `/api/v1/portals/${portal.id}/request-types`),
+  )
+  if (requestTypes.length === 0) {
+    const issueTypes = asList(await call('GET', `/api/v1/issues/types?project_id=${project.id}`))
+    const issueTypeId = issueTypes[0].id
+    // **라벨은 고객이 읽는 말이다.** 폼의 칸 이름이 곧 화면이라 여기가 곧
+    // 제품의 첫인상이다.
+    for (const name of ['안 되는 것이 있어요', '이런 게 있으면 좋겠어요']) {
+      requestTypes.push(
+        await call('POST', `/api/v1/portals/${portal.id}/request-types`, {
+          issue_type_id: issueTypeId,
+          name,
+          form_schema: {
+            fields: [
+              { key: 'summary', label: '한 줄로 말하면', required: true },
+              { key: 'description', label: '자세히 알려 주세요' },
+            ],
+          },
+          field_mapping: {},
+        }),
+      )
+    }
+  }
+
+  // 포털을 방금 만들었을 때만 요청을 낸다 — 돌릴 때마다 티켓이 쌓이면
+  // 사진 속 목록이 실행마다 길어진다. 여기는 **삼키지 않는다**: 제출이
+  // 실패하면 큐가 비고, 큐가 비면 사진이 빈 화면이다.
+  if (freshPortal) {
+    for (const ask of GUEST_REQUESTS) {
+      await call('POST', `/api/v1/portal/${portal.slug}/guest-requests`, {
+        request_type_id: requestTypes[ask.type].id,
+        email: ask.email,
+        name: ask.name,
+        answers: { summary: ask.summary, description: ask.description },
+      })
+    }
   }
 
   const space = await reuse(
@@ -408,10 +517,40 @@ async function shoot(page, name, { full = false, out = OUT } = {}) {
   console.log(`  ${out}/${name}.png`)
 }
 
+/**
+ * **사진이 빈 화면이 될 것 같으면 찍기 전에 터진다.**
+ *
+ * 이 도구가 낸 고장은 전부 같은 모양이었다. 시드가 조용히 실패하고, 화면은
+ * "아직 ~가 없습니다" 를 그리고, 그 그림이 매뉴얼에 실린다. 그림을 사람이
+ * 열어 보기 전까지 아무도 모른다 — 도구는 성공했다고 말하기 때문이다.
+ *
+ * 그래서 **그림이 기대는 것을 여기서 먼저 묻는다.** 보드와 큐를 고른 것은
+ * 실제로 비어서 다시 찍게 만든 둘이기 때문이다.
+ */
+async function requireNotEmpty(demo) {
+  const content = await call('GET', `/api/v1/boards/${demo.board.id}/content`)
+  const cards = (content.lanes ?? []).flatMap((lane) =>
+    (lane.columns ?? []).flatMap((column) => column.issues ?? []),
+  )
+  if (cards.length === 0) throw new Error('보드에 카드가 없다 — 보드 사진이 빈 상자가 된다.')
+
+  const queues = asList(await call('GET', `/api/v1/queues?project_id=${demo.project.id}`))
+  if (queues.length === 0) throw new Error('큐가 없다 — 데스크 사진이 "아직 큐가 없습니다" 가 된다.')
+  const first = queues[0]
+  const page = await call('GET', `/api/v1/queues/${first.id}/tickets?limit=20`)
+  if (asList(page).length === 0) {
+    throw new Error(
+      `첫 큐 "${first.name}" 가 비었다 — 데스크 사진이 "아무 것도 없습니다" 가 된다. ` +
+        '포털 게스트 요청 시드를 확인한다.',
+    )
+  }
+}
+
 async function main() {
   await mkdir(OUT, { recursive: true })
   console.log('데모 데이터를 만든다…')
   const demo = await seedDemo()
+  await requireNotEmpty(demo)
 
   const browser = await chromium.launch({
     ...(process.env.E2E_CHROMIUM ? { executablePath: process.env.E2E_CHROMIUM } : {}),
@@ -504,17 +643,11 @@ async function main() {
   await page.goto(`${WEB}/settings/people`)
   await manual('people')
 
-  /*
-   * **데스크는 찍지 않는다.**
-   *
-   * 큐가 보는 것은 **포털로 들어온 티켓**이고, 이 데모 데이터에는 티켓이
-   * 없다(이슈만 있다). 그래서 큐를 만들어 두어도 화면은 "지금 이 큐에는 아무
-   * 것도 없습니다" 다 — 그것을 매뉴얼에 실으면 제품이 아무것도 못 하는 것처럼
-   * 보인다.
-   *
-   * 제대로 찍으려면 포털·요청 유형·고객 계정을 만들고 **고객으로 로그인해
-   * 요청을 내는** 흐름까지 데모 데이터가 있어야 한다. 그때 여기를 되살린다.
-   */
+  // 데스크. 큐는 **포털로 들어온 티켓**만 본다 — 데모가 실제로 요청을 내
+  // 두었으므로 여기는 찬 화면이다.
+  await page.goto(`${WEB}/desk`)
+  await pickProject(page, demo.project.key)
+  await manual('desk')
 
   await browser.close()
   await writeFile(
