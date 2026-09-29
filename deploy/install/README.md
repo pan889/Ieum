@@ -45,7 +45,7 @@ https://ieum.example.com  →  127.0.0.1:8080
 ## 판 올리기
 
 ```bash
-sh install.sh --version 1.1.0
+sh install.sh --version 1.2.0
 ```
 
 비밀은 다시 만들지 않는다. `compose.yml` 은 **그 판의 것으로 갈아 끼운다** —

@@ -29,7 +29,7 @@ import { isoDay, urgencyOf, type Urgency } from '@/features/wiki/due'
 import { approvalsApi, notificationsApi, searchApi, sprintsApi, wikiApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { RichText } from '@/shared/markdown/RichText'
-import { Alert, Badge, Card, PageHeader } from '@/shared/ui/primitives'
+import { Alert, Badge, Card } from '@/shared/ui/primitives'
 
 import { countDue, isCalm } from './counts'
 
@@ -81,8 +81,12 @@ function Due({ due, today }: { due: string; today: string }) {
 }
 
 export function HomeScreen() {
-  const { t } = useTranslation(['home', 'common', 'wiki', 'desk'])
-  const today = isoDay(new Date())
+  const { t, i18n } = useTranslation(['home', 'common', 'wiki', 'desk'])
+  const now = new Date()
+  const today = isoDay(now)
+  const formattedToday = new Intl.DateTimeFormat(i18n.language, {
+    weekday: 'long', month: 'long', day: 'numeric',
+  }).format(now)
 
   const issues = useQuery({
     queryKey: ['home', 'issues'],
@@ -128,27 +132,40 @@ export function HomeScreen() {
     today,
   )
   const calm = isCalm(counts)
+  const summaryReady = issues.isSuccess && tasks.isSuccess
+  const summaryFailed = issues.isError || tasks.isError
 
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-6">
-      <PageHeader
-        title={t('home:title')}
-        description={
-          /*
-            **늦은 것이 있으면 그것부터 말한다.** 목록 아래쪽에 묻혀 있으면
-            첫 화면이 첫 화면 구실을 못 한다. 그리고 늦은 것이 있는 날의
-            요약은 **본문 색으로** 나온다 — 회색 한 줄이면 아무도 안 읽는다.
-          */
-          <span
-            data-testid="home-summary"
-            className={calm ? undefined : 'font-medium text-fg'}
-          >
-            {calm
-              ? t('home:calm')
-              : t('home:summary', { overdue: counts.overdue, today: counts.today })}
-          </span>
-        }
-      />
+    <section className="mx-auto flex max-w-6xl flex-col gap-6">
+      <header className="flex flex-col gap-5 border-b border-border pb-6 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted">{formattedToday}</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-fg">{t('home:title')}</h1>
+          <p data-testid="home-summary" className={calm ? 'mt-1 text-sm text-muted' : 'mt-1 text-sm font-medium text-fg'}>
+            {summaryFailed
+              ? t('home:summaryUnavailable')
+              : !summaryReady
+                ? t('common:state.loading')
+                : calm
+                  ? t('home:calm')
+                  : t('home:summary', { overdue: counts.overdue, today: counts.today })}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:gap-3" aria-label={t('home:due.summary')}>
+          <div className="flex min-w-36 items-center justify-between gap-5 rounded-lg border border-border bg-surface px-4 py-3 shadow-raised">
+            <span className="text-xs font-medium text-muted">{t('home:due.overdue')}</span>
+            <span className={counts.overdue > 0 && summaryReady ? 'text-xl font-semibold tabular-nums text-danger' : 'text-xl font-semibold tabular-nums text-fg'}>
+              {summaryReady ? counts.overdue : '–'}
+            </span>
+          </div>
+          <div className="flex min-w-36 items-center justify-between gap-5 rounded-lg border border-border bg-surface px-4 py-3 shadow-raised">
+            <span className="text-xs font-medium text-muted">{t('home:due.today')}</span>
+            <span className="text-xl font-semibold tabular-nums text-fg">
+              {summaryReady ? counts.today : '–'}
+            </span>
+          </div>
+        </div>
+      </header>
 
       {/*
         **격자가 아니라 두 세로줄이다.** 격자로 두면 한 줄의 높이가 더 긴
@@ -156,8 +173,8 @@ export function HomeScreen() {
         로 칸을 안 늘여도 **구멍은 그대로 남는다**(실제로 그랬다). 줄마다
         칸을 쌓으면 아래 칸이 그 자리를 바로 메운다.
       */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-start">
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] lg:items-start">
+        <div className="flex min-w-0 flex-col gap-5">
           <Panel
             title={t('home:myIssues')}
             action={
@@ -166,21 +183,32 @@ export function HomeScreen() {
               </Link>
             }
             error={issues.error}
+            loading={issues.isPending}
             empty={issues.isSuccess && issueRows.length === 0 ? t('home:noIssues') : null}
             testId="home-issues"
           >
             {issueRows.slice(0, ROWS).map((row) => (
-              <Row key={row.id}>
-                <Link
-                  to="/issues/$issueKey"
-                  params={{ issueKey: row.key }}
-                  className="shrink-0 font-mono text-xs text-accent hover:underline"
-                >
-                  {row.key}
-                </Link>
-                <span className="min-w-0 flex-1 truncate">{row.summary}</span>
-                <Badge tone={categoryTone(row.state_category)}>{row.state_name}</Badge>
-                {row.due_date === null ? null : <Due due={row.due_date} today={today} />}
+              <Row key={row.id} adaptive>
+                <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                  <Link
+                    to="/issues/$issueKey"
+                    params={{ issueKey: row.key }}
+                    className="shrink-0 font-mono text-xs font-medium text-accent hover:underline"
+                  >
+                    {row.key}
+                  </Link>
+                  <Link
+                    to="/issues/$issueKey"
+                    params={{ issueKey: row.key }}
+                    className="min-w-0 flex-1 truncate font-medium text-fg hover:text-accent"
+                  >
+                    {row.summary}
+                  </Link>
+                </span>
+                <span className="flex shrink-0 items-center justify-start gap-2 pl-0 sm:justify-end">
+                  <Badge tone={categoryTone(row.state_category)}>{row.state_name}</Badge>
+                  {row.due_date === null ? null : <Due due={row.due_date} today={today} />}
+                </span>
               </Row>
             ))}
           </Panel>
@@ -193,6 +221,7 @@ export function HomeScreen() {
               </Link>
             }
             error={sprints.error}
+            loading={sprints.isPending}
             empty={
               sprints.isSuccess && sprintRows.length === 0 ? t('home:noSprints') : null
             }
@@ -219,7 +248,7 @@ export function HomeScreen() {
           </Panel>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-5">
           <Panel
             title={t('home:myTasks')}
             action={
@@ -228,6 +257,7 @@ export function HomeScreen() {
               </Link>
             }
             error={tasks.error}
+            loading={tasks.isPending}
             empty={tasks.isSuccess && taskRows.length === 0 ? t('home:noTasks') : null}
             testId="home-tasks"
           >
@@ -256,6 +286,7 @@ export function HomeScreen() {
               </Link>
             }
             error={news.error}
+            loading={news.isPending}
             empty={
               news.isSuccess && newsRows.length === 0 ? t('home:noNotifications') : null
             }
@@ -263,7 +294,13 @@ export function HomeScreen() {
           >
             {newsRows.map((row) => (
               <Row key={row.id}>
-                <span className="min-w-0 flex-1 truncate">{row.title}</span>
+                {row.link ? (
+                  <Link to={row.link} className="min-w-0 flex-1 truncate text-fg hover:text-accent">
+                    {row.title}
+                  </Link>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate">{row.title}</span>
+                )}
                 <span className="shrink-0 text-xs tabular-nums text-subtle">
                   {formatRelative(row.created_at)}
                 </span>
@@ -277,6 +314,7 @@ export function HomeScreen() {
               title={t('desk:approval.mine')}
               action={null}
               error={approvals.error}
+              loading={approvals.isPending}
               empty={null}
               testId="home-approvals"
             >
@@ -319,13 +357,23 @@ export function HomeScreen() {
  * 다섯이 되는 순간 어디서 한 줄이 끝나는지 눈으로 못 쫓는다 — 특히 줄마다
  * 높이가 다른 태스크 칸에서 그랬다.
  */
-function Row({ stacked = false, children }: { stacked?: boolean; children: ReactNode }) {
+function Row({
+  stacked = false,
+  adaptive = false,
+  children,
+}: {
+  stacked?: boolean
+  adaptive?: boolean
+  children: ReactNode
+}) {
   return (
     <li
       className={
         stacked
-          ? 'flex flex-col gap-1 py-1.5 text-sm first:pt-0 last:pb-0'
-          : 'flex items-baseline gap-2 py-1.5 text-sm first:pt-0 last:pb-0'
+          ? 'flex flex-col gap-1.5 py-3 text-sm first:pt-0 last:pb-0'
+          : adaptive
+            ? 'flex flex-col gap-1.5 py-3 text-sm first:pt-0 last:pb-0 xl:flex-row xl:items-center'
+            : 'flex items-baseline gap-2 py-3 text-sm first:pt-0 last:pb-0'
       }
     >
       {children}
@@ -347,6 +395,7 @@ function Panel({
   title,
   action,
   error,
+  loading,
   empty,
   testId,
   children,
@@ -354,28 +403,34 @@ function Panel({
   title: string
   action: ReactNode
   error: unknown
+  loading: boolean
   empty: string | null
   testId: string
   children: ReactNode
 }) {
   return (
-    <Card className="flex flex-col p-0">
-      {/*
-        머리는 가라앉은 면에 둔다. 전에는 제목이 본문과 **같은 크기·같은
-        무게**였고(`text-sm font-medium`), 그래서 카드 안에서 무엇이 제목인지
-        구별하려면 읽어 봐야 했다.
-      */}
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-sunken px-4 py-2.5 rounded-t-card">
-        <h2 className="truncate text-md font-semibold text-fg">{title}</h2>
+    <Card className="flex flex-col overflow-hidden p-0">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-5 py-3.5">
+        <h2 className="truncate text-sm font-semibold text-fg">{title}</h2>
         {action}
       </div>
-      <div className="flex flex-col gap-3 px-4 py-3">
+      <div className="flex flex-col px-5 py-2.5">
         {error === null || error === undefined ? null : <Alert>{describeError(error)}</Alert>}
-        {/* 비었을 때도 칸의 높이가 유지되도록 가운데에 한 줄만 둔다. */}
         {empty === null ? null : (
-          <p className="py-4 text-center text-sm text-subtle">{empty}</p>
+          <p className="py-5 text-center text-sm text-muted">{empty}</p>
         )}
-        <ul className="flex flex-col divide-y divide-border" data-testid={testId}>
+        {loading ? (
+          <div aria-hidden="true" className="flex flex-col gap-1">
+            {Array.from({ length: 3 }, (_, index) => (
+              <div key={index} className="flex animate-pulse items-center gap-3 py-3">
+                <span className="h-3 w-12 rounded bg-sunken" />
+                <span className="h-3 flex-1 rounded bg-sunken" />
+                <span className="h-3 w-14 rounded bg-sunken" />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <ul className="flex flex-col divide-y divide-border" data-testid={testId} aria-busy={loading}>
           {children}
         </ul>
       </div>

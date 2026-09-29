@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
+import { NavIcon } from '@/app/NavIcon'
 import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { saveBlob } from '@/shared/download'
@@ -19,7 +20,7 @@ import { formatDate, formatRelative, priorityLabel, categoryTone } from './forma
 import { useUserNames } from './hooks'
 import type { GroupField, IssueGroup } from './grouping'
 import { GROUP_FIELDS, groupRows } from './grouping'
-import { toIql } from './iql'
+import { EMPTY_FILTERS, toIql } from './iql'
 import type { IssuesSearch } from './urlState'
 import { isIqlMode, toFilters, toIqlSearch, toSearch } from './urlState'
 
@@ -176,8 +177,8 @@ export function IssuesScreen() {
 
   return (
     <section className="mx-auto flex max-w-6xl flex-col gap-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-fg">{t('issues:list.title')}</h1>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight text-fg">{t('issues:list.title')}</h1>
         <div className="flex items-center gap-2">
           <Button
             variant="secondary"
@@ -193,7 +194,7 @@ export function IssuesScreen() {
               화면을 옮길 때마다 단추가 조금씩 커졌다 작아진다. */}
           <Link
             to="/issues/new"
-            className="inline-flex h-8 shrink-0 items-center rounded-md bg-accent px-3 text-sm font-medium text-accent-fg shadow-raised hover:brightness-110"
+            className="inline-flex h-9 shrink-0 items-center rounded-md bg-accent px-3.5 text-sm font-medium text-accent-fg hover:brightness-110"
           >
             {t('issues:create.title')}
           </Link>
@@ -206,7 +207,7 @@ export function IssuesScreen() {
         조작이고 무엇이 내용인지 경계가 없으니 화면이 짜여 있다는 느낌
         자체가 없었다. 가라앉은 한 상자에 담고 안에서 줄로 나눈다.
       */}
-      <div className="divide-y divide-border rounded-card border border-border bg-sunken">
+      <div className="divide-y divide-border rounded-card border border-border bg-surface shadow-raised">
         <FilterBar
           filters={filters}
           onFiltersChange={(next) => { setTyping(null); go(toSearch(next)) }}
@@ -225,30 +226,37 @@ export function IssuesScreen() {
           onLoad={(iql) => { setTyping(null); go(toIqlSearch(iql)) }}
         />
 
-        {/* 보는 방식(칸·묶음)은 필터가 아니지만 **같은 종류의 조작**이다. */}
-        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2">
-          <span className="w-[4.5rem] shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
-            {t('issues:list.columns')}
-          </span>
-          {COLUMNS.map((id) => (
-            <Chip key={id} pressed={columns.includes(id)} onClick={() => { toggleColumn(id); }}>
-              {t(`issues:list.column.${id}`)}
-            </Chip>
-          ))}
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-muted hover:bg-surface-raised hover:text-fg [&::-webkit-details-marker]:hidden">
+            <span className="transition-transform group-open:rotate-180">
+              <NavIcon name="chevron" />
+            </span>
+            {t('issues:list.viewOptions')}
+          </summary>
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-border px-3 py-2.5">
+            <span className="w-[4.5rem] shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+              {t('issues:list.columns')}
+            </span>
+            {COLUMNS.map((id) => (
+              <Chip key={id} pressed={columns.includes(id)} onClick={() => { toggleColumn(id); }}>
+                {t(`issues:list.column.${id}`)}
+              </Chip>
+            ))}
 
-          <span className="ml-4 shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
-            {t('issues:list.groupBy')}
-          </span>
-          {GROUP_FIELDS.map((field) => (
-            <Chip
-              key={field}
-              pressed={groupBy === field}
-              onClick={() => { setGroupBy(field) }}
-            >
-              {t(`issues:list.group.${field}`)}
-            </Chip>
-          ))}
-        </div>
+            <span className="ml-4 shrink-0 text-2xs font-semibold uppercase tracking-wide text-subtle">
+              {t('issues:list.groupBy')}
+            </span>
+            {GROUP_FIELDS.map((field) => (
+              <Chip
+                key={field}
+                pressed={groupBy === field}
+                onClick={() => { setGroupBy(field) }}
+              >
+                {t(`issues:list.group.${field}`)}
+              </Chip>
+            ))}
+          </div>
+        </details>
       </div>
 
       {selected.length > 0 ? (
@@ -296,15 +304,29 @@ export function IssuesScreen() {
         <Alert>{describeError(results.error)}</Alert>
       ) : results.data.items.length === 0 ? (
         <EmptyState
-          title={t('issues:list.empty')}
-          description={t('issues:list.emptyHint')}
+          title={t(activeIql.trim() ? 'issues:list.empty' : 'issues:list.noIssues')}
+          description={t(activeIql.trim() ? 'issues:list.emptyHint' : 'issues:list.noIssuesHint')}
+          action={activeIql.trim() ? (
+            <Button variant="secondary" onClick={() => { go(toSearch(EMPTY_FILTERS)); }}>
+              {t('issues:list.clearFilters')}
+            </Button>
+          ) : (
+            <Link
+              to="/issues/new"
+              className="inline-flex h-9 items-center rounded-md bg-accent px-3.5 text-sm font-medium text-accent-fg hover:brightness-110"
+            >
+              {t('issues:create.title')}
+            </Link>
+          )}
+          className="shadow-raised"
         />
       ) : (
         <>
-          <p className="text-xs tabular-nums text-subtle">
-            {t('issues:list.count', { count: results.data.items.length })}
-          </p>
-          <div className="overflow-x-auto rounded-card border border-border bg-surface shadow-raised">
+          <div className="overflow-hidden rounded-card border border-border bg-surface shadow-raised">
+            <div className="border-b border-border px-4 py-3 text-sm font-medium tabular-nums text-fg">
+              {t('issues:list.count', { count: results.data.items.length })}
+            </div>
+            <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
                 {/*
@@ -451,6 +473,7 @@ export function IssuesScreen() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           <div className="flex justify-center gap-2">

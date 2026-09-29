@@ -17,19 +17,19 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 }
 
 const VARIANTS: Record<NonNullable<ButtonProps['variant']>, string> = {
-  primary: 'bg-accent text-accent-fg shadow-raised hover:brightness-110 active:brightness-95',
+  primary: 'bg-accent text-accent-fg hover:brightness-110 active:brightness-95',
   // 보조 단추는 **표면 위에 놓인 단추**로 보여야 한다. 전에는 배경보다
   // 밝은 회색이라 눌리는 것인지 그냥 칸인지 구별이 안 됐다.
   secondary:
-    'bg-surface text-fg border border-border-strong shadow-raised hover:bg-surface-raised active:bg-sunken',
+    'bg-surface text-fg border border-border-strong hover:bg-surface-raised active:bg-sunken',
   ghost: 'text-muted hover:bg-surface-raised hover:text-fg active:bg-sunken',
-  danger: 'bg-danger text-white shadow-raised hover:brightness-110 active:brightness-95',
+  danger: 'bg-danger text-white hover:brightness-110 active:brightness-95',
 }
 
 const SIZES: Record<NonNullable<ButtonProps['size']>, string> = {
-  sm: 'h-7 gap-1.5 px-2.5 text-xs',
-  md: 'h-8 gap-2 px-3 text-sm',
-  lg: 'h-10 gap-2 px-4 text-base',
+  sm: 'h-8 gap-1.5 px-3 text-xs',
+  md: 'h-9 gap-2 px-3.5 text-sm',
+  lg: 'h-11 gap-2 px-5 text-base',
 }
 
 export function Button({
@@ -51,7 +51,7 @@ export function Button({
       type={type}
       className={clsx(
         'inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md',
-        'font-medium transition-[background-color,filter,box-shadow] duration-100',
+        'font-medium transition-[background-color,filter,box-shadow] duration-150',
         'disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none',
         SIZES[size],
         VARIANTS[variant],
@@ -114,7 +114,7 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy || undefined}
         className={clsx(
-          'h-8 rounded-md border bg-surface px-2.5 text-sm text-fg',
+          'h-9 rounded-md border bg-surface px-3 text-sm text-fg',
           'placeholder:text-subtle',
           error ? 'border-danger' : 'border-border-strong',
           className,
@@ -243,10 +243,10 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         id={id}
         aria-describedby={hint ? `${id}-hint` : undefined}
         // `Field` 와 **같은 높이·같은 테두리**여야 한다. 전에는 `py-2` 라
-        // 40px 이었고 입력 칸은 32px 이었다 — 한 줄에 나란히 놓으면 눈에
+        // 40px 이었고 입력 칸은 더 낮았다 — 한 줄에 나란히 놓으면 눈에
         // 띄게 어긋났고, 이슈 상세의 오른쪽 칸이 그래서 들쭉날쭉했다.
         className={clsx(
-          'h-8 rounded-md border border-border-strong bg-surface px-2 text-sm text-fg',
+          'h-9 rounded-md border border-border-strong bg-surface px-3 text-sm text-fg',
           className,
         )}
         {...rest}
@@ -361,7 +361,7 @@ export function Badge({
   return (
     <span
       className={clsx(
-        'inline-flex items-center rounded border px-1.5 py-px text-2xs font-medium',
+        'inline-flex items-center rounded-md border px-2 py-0.5 text-2xs font-medium',
         TONES[tone] ?? TONES['neutral'],
         className,
       )}
@@ -391,8 +391,8 @@ export function PageHeader({
   return (
     <header className={clsx('flex flex-wrap items-start gap-x-4 gap-y-2', className)}>
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-xl font-semibold text-fg">{title}</h1>
-        {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
+        <h1 className="truncate text-2xl font-semibold tracking-tight text-fg">{title}</h1>
+        {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </header>
@@ -421,7 +421,7 @@ export function EmptyState({
     <div
       className={clsx(
         'flex flex-col items-center justify-center gap-1 rounded-card',
-        'border border-dashed border-border bg-surface/60 px-6 py-14 text-center',
+        'border border-border bg-surface px-6 py-12 text-center',
         className,
       )}
     >

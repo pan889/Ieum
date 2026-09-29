@@ -1,6 +1,7 @@
 {
   "calm": "Nothing overdue and nothing due today.",
   "due.overdue": "Overdue",
+  "due.summary": "Due date overview",
   "due.today": "Due today",
   "endsAt": "Ends {when}",
   "myIssues": "Assigned to me",
@@ -13,6 +14,7 @@
   "remaining": "{remaining} of {total} left",
   "seeAll": "See all",
   "summary": "{overdue} overdue, {today} due today.",
+  "summaryUnavailable": "Some work couldn't be loaded. Check the sections below.",
   "title": "Today",
   "unread": "Unread"
 }

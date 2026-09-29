@@ -24,6 +24,14 @@ const PATHS: Record<string, string> = {
   notifications: 'M18 10a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6M10.3 20a2 2 0 0 0 3.4 0',
   settings:
     'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8-3.5a8 8 0 0 0-.13-1.4l2-1.6-2-3.4-2.4 1a8 8 0 0 0-2.4-1.4L14.7 2h-4l-.37 2.6a8 8 0 0 0-2.4 1.4l-2.4-1-2 3.4 2 1.6a8.2 8.2 0 0 0 0 2.8l-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2.4 1.4l.37 2.6h4l.37-2.6a8 8 0 0 0 2.4-1.4l2.4 1 2-3.4-2-1.6c.09-.46.13-.93.13-1.4Z',
+  menu: 'M4 7h16M4 12h16M4 17h16',
+  close: 'M5 5l14 14M19 5 5 19',
+  search: 'M10.8 18a7.2 7.2 0 1 0 0-14.4 7.2 7.2 0 0 0 0 14.4ZM16 16l5 5',
+  plus: 'M12 4v16M4 12h16',
+  collapse: 'M4 4h16v16H4V4Zm6 0v16m7-12-3 4 3 4',
+  expand: 'M4 4h16v16H4V4Zm6 0v16m5-12 3 4-3 4',
+  arrow: 'M5 12h14m-6-6 6 6-6 6',
+  chevron: 'm6 9 6 6 6-6',
 }
 
 export function NavIcon({ name }: { name: string }) {
@@ -35,7 +43,7 @@ export function NavIcon({ name }: { name: string }) {
       className="size-4 shrink-0"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.5}
+      strokeWidth={1.7}
       strokeLinecap="round"
       strokeLinejoin="round"
     >

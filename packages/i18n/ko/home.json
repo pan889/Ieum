@@ -1,6 +1,7 @@
 {
   "calm": "지난 기한도, 오늘까지 할 일도 없습니다.",
   "due.overdue": "기한 지남",
+  "due.summary": "기한 요약",
   "due.today": "오늘까지",
   "endsAt": "끝: {when}",
   "myIssues": "내게 배정된 이슈",
@@ -13,6 +14,7 @@
   "remaining": "남은 {remaining}/{total}",
   "seeAll": "전체 보기",
   "summary": "기한 지난 {overdue}건, 오늘까지 {today}건.",
+  "summaryUnavailable": "일부 작업을 불러오지 못했습니다. 아래 목록을 확인해 주세요.",
   "title": "오늘",
   "unread": "안 읽은 알림"
 }

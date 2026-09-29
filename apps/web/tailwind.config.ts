@@ -41,6 +41,12 @@ export default {
         'warning-soft': 'rgb(var(--ieum-warning-soft) / <alpha-value>)',
         success: 'rgb(var(--ieum-success) / <alpha-value>)',
         'success-soft': 'rgb(var(--ieum-success-soft) / <alpha-value>)',
+        sidebar: 'rgb(var(--ieum-sidebar) / <alpha-value>)',
+        'sidebar-fg': 'rgb(var(--ieum-sidebar-fg) / <alpha-value>)',
+        'sidebar-muted': 'rgb(var(--ieum-sidebar-muted) / <alpha-value>)',
+        'sidebar-hover': 'rgb(var(--ieum-sidebar-hover) / <alpha-value>)',
+        'sidebar-active': 'rgb(var(--ieum-sidebar-active) / <alpha-value>)',
+        'sidebar-border': 'rgb(var(--ieum-sidebar-border) / <alpha-value>)',
       },
       /**
        * **부르는 이름과 싣는 이름이 같아야 한다.** 전에는 `Pretendard` 와
@@ -87,9 +93,9 @@ export default {
       fontSize: {
         '2xs': ['0.6875rem', { lineHeight: '1rem', letterSpacing: '0.02em' }],
         xs: ['0.75rem', { lineHeight: '1.125rem' }],
-        sm: ['0.8125rem', { lineHeight: '1.25rem' }],
-        base: ['0.875rem', { lineHeight: '1.375rem' }],
-        md: ['0.9375rem', { lineHeight: '1.5rem' }],
+        sm: ['0.875rem', { lineHeight: '1.375rem' }],
+        base: ['0.9375rem', { lineHeight: '1.5rem' }],
+        md: ['1rem', { lineHeight: '1.5rem' }],
         lg: ['1.0625rem', { lineHeight: '1.625rem', letterSpacing: '-0.006em' }],
         xl: ['1.25rem', { lineHeight: '1.75rem', letterSpacing: '-0.012em' }],
         '2xl': ['1.5rem', { lineHeight: '2rem', letterSpacing: '-0.018em' }],

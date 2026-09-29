@@ -12,27 +12,27 @@
      표도 팝오버도 전부 같은 평면에 떠 있는 것처럼 보였다. 배경을 한 칸 더
      내리고, 올라온 면과 가라앉은 면을 따로 둔다. */
   :root {
-    --ieum-bg: 246 247 249;
+    --ieum-bg: 248 249 251;
     --ieum-surface: 255 255 255;
     /* 줄 위에 마우스를 올렸을 때, 코드 배경처럼 **살짝 떠 보이는** 면. */
-    --ieum-surface-raised: 248 249 251;
+    --ieum-surface-raised: 249 250 252;
     /* 표 머리글·필터 막대처럼 **가라앉은** 면. 내용보다 뒤로 물러난다. */
-    --ieum-sunken: 241 243 246;
+    --ieum-sunken: 245 247 250;
 
     /* 테두리도 두 단계다. 대부분은 거의 안 보여야 하고(칸을 나누는 선),
        입력 칸처럼 "여기를 만진다" 는 자리만 뚜렷해야 한다. */
-    --ieum-border: 226 229 234;
-    --ieum-border-strong: 203 208 216;
+    --ieum-border: 226 231 238;
+    --ieum-border-strong: 201 210 223;
 
     /* 글자는 세 단계. 전에는 둘뿐이라 메타 정보가 본문과 같은 무게였다. */
-    --ieum-fg: 22 24 29;
-    --ieum-muted: 92 99 112;
-    --ieum-subtle: 138 145 158;
+    --ieum-fg: 30 41 59;
+    --ieum-muted: 91 105 124;
+    --ieum-subtle: 128 142 161;
 
-    --ieum-accent: 45 91 208;
+    --ieum-accent: 39 91 187;
     --ieum-accent-fg: 255 255 255;
     /* 강조색 배경. `accent/15` 를 쓰면 배경 위에서 색이 탁해진다. */
-    --ieum-accent-soft: 233 239 253;
+    --ieum-accent-soft: 235 242 253;
     --ieum-danger: 190 46 46;
     --ieum-danger-soft: 253 235 235;
     --ieum-warning: 166 110 8;
@@ -40,10 +40,17 @@
     --ieum-success: 27 118 72;
     --ieum-success-soft: 231 246 238;
 
+    --ieum-sidebar: 255 255 255;
+    --ieum-sidebar-fg: 48 61 80;
+    --ieum-sidebar-muted: 107 120 139;
+    --ieum-sidebar-hover: 246 248 251;
+    --ieum-sidebar-active: 235 242 253;
+    --ieum-sidebar-border: 226 231 238;
+
     /* 그림자. 전부 `shadow-sm` 이면 아무것도 안 떠 있는 것과 같다. */
-    --ieum-shadow-raised: 0 1px 2px 0 rgb(18 22 31 / 0.04);
+    --ieum-shadow-raised: 0 1px 2px rgb(24 39 66 / 0.035), 0 4px 12px rgb(24 39 66 / 0.02);
     --ieum-shadow-overlay:
-      0 10px 15px -3px rgb(18 22 31 / 0.08), 0 4px 6px -4px rgb(18 22 31 / 0.06);
+      0 20px 45px -12px rgb(18 33 57 / 0.18), 0 8px 16px -8px rgb(18 33 57 / 0.1);
   }
 
   [data-theme='dark'] {
@@ -68,6 +75,13 @@
     --ieum-warning-soft: 58 45 22;
     --ieum-success: 74 190 132;
     --ieum-success-soft: 22 48 37;
+
+    --ieum-sidebar: 23 26 31;
+    --ieum-sidebar-fg: 237 242 250;
+    --ieum-sidebar-muted: 150 160 175;
+    --ieum-sidebar-hover: 34 39 47;
+    --ieum-sidebar-active: 37 49 69;
+    --ieum-sidebar-border: 45 50 59;
 
     --ieum-shadow-raised: 0 1px 2px 0 rgb(0 0 0 / 0.35);
     --ieum-shadow-overlay:

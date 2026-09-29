@@ -3,7 +3,7 @@
 #
 #   ./install.sh                              물어보면서 깐다
 #   ./install.sh --url https://ieum.example.com --yes    안 물어보고 깐다
-#   ./install.sh --version 1.1.0              깔린 것을 그 판으로 올린다
+#   ./install.sh --version 1.2.0              깔린 것을 그 판으로 올린다
 #
 # **이미지는 빌드하지 않고 당긴다.** 설치한 사람과 우리가 같은 바이트를
 # 돌려야 "무엇이 돌고 있냐" 에 답할 수 있다.
@@ -15,7 +15,7 @@
 
 set -eu
 
-VERSION_DEFAULT="1.1.0"
+VERSION_DEFAULT="1.2.0"
 IMAGE_OWNER_DEFAULT="pan889"
 PORT_DEFAULT="8080"
 RAW_BASE="https://raw.githubusercontent.com/pan889/Ieum"

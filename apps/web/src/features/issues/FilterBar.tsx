@@ -45,8 +45,8 @@ export function FilterBar({
   if (iqlDraft !== null) {
     const canReturn = matchesChips(iqlDraft, filters)
     return (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-start gap-2">
+      <div className="flex flex-col gap-2 px-3 py-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
           <IqlEditor
             label={t('issues:filter.iql')}
             placeholder={t('issues:filter.iqlPlaceholder')}
@@ -55,10 +55,13 @@ export function FilterBar({
             onRun={() => { onRun(iqlDraft); }}
             invalid={invalid}
           />
-          <div className="flex flex-col gap-2">
-            <Button onClick={() => { onRun(iqlDraft); }}>{t('issues:filter.run')}</Button>
+          <div className="flex gap-2 sm:flex-col">
+            <Button className="flex-1 sm:flex-none" onClick={() => { onRun(iqlDraft); }}>
+              {t('issues:filter.run')}
+            </Button>
             <Button
               variant="secondary"
+              className="flex-1 sm:flex-none"
               disabled={!canReturn}
               title={canReturn ? undefined : t('issues:filter.chipsLockedHint')}
               onClick={() => { onIqlDraftChange(null); }}

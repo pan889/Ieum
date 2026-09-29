@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { BrandMark } from '@/app/BrandMark'
 import { authApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
 import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
@@ -114,11 +115,6 @@ export function LoginScreen() {
 
 /**
  * 로그인·MFA·초대 수락이 함께 쓰는 바깥틀.
- *
- * **여기가 제품의 첫인상이다.** 전에는 회색 벌판 한가운데에 흰 상자 하나가
- * 놓여 있었고, 그 상자에는 이름도 표식도 없었다 — 어느 회사의 무엇에
- * 로그인하는 중인지 화면만 보고는 알 수 없었다. 표식을 상자 위에 세우고,
- * 배경에 아주 옅은 강조색 물을 들여 상자가 **떠 있게** 한다.
  */
 export function AuthLayout({
   title,
@@ -130,31 +126,17 @@ export function AuthLayout({
   children: React.ReactNode
 }) {
   return (
-    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-12">
-      {/*
-        배경 물. `aria-hidden` 인 순수 장식이고, 토큰 색에 투명도를 얹으므로
-        다크 모드에서도 따로 정의할 것이 없다.
-      */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 h-[28rem] bg-gradient-to-b from-accent/[0.07] to-transparent"
-      />
-
-      <div className="relative flex w-full max-w-sm flex-col items-center gap-6">
-        <div className="flex items-center gap-2 text-lg font-semibold tracking-tight text-fg">
-          <span
-            aria-hidden="true"
-            className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-accent-fg shadow-raised"
-          >
-            I
-          </span>
-          Ieum
+    <main className="flex min-h-dvh items-center justify-center bg-bg px-4 py-12">
+      <div className="flex w-full max-w-[25rem] flex-col gap-8">
+        <div className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-fg">
+          <BrandMark />
+          <span>Ieum</span>
         </div>
 
-        <Card className="w-full p-6 shadow-overlay">
-          <h1 className="text-lg font-semibold text-fg">{title}</h1>
-          {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}
-          <div className="mt-5">{children}</div>
+        <Card className="w-full p-7 sm:p-8">
+          <h1 className="text-2xl font-semibold tracking-tight text-fg">{title}</h1>
+          {subtitle ? <p className="mt-2 text-sm text-muted">{subtitle}</p> : null}
+          <div className="mt-6">{children}</div>
         </Card>
       </div>
     </main>
