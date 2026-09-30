@@ -113,6 +113,20 @@ describe('resolve', () => {
     expect(resolve(scopes, at(press('Enter'), body))).toBe(over)
   })
 
+  it('Enter 는 기본 상호작용이 있는 요소에서 단축키보다 우선한다', () => {
+    const open = vi.fn()
+    const scopes: Scope[] = [{ bindings: { enter: open } }]
+    for (const tag of ['a', 'button', 'summary', 'input']) {
+      const element = document.createElement(tag)
+      const child = document.createElement('span')
+      element.append(child)
+      expect(resolve(scopes, at(press('Enter'), child)), tag).toBeNull()
+    }
+
+    const row = document.createElement('tr')
+    expect(resolve(scopes, at(press('Enter'), row))).toBe(open)
+  })
+
   it('위 스코프에 없으면 아래로 내려간다', () => {
     const under = vi.fn()
     const scopes: Scope[] = [{ bindings: { c: under } }, { bindings: { escape: vi.fn() } }]

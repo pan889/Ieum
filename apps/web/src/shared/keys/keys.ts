@@ -97,6 +97,11 @@ export function resolve(
 
   const combo = comboOf(event)
   const typing = isTypingTarget(event.target)
+  if (
+    combo === 'enter' &&
+    event.target instanceof HTMLElement &&
+    event.target.closest('a, button, summary, input, select, textarea, [role="button"], [role="link"]')
+  ) return null
 
   for (let i = scopes.length - 1; i >= 0; i -= 1) {
     const scope = scopes[i]
