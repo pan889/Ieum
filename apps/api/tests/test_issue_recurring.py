@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -33,6 +33,7 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import User
 from ieum.modules.issues import permissions as perms
+from ieum.modules.issues import recurring as recurring_module
 from ieum.modules.issues.models import Issue, IssueType, RecurringIssue, Workflow, WorkflowState
 from ieum.modules.issues.recurrence import Schedule
 from ieum.modules.issues.recurring import (
@@ -208,8 +209,10 @@ class TestCreating:
         actor: Actor,
         project: Project,
         issue_type: IssueType,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """주기를 고쳤는데 다음 한 번이 옛 시각에 돌면 사람은 안 고쳐진 줄 안다."""
+        monkeypatch.setattr(recurring_module, "utcnow", lambda: datetime(2026, 9, 14, tzinfo=UTC))
         service = RecurringIssueService(session, permissions)
         row = await service.create(actor, _payload(project, issue_type))
         before = row.next_run_at

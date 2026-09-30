@@ -192,6 +192,8 @@ async function writeTask(page: Page, prefix: string): Promise<void> {
   await expect(people).toBeVisible()
   await people.getByRole('option').first().click()
   await expect(box).toHaveValue(/\[@Administrator\]\(user:[0-9a-f-]+\)/)
+  const length = (await box.inputValue()).length
+  await expect.poll(() => box.evaluate((element: HTMLTextAreaElement) => element.selectionStart)).toBe(length)
   await box.pressSequentially(' due:2019-01-01')
 }
 

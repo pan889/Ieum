@@ -278,6 +278,7 @@ function PageEditorForm({
   const restored = draft !== null && draft.body !== page.body
   const [title, setTitle] = useState(restored ? draft.title || page.title : page.title)
   const [body, setBody] = useState(restored ? draft.body : page.body)
+  const pendingBody = useRef(body)
   const [message, setMessage] = useState('')
   const [labels, setLabels] = useState(page.labels.join(', '))
   const [savedAt, setSavedAt] = useState<string | null>(restored ? draft.updated_at : null)
@@ -311,8 +312,8 @@ function PageEditorForm({
        *    이 슬라이스 밖이고, 합치는 척하다 틀리는 것보다 말하는 것이 낫다.
        */
       onAdopt: (shared) => {
-        if (body === page.body) return null
-        if (shared === page.body) return body
+        if (pendingBody.current === page.body) return null
+        if (shared === page.body) return pendingBody.current
         setClashed(true)
         return null
       },
@@ -333,6 +334,7 @@ function PageEditorForm({
    */
   const sharedDirty = shared && text !== page.body
   const setText = (next: string) => {
+    pendingBody.current = next
     if (shared) collab.write(next)
     else setBody(next)
   }
@@ -394,6 +396,7 @@ function PageEditorForm({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['wiki', 'draft', page.id] })
       setTitle(page.title)
+      pendingBody.current = page.body
       setBody(page.body)
       setSavedAt(null)
     },

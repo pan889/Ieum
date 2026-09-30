@@ -99,16 +99,16 @@ test('표시 컬럼 선택이 새로고침 후에도 남는다', async ({ page, 
   await signIn(page)
   await page.goto('/issues')
 
-  const dueChip = page.getByRole('button', { name: /^due$/i })
+  const options = page.locator('details').filter({ hasText: /view options|보기 옵션/i })
+  await options.locator('summary').click()
+  const dueChip = options.getByRole('button', { name: /^due$/i })
   await expect(dueChip).toHaveAttribute('aria-pressed', 'false')
   await dueChip.click()
   await expect(dueChip).toHaveAttribute('aria-pressed', 'true')
 
   await page.reload()
-  await expect(page.getByRole('button', { name: /^due$/i })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  await options.locator('summary').click()
+  await expect(dueChip).toHaveAttribute('aria-pressed', 'true')
 
   expect(consoleErrors).toEqual([])
 })
@@ -164,8 +164,9 @@ test('목록을 우선순위로 묶는다', async ({ page, consoleErrors }) => {
   await page.goto(`/issues?project=${key}`)
   await expect(page.locator('tbody tr')).toHaveCount(2)
 
-  // "묶기" 줄의 우선순위 칩. 필터 칩에도 같은 이름이 있어 마지막 것을 쓴다.
-  await page.getByRole('button', { name: /^priority$/i }).last().click()
+  const options = page.locator('details').filter({ hasText: /view options|보기 옵션/i })
+  await options.locator('summary').click()
+  await options.getByRole('button', { name: /^priority$/i }).last().click()
 
   const headers = page.locator('th[scope="colgroup"]')
   await expect(headers).toHaveCount(2)
@@ -178,7 +179,7 @@ test('목록을 우선순위로 묶는다', async ({ page, consoleErrors }) => {
   await expect(page.getByRole('cell', { name: 'grouped lazy' })).toBeVisible()
 
   // 끄면 머리글이 사라진다.
-  await page.getByRole('button', { name: /^none$/i }).last().click()
+  await options.getByRole('button', { name: /^none$/i }).click()
   await expect(headers).toHaveCount(0)
 
   expect(consoleErrors).toEqual([])

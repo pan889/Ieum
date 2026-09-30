@@ -148,7 +148,9 @@ class TestTheInstallerOnlyPulls:
             for name, spec in services.items()
             if "/ieum-" in spec.get("image", "")
         }
-        assert set(ours) == {"migrate", "seed", "api", "worker", "web"}, sorted(ours)
+        assert set(ours) == {"migrate", "seed", "api", "worker", "web", "minio", "minio-init"}, (
+            sorted(ours)
+        )
         assert all("${IEUM_VERSION" in image for image in ours.values()), ours
 
     def test_only_one_port_is_published(self) -> None:
@@ -344,9 +346,9 @@ class TestTheInstallerPullsWhatTheReleasePushes:
     def test_the_two_lists_are_the_same(self) -> None:
         assert self._release_images() == self._installer_images()
 
-    def test_there_are_two_of_them(self) -> None:
+    def test_there_are_three_of_them(self) -> None:
         """0개를 0개와 견주면서 통과하는 것을 막는다."""
-        assert self._release_images() == {"ieum-api", "ieum-web"}
+        assert self._release_images() == {"ieum-api", "ieum-web", "ieum-storage"}
 
     def test_the_owner_is_the_same_on_both_sides(self) -> None:
         """워크플로는 `github.repository_owner`, 설치본은 기본값을 적는다.
@@ -406,47 +408,31 @@ class TestTheInstallerPullsWhatTheReleasePushes:
 
 
 class TestTheStorageImageComesFromSomewhereWeCanActuallyPull:
-    """**MinIO 는 도커 허브에서 못 받는다.**
-
-    2026-09-12, CI 의 E2E 잡이 첫 줄에서 죽었다:
-
-        docker: Error response from daemon: pull access denied for minio/minio,
-        repository does not exist or may require 'docker login'
-
-    MinIO 가 도커 허브 저장소의 익명 받기를 닫았다. 같은 태그가 quay.io 에는
-    그대로 있고 **다이제스트까지 같다** — 레지스트리만 바뀐 것이다.
-
-    이게 왜 게이트인가: 우리 화면에는 아무 일도 안 일어난다. 우리 이미지는
-    ghcr 에 있고 우리가 받아 본 적도 있다. 깨지는 것은 **처음 까는 사람의
-    `docker compose up`** 이고, 그 사람은 우리에게 말해 주지 않는다. 그리고
-    이미 받아 둔 기계에서는 몇 달이고 멀쩡해 보인다.
-
-    그래서 여기서 세 가지를 붙잡는다 — 레지스트리, 파일들 사이의 일치,
-    그리고 CI 가 compose 와 같은 것을 쓰는가.
-    """
+    """스토리지는 우리가 빌드한 같은 Dockerfile 을 개발·CI·릴리스에서 쓴다."""
 
     @staticmethod
     def _images(path: Path) -> dict[str, str]:
-        return {
-            name: spec["image"]
-            for name, spec in _compose(path)["services"].items()
-            if "minio" in spec.get("image", "")
-        }
+        services = _compose(path)["services"]
+        return {name: services[name]["image"] for name in ("minio", "minio-init")}
 
     @pytest.mark.parametrize("path", [DEV_COMPOSE, INSTALL_COMPOSE], ids=["dev", "install"])
-    def test_it_is_not_docker_hub(self, path: Path) -> None:
+    def test_the_storage_image_is_ours(self, path: Path) -> None:
         found = self._images(path)
-        assert found, f"{path.name} 에 minio 서비스가 없다 — 시험이 헛돌고 있다"
-        for name, image in found.items():
-            assert image.startswith("quay.io/minio/"), f"{path.name}:{name} = {image}"
+        assert set(found) == {"minio", "minio-init"}
+        if path == DEV_COMPOSE:
+            assert set(found.values()) == {"ieum-storage:dev"}
+            build = _compose(path)["services"]["minio"]["build"]
+            assert build["dockerfile"] == "deploy/minio/Dockerfile"
+        else:
+            assert all("/ieum-storage:${IEUM_VERSION" in image for image in found.values())
 
     def test_the_installer_and_the_dev_stack_agree(self) -> None:
         """둘이 갈라지면 **까는 사람 쪽만** 깨지고 우리는 모른다."""
-        assert self._images(DEV_COMPOSE) == self._images(INSTALL_COMPOSE)
+        for images in (self._images(DEV_COMPOSE), self._images(INSTALL_COMPOSE)):
+            assert images["minio"] == images["minio-init"]
 
     def test_ci_starts_the_same_image(self) -> None:
-        """CI 는 서비스 컨테이너가 아니라 `docker run` 으로 띄운다(command 를
-        바꿔야 해서). 그래서 이미지 이름이 **한 번 더 손으로** 적힌다 —
-        갈라지면 CI 에서만 통과하거나 CI 에서만 죽는다."""
-        server = _compose(DEV_COMPOSE)["services"]["minio"]["image"]
-        assert server in CI_WORKFLOW.read_text(encoding="utf-8"), server
+        """CI 도 개발 스택의 Dockerfile 을 빌드해서 실제로 실행한다."""
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        assert "docker build -t ieum-storage:ci -f deploy/minio/Dockerfile ." in workflow
+        assert "ieum-storage:ci server /data" in workflow

@@ -144,11 +144,10 @@ test('서식 모드에 이슈 주소를 붙이면 이슈 링크가 된다', asyn
   await rich.click()
   await page.keyboard.type('참고: ')
   await page.evaluate(() => navigator.clipboard.writeText('http://localhost:5173/issues/DEV-1'))
-  await page.keyboard.press('Control+v')
+  await page.keyboard.press('ControlOrMeta+v')
 
   // 호스트를 그대로 저장하면 주소가 바뀌는 순간 전부 죽는다.
-  const source = await (await bodyField(page)).inputValue()
-  expect(source).toBe('참고: [DEV-1](issue:DEV-1)')
+  await expect(await bodyField(page)).toHaveValue('참고: [DEV-1](issue:DEV-1)')
 
   expect(consoleErrors).toEqual([])
 })
