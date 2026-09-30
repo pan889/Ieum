@@ -35,7 +35,7 @@ usage() {
   --port N          여는 포트를 직접 정한다 (--url 에서 뽑은 값을 덮는다)
   --bind ADDR       그 포트를 묶을 주소. 기본 0.0.0.0.
                     앞에 프록시가 있으면 127.0.0.1 을 권한다
-  --version V       깔거나 올릴 판. 예) 1.0.0
+  --version V       깔거나 올릴 판. 예) 1.2.0
   --owner NAME      이미지를 받아올 GitHub 소유자 (포크용). 기본 pan889
   --dir PATH        설치할 자리. 기본은 지금 디렉터리
   --admin EMAIL     첫 관리자 메일. 기본 admin@example.com

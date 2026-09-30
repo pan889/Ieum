@@ -3,7 +3,7 @@
 한 줄이면 선다. Docker 와 Compose(v2)만 있으면 된다.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.0.0/deploy/install/install.sh
+curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.0/deploy/install/install.sh
 sh install.sh --url https://ieum.example.com
 ```
 

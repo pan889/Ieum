@@ -114,7 +114,7 @@ services:
   # 스키마를 올리고 끝난다. **앱보다 먼저** 돈다 — 판을 올릴 때 새 코드가
   # 옛 스키마를 보고 뜨면 그 몇 초 동안 오류가 사용자에게 보인다.
   migrate:
-    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?IEUM_VERSION 이 없다. 예) 1.0.0}
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?IEUM_VERSION 이 없다. 예) 1.2.0}
     depends_on:
       postgres: {condition: service_healthy}
     environment: *api-env
