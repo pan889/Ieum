@@ -77,7 +77,7 @@ services:
       retries: 30
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-storage:${IEUM_VERSION:?}
     restart: unless-stopped
     command: ["server", "/data"]
     environment:
@@ -90,14 +90,14 @@ services:
     volumes:
       - miniodata:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 30
 
   # 버킷을 만들고 끝난다.
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-storage:${IEUM_VERSION:?}
     depends_on:
       minio: {condition: service_healthy}
     entrypoint: ["/bin/sh", "-c"]

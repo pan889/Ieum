@@ -77,7 +77,10 @@ services:
       retries: 20
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: ieum-storage:dev
+    build:
+      context: .
+      dockerfile: deploy/minio/Dockerfile
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${IEUM_S3_ACCESS_KEY:-minioadmin}
@@ -90,14 +93,14 @@ services:
     ports: ["9000:9000", "9001:9001"]
     volumes: [ieum_miniodata:/data]
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
 
   # 버킷 자동 생성 후 종료
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: ieum-storage:dev
     depends_on:
       minio: {condition: service_healthy}
     # 배열 형태로 쓴다. YAML 접기 스칼라(`>`)는 줄바꿈을 없애서 여러 줄
