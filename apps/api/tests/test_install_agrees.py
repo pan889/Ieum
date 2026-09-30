@@ -128,6 +128,13 @@ class TestTheWorkerDoesNotInheritTheWrongHealthcheck:
         assert "--check" in test, f"arq 의 상태를 안 본다: {test}"
 
 
+class TestTheWebHealthcheckUsesIPv4:
+    def test_the_check_reaches_the_nginx_listener(self) -> None:
+        web = _compose(INSTALL_COMPOSE)["services"]["web"]
+        test = web["healthcheck"]["test"]
+        assert "http://127.0.0.1/" in test[-1]
+
+
 class TestTheInstallerOnlyPulls:
     """**빌드하지 않는다** 가 이 설치본의 약속이다.
 
@@ -349,6 +356,13 @@ class TestTheInstallerPullsWhatTheReleasePushes:
     def test_there_are_three_of_them(self) -> None:
         """0개를 0개와 견주면서 통과하는 것을 막는다."""
         assert self._release_images() == {"ieum-api", "ieum-web", "ieum-storage"}
+
+    def test_every_image_supports_both_install_platforms(self) -> None:
+        release = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        steps = release["jobs"]["images"]["steps"]
+        platforms = {step["name"]: step["with"]["platforms"] for step in steps if "name" in step}
+        for image in ("api", "web", "storage"):
+            assert set(platforms[image].split(",")) == {"linux/amd64", "linux/arm64"}
 
     def test_the_owner_is_the_same_on_both_sides(self) -> None:
         """워크플로는 `github.repository_owner`, 설치본은 기본값을 적는다.

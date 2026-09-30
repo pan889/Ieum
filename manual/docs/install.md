@@ -95,7 +95,7 @@ docker compose exec api python -c \
 ## 판 올리기
 
 ```bash
-cd <설치한 자리> && ./install.sh --version 1.2.0
+cd <설치한 자리> && ./install.sh --version 1.2.1
 ```
 
 비밀은 다시 만들지 않습니다. `compose.yml` 은 **그 판의 것으로 갈아 끼웁니다**

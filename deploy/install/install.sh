@@ -3,7 +3,7 @@
 #
 #   ./install.sh                              물어보면서 깐다
 #   ./install.sh --url https://ieum.example.com --yes    안 물어보고 깐다
-#   ./install.sh --version 1.2.0              깔린 것을 그 판으로 올린다
+#   ./install.sh --version 1.2.1              깔린 것을 그 판으로 올린다
 #
 # **이미지는 빌드하지 않고 당긴다.** 설치한 사람과 우리가 같은 바이트를
 # 돌려야 "무엇이 돌고 있냐" 에 답할 수 있다.
@@ -15,7 +15,7 @@
 
 set -eu
 
-VERSION_DEFAULT="1.2.0"
+VERSION_DEFAULT="1.2.1"
 IMAGE_OWNER_DEFAULT="pan889"
 PORT_DEFAULT="8080"
 RAW_BASE="https://raw.githubusercontent.com/pan889/Ieum"
@@ -35,7 +35,7 @@ usage() {
   --port N          여는 포트를 직접 정한다 (--url 에서 뽑은 값을 덮는다)
   --bind ADDR       그 포트를 묶을 주소. 기본 0.0.0.0.
                     앞에 프록시가 있으면 127.0.0.1 을 권한다
-  --version V       깔거나 올릴 판. 예) 1.2.0
+  --version V       깔거나 올릴 판. 예) 1.2.1
   --owner NAME      이미지를 받아올 GitHub 소유자 (포크용). 기본 pan889
   --dir PATH        설치할 자리. 기본은 지금 디렉터리
   --admin EMAIL     첫 관리자 메일. 기본 admin@example.com

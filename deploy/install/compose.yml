@@ -114,7 +114,7 @@ services:
   # 스키마를 올리고 끝난다. **앱보다 먼저** 돈다 — 판을 올릴 때 새 코드가
   # 옛 스키마를 보고 뜨면 그 몇 초 동안 오류가 사용자에게 보인다.
   migrate:
-    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?IEUM_VERSION 이 없다. 예) 1.2.0}
+    image: ghcr.io/${IEUM_IMAGE_OWNER:-pan889}/ieum-api:${IEUM_VERSION:?IEUM_VERSION 이 없다. 예) 1.2.1}
     depends_on:
       postgres: {condition: service_healthy}
     environment: *api-env
@@ -187,7 +187,7 @@ services:
     ports:
       - "${IEUM_HTTP_BIND:-0.0.0.0}:${IEUM_HTTP_PORT:-8080}:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 12

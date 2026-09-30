@@ -120,6 +120,7 @@ jobs:
           file: apps/api/Dockerfile
           target: runtime
           push: true
+          platforms: linux/amd64,linux/arm64
           # **`latest` 를 붙이지 않는다.** 운영에서 `latest` 를 가리키면
           # 다시 배포할 때마다 다른 것이 뜨고, 그러면 무엇이 돌고 있는지
           # 말할 수 없다. 판을 적어서 배포한다.
@@ -134,6 +135,7 @@ jobs:
           context: .
           file: apps/web/Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ github.repository_owner }}/ieum-web:${{ needs.guard.outputs.version }}
           cache-from: type=gha

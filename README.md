@@ -72,14 +72,14 @@ Jira + Confluence + JSM(서비스데스크)를 대체하는 **셀프호스팅** 
 Docker 와 Compose(v2)만 있으면 한 줄로 섭니다.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.0/deploy/install/install.sh
+curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.1/deploy/install/install.sh
 sh install.sh --url https://ieum.example.com
 ```
 
 물어보는 것은 **주소 하나**입니다. 비밀 키·DB 비밀번호·스토리지 열쇠는 그
 자리에서 만들어 `.env`(0600)에 넣고, 스키마를 올리고 관리자를 만든 다음 주소와
 첫 비밀번호를 찍어 줍니다. 판을 올릴 때도 같은 명령입니다
-(`sh install.sh --version 1.2.0`) — 비밀은 다시 만들지 않습니다.
+(`sh install.sh --version 1.2.1`) — 비밀은 다시 만들지 않습니다.
 
 **밖으로 여는 포트는 하나**입니다. 화면도 API 도 첨부도 같은 오리진으로
 나가서, 앞에 TLS 를 세울 때 붙일 곳이 한 군데입니다.

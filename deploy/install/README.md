@@ -3,7 +3,7 @@
 한 줄이면 선다. Docker 와 Compose(v2)만 있으면 된다.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.0/deploy/install/install.sh
+curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.1/deploy/install/install.sh
 sh install.sh --url https://ieum.example.com
 ```
 
@@ -45,7 +45,7 @@ https://ieum.example.com  →  127.0.0.1:8080
 ## 판 올리기
 
 ```bash
-sh install.sh --version 1.2.0
+sh install.sh --version 1.2.1
 ```
 
 비밀은 다시 만들지 않는다. `compose.yml` 은 **그 판의 것으로 갈아 끼운다** —
