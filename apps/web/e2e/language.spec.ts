@@ -142,15 +142,16 @@ test('위키·검색 화면에 영어 UI 문구가 남지 않는다', async ({ p
 
   for (const url of ['/wiki', `/wiki/${key}`, `/wiki/${key}/점검-문서`, '/search?q=점검', '/issues']) {
     await page.goto(url)
-    await expect(page.locator('main, body').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^로그아웃$/ })).toBeVisible()
     expect(await leftoverEnglish(page), `남은 영어: ${url}`).toEqual([])
   }
 
   // 편집·이력 패널도 연다. 안 열면 그 안의 문구는 한 번도 안 보인다.
   await page.goto(`/wiki/${key}/점검-문서`)
+  await expect(page.getByRole('button', { name: /^로그아웃$/ })).toBeVisible()
   for (const name of [/^편집$/, /^이력$/]) {
     await page.getByRole('button', { name }).first().click()
-    await expect(page.locator('main, body').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^로그아웃$/ })).toBeVisible()
     expect(await leftoverEnglish(page), `남은 영어: ${String(name)}`).toEqual([])
   }
 
