@@ -39,6 +39,13 @@ from ieum.modules.issues.iql.history import WindowKind
 
 GRAMMAR_PATH = Path(__file__).with_name("grammar.lark")
 MAX_QUERY_LENGTH = 4000
+#: 괄호와 `NOT` 을 겹칠 수 있는 깊이.
+#:
+#: 파서(LALR)는 반복으로 돌아 깊이를 안 타지만, 파스 트리를 AST 로 옮기는
+#: 이 파일과 컴파일러는 재귀다. 길이 상한(4000자) 안에서도 괄호 2천 겹은 들어가고,
+#: 그러면 `RecursionError` 가 사용자 오류가 아니라 **500** 으로 나간다. 사람이
+#: 손으로 쓰는 질의는 몇 겹이면 끝나므로 넉넉히 두고 그 위는 문법 오류로 낸다.
+MAX_NESTING = 50
 
 
 @functools.lru_cache(maxsize=1)
@@ -77,9 +84,20 @@ def parse(source: str) -> Query:
         ) from exc
     except LarkError as exc:  # pragma: no cover - 파서 내부 오류
         raise errors.syntax_error(f"문법 오류: {exc}", offset=0) from exc
+    except RecursionError:  # pragma: no cover - LALR 은 반복이라 오지 않는다
+        raise _too_deep(0) from None
 
-    where, order_by = _query(tree)
+    try:
+        where, order_by = _query(tree)
+    except RecursionError:
+        # 깊이 상한이 먼저 막는다. 그래도 남은 재귀 경로가 있으면 500 대신
+        # 같은 문법 오류로 낸다 — 사람이 고칠 수 있는 것은 질의뿐이다.
+        raise _too_deep(0) from None
     return Query(where=where, order_by=order_by, source=source)
+
+
+def _too_deep(offset: int) -> errors.IQLError:
+    return errors.syntax_error(f"괄호나 NOT 이 너무 깊다 ({MAX_NESTING}겹 제한)", offset=offset)
 
 
 def _describe(exc: UnexpectedInput) -> str:
@@ -118,19 +136,21 @@ def _query(tree: Tree[Token]) -> tuple[Node | None, list[SortKey]]:
     return where, order_by
 
 
-def _node(item: Any) -> Node:
+def _node(item: Any, depth: int = 0) -> Node:
+    """`depth` 는 지금까지 겹친 괄호와 `NOT` 의 수다 (`MAX_NESTING`)."""
     if not isinstance(item, Tree):  # pragma: no cover - 문법상 도달하지 않는다
         raise errors.syntax_error("질의를 해석할 수 없다", offset=0)
 
     match item.data:
         case "or_chain":
-            return _chain(Or, item)
+            return _chain(Or, item, depth)
         case "and_chain":
-            return _chain(And, item)
+            return _chain(And, item, depth)
         case "negation":
-            return Not(_node(next(c for c in item.children if not _is_keyword(c))))
+            inner = _deeper(item, depth)
+            return Not(_node(next(c for c in item.children if not _is_keyword(c)), inner))
         case "group":
-            return _node(item.children[0])
+            return _node(item.children[0], _deeper(item, depth))
         case "compare" | "compare_custom":
             return _comparison(item)
         case "emptiness_check" | "emptiness_check_custom":
@@ -143,10 +163,17 @@ def _node(item: Any) -> Node:
             raise errors.syntax_error(f"해석할 수 없는 구문: {item.data}", offset=0)
 
 
-def _chain(kind: type[And] | type[Or], item: Tree[Token]) -> Node:
+def _deeper(item: Tree[Token], depth: int) -> int:
+    """한 겹 더 들어간다. 상한을 넘으면 **그 겹이 시작한 자리**를 짚어 거절한다."""
+    if depth >= MAX_NESTING:
+        raise _too_deep(_span(item).offset)
+    return depth + 1
+
+
+def _chain(kind: type[And] | type[Or], item: Tree[Token], depth: int) -> Node:
     """항이 하나뿐이면 감싸지 않는다. Or(And(x)) 같은 껍데기는 컴파일러와
     테스트를 둘 다 읽기 어렵게 만든다."""
-    operands = [_node(c) for c in item.children if not _is_keyword(c)]
+    operands = [_node(c, depth) for c in item.children if not _is_keyword(c)]
     return operands[0] if len(operands) == 1 else kind(operands)
 
 

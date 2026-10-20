@@ -55,7 +55,7 @@ from ieum.modules.issues.repository import (
     VersionRepository,
     WorkflowRepository,
 )
-from ieum.modules.issues.rollup import has_children, recompute_ancestors
+from ieum.modules.issues.rollup import has_children, recompute_ancestors, recompute_from
 from ieum.modules.issues.workflow import (
     TransitionContext,
     TransitionSpec,
@@ -553,6 +553,9 @@ class IssueService:
         if changes.get("parent_id") is not None:
             await self._validate_parent(issue.project_id, changes["parent_id"], child_id=issue.id)
 
+        # 떠나는 부모. 아래 롤업이 새 부모 쪽만 오르면 이쪽은 나간 자식을
+        # 계속 품고 있다.
+        old_parent_id = issue.parent_id
         diff: list[dict[str, Any]] = []
         for name, new_value in changes.items():
             old_value = getattr(issue, name)
@@ -610,6 +613,8 @@ class IssueService:
         # 진행률·추정·부모가 바뀌면 조상 계산이 달라진다.
         if any(c["field"] in {"progress", "estimate_minutes", "parent_id"} for c in diff):
             await recompute_ancestors(self._s, issue.id)
+        if old_parent_id is not None and old_parent_id != issue.parent_id:
+            await recompute_from(self._s, old_parent_id)
         await self._reindex(issue)
         return await self.to_view(issue)
 

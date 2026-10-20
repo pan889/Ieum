@@ -75,6 +75,13 @@ class TestGitHubSignature:
     def test_an_empty_header_fails(self) -> None:
         assert not verify_github(body=b"{}", secret=SECRET, header="")
 
+    def test_a_non_ascii_header_fails_instead_of_raising(self) -> None:
+        """`compare_digest` 는 ASCII 아닌 `str` 에 `TypeError` 를 낸다. 인증 없는
+        문에서 그건 401 이 아니라 500 이다 — 헤더는 보내는 쪽 마음대로다."""
+        body = b'{"ref": "main"}'
+        assert not verify_github(body=body, secret=SECRET, header="sha256=" + "é" * 64)
+        assert not verify_github(body=body, secret=SECRET, header="sha256=\udcff")
+
 
 class TestGitLabToken:
     """**서명이 아니라 공유 토큰이다.** 몸을 보호하지 못한다 — GitLab 이
@@ -91,6 +98,14 @@ class TestGitLabToken:
 
     def test_an_empty_token_fails(self) -> None:
         assert not verify_gitlab(secret=SECRET, header="")
+
+    def test_a_non_ascii_token_fails_instead_of_raising(self) -> None:
+        assert not verify_gitlab(secret=SECRET, header="토큰")
+        assert not verify_gitlab(secret=SECRET, header=SECRET + "é")
+
+    def test_a_non_ascii_secret_still_matches_itself(self) -> None:
+        """비교를 바이트로 바꿨다고 같은 값이 어긋나면 안 된다."""
+        assert verify_gitlab(secret="비밀-é", header="비밀-é")
 
 
 class TestGitHubPush:

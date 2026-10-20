@@ -310,6 +310,23 @@ class TestListRowShape:
         assert [i["key"] for i in found] == [i["key"] for i in listed]
         assert found[0].keys() == listed[0].keys()
 
+    async def test_deeply_nested_iql_is_a_syntax_error_not_a_500(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """괄호 200 겹은 길이 상한 안이다. 재귀가 터져 500 이 나면 사람은 무엇을
+        고칠지 모른다 — 다른 문법 오류와 같은 응답이어야 한다."""
+        headers = await _auth(app_client)
+        response = await app_client.post(
+            f"{BASE}/search/issues",
+            json={"iql": "(" * 200 + "priority = 1" + ")" * 200},
+            headers=headers,
+        )
+        broken = await app_client.post(
+            f"{BASE}/search/issues", json={"iql": "priority = "}, headers=headers
+        )
+        assert response.status_code == broken.status_code, response.text
+        assert response.json()["error"]["code"] == "iql.syntax_error"
+
 
 class TestPatchShape:
     """PATCH 계약. 조용히 아무것도 안 하는 게 제일 나쁜 실패다."""

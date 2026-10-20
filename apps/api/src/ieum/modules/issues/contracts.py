@@ -856,8 +856,16 @@ async def create_imported_issue(session: AsyncSession, draft: ImportedIssueDraft
         issue.updated_at = draft.updated_at
     session.add(issue)
     await session.flush()
-    if draft.labels:
-        await IssueLabelRepository(session).replace(issue.id, list(draft.labels))
+    labels = sorted(set(draft.labels))
+    if labels:
+        await IssueLabelRepository(session).replace(issue.id, labels)
+    # **검색 색인에 넣는다.** 워크플로는 건너뛰어도 색인은 건너뛰면 안 된다 —
+    # 옮겨 온 3년치 이슈가 목록에는 있는데 검색창에서는 한 건도 안 나온다.
+    # 평소의 생성과 같은 함수를 같은 트랜잭션에서 부른다(`IssueService._reindex`).
+    from ieum.modules.issues.service import index_issue
+
+    project = await org.get_project(session, draft.project_id)
+    await index_issue(session, issue, project_key=project.key if project else "", labels=labels)
     return issue.id
 
 
@@ -884,12 +892,29 @@ async def add_imported_comment(
 
 async def set_imported_parent(session: AsyncSession, *, issue_id: UUID, parent_id: UUID) -> None:
     """부모를 잇는다. 이관이 이슈를 다 만든 **뒤에** 부른다 — 부모가 자식보다
-    늦게 올 수 있고, 그때 앞에서 이으려 하면 없는 것을 가리킨다."""
+    늦게 올 수 있고, 그때 앞에서 이으려 하면 없는 것을 가리킨다.
+
+    **순환을 거절한다.** 묶음 안의 순환은 읽는 자리(`read_archive`)가 이미
+    막지만, 앞선 실행이 이어 둔 부모와 이번 묶음이 합쳐져 도는 것은 DB 를
+    봐야 안다. 화면의 부모 바꾸기와 같은 규칙·같은 코드다(`issues.parent_cycle`).
+    거절은 적재 트랜잭션 전체를 되돌린다 — 절반만 이어진 상태를 남기지 않는다.
+    """
+    from ieum.core.exceptions import ValidationError
     from ieum.modules.issues.models import Issue as IssueModel
 
     issue = await session.get(IssueModel, issue_id)
-    if issue is not None:
-        issue.parent_id = parent_id
+    if issue is None:
+        return
+    if parent_id == issue_id or issue_id in await IssueRepository(session).ancestor_ids(parent_id):
+        raise ValidationError(
+            "부모-자식 관계가 순환한다.",
+            code="issues.parent_cycle",
+            details={"issue_id": str(issue_id), "parent_id": str(parent_id)},
+        )
+    issue.parent_id = parent_id
+    # 다음 부모 검사가 이 줄을 봐야 한다. autoflush 가 꺼져 있어 밀지 않으면
+    # 조상 질의는 방금 이은 것을 모르고, 같은 묶음 안의 순환을 놓친다.
+    await session.flush()
 
 
 async def link_imported_issues(
@@ -916,6 +941,10 @@ async def link_imported_issues(
     if exists.scalar_one_or_none() is not None:
         return False
     session.add(IssueLink(from_issue_id=from_issue_id, to_issue_id=to_issue_id, kind=kind))
+    # **바로 민다.** autoflush 가 꺼져 있어, 안 밀면 위의 확인은 같은 묶음 안에서
+    # 방금 넣은 것을 못 본다 — 한 이슈에 같은 관계가 두 줄 적힌 묶음이 그 확인을
+    # 그대로 지나 끝의 flush 에서 유니크에 걸리고, 적재가 500 으로 죽는다.
+    await session.flush()
     return True
 
 

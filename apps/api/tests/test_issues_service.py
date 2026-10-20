@@ -1518,6 +1518,57 @@ class TestProgressRollup:
         assert parent is not None
         assert parent.progress == 100
 
+    async def test_moving_a_child_recomputes_the_parent_it_left(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**떠나온 부모도 다시 센다.** 새 부모 쪽만 오르면 옛 부모는 나간
+        자식의 100% 를 계속 품고 50% 라고 말한다 — 남은 자식은 0% 인데."""
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        old_parent, kids = await self._tree(session, permissions, actor, project, issue_type)
+        new_parent = await service.create(
+            actor, NewIssue(project_id=project.id, type_id=issue_type.id, summary="new parent")
+        )
+        await service.update(actor, kids[0], {"progress": 100})
+        await session.flush()
+        before = await session.get(Issue, old_parent)
+        assert before is not None
+        assert before.progress == 50
+
+        await service.update(actor, kids[0], {"parent_id": new_parent.issue.id})
+        await session.flush()
+
+        left = await session.get(Issue, old_parent)
+        joined = await session.get(Issue, new_parent.issue.id)
+        assert left is not None
+        assert joined is not None
+        assert left.progress == 0, "떠나온 부모가 나간 자식을 계속 센다"
+        assert joined.progress == 100
+
+    async def test_detaching_a_child_recomputes_the_parent_it_left(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        actor = await full_access(session, user, project)
+        service = IssueService(session, permissions)
+        old_parent, kids = await self._tree(session, permissions, actor, project, issue_type)
+        await service.update(actor, kids[0], {"progress": 100})
+        await service.update(actor, kids[0], {"parent_id": None})
+        await session.flush()
+
+        left = await session.get(Issue, old_parent)
+        assert left is not None
+        assert left.progress == 0
+
     async def test_rollup_reaches_grandparents(
         self,
         session: AsyncSession,

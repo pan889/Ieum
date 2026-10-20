@@ -263,6 +263,25 @@ class TestTheWebhookDoor:
         )
         assert refused.status_code == 401, refused.text
 
+    async def test_a_non_ascii_signature_is_401_not_500(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """헤더는 보내는 쪽 마음대로다. 글자 비교가 ASCII 밖에서 예외를 내면
+        인증 없는 문이 401 대신 500 을 낸다."""
+        headers = await _admin_headers(app_client)
+        project = await _project(app_client, headers, "NAS")
+        repository = await _register(app_client, headers, [project["id"]])
+        refused = await app_client.post(
+            repository["webhook_path"],
+            content=_push("NAS-1 고친다"),
+            headers=[
+                (b"X-GitHub-Event", b"push"),
+                (b"X-Hub-Signature-256", ("sha256=" + "é" * 64).encode("latin-1")),
+                (b"Content-Type", b"application/json"),
+            ],
+        )
+        assert refused.status_code == 401, refused.text
+
     async def test_no_signature_at_all_is_refused(self, app_client: httpx.AsyncClient) -> None:
         headers = await _admin_headers(app_client)
         project = await _project(app_client, headers, "NOS")
@@ -497,6 +516,22 @@ class TestGitLabDoor:
             "3",
             "gitlab",
         )
+
+    async def test_a_non_ascii_token_is_401_not_500(self, app_client: httpx.AsyncClient) -> None:
+        headers = await _admin_headers(app_client)
+        project = await _project(app_client, headers, "GLN")
+        repository = await _register(
+            app_client, headers, [project["id"]], provider="gitlab", name="acme/gln"
+        )
+        refused = await app_client.post(
+            repository["webhook_path"],
+            content=b"{}",
+            headers=[
+                (b"X-Gitlab-Event", b"Push Hook"),
+                (b"X-Gitlab-Token", "토큰é".encode()),
+            ],
+        )
+        assert refused.status_code == 401, refused.text
 
     async def test_a_wrong_token_is_refused(self, app_client: httpx.AsyncClient) -> None:
         headers = await _admin_headers(app_client)

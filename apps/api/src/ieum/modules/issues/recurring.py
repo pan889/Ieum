@@ -28,8 +28,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -307,11 +308,7 @@ async def run_due(session: AsyncSession, permissions: PermissionService) -> int:
                     description=row.description,
                     assignee_id=row.assignee_id,
                     priority=row.priority,
-                    due_date=(
-                        None
-                        if row.due_in_days is None
-                        else (now + timedelta(days=row.due_in_days)).date()
-                    ),
+                    due_date=_due_date(row, now),
                     labels=list(row.labels),
                 ),
             )
@@ -350,21 +347,37 @@ async def run_due(session: AsyncSession, permissions: PermissionService) -> int:
     return created
 
 
+def _due_date(row: RecurringIssue, now: datetime) -> date | None:
+    """기한은 **스케줄의 시간대에서** 며칠 뒤다.
+
+    UTC 날짜로 잡으면 서울의 아침 9시 스케줄(UTC 로는 전날 0시)이 하루 이른
+    기한을 단다 — "3일 뒤" 가 사람 달력으로는 2일 뒤가 된다. 시간대는 위에서
+    `validate` 가 이미 봤다.
+    """
+    if row.due_in_days is None:
+        return None
+    local_today = now.astimezone(ZoneInfo(row.timezone)).date()
+    return local_today + timedelta(days=row.due_in_days)
+
+
 async def _owner(session: AsyncSession, row: RecurringIssue) -> Actor:
     """이슈에 신고자로 적을 사람.
 
     계정이 없거나 정지됐으면 거절한다 — 없는 사람 이름으로 이슈가 계속
     만들어지는 것도, 조용히 멈추는 것도 옳지 않다. 부르는 쪽이 이 거절을
     받아 스케줄을 끄고 이유를 남긴다.
+
+    **웹 요청과 같은 액터를 만든다** (`identity.load_actor`). 손으로 만들면
+    소속 그룹이 비고, 그룹으로 받은 배정 권한과 그룹에 열린 보안 레벨을
+    잃는다 — 화면에서는 되던 스케줄이 워커에서만 거절당해 꺼진다.
     """
-    found = {} if row.created_by is None else await identity.get_users(session, {row.created_by})
-    user = None if row.created_by is None else found.get(row.created_by)
-    if user is None or not user.is_active:
+    owner = None if row.created_by is None else await identity.load_actor(session, row.created_by)
+    if owner is None or not owner.is_active:
         raise ValidationError(
             "반복을 만든 계정이 더 이상 활성이 아니다.",
             code=STOPPED_OWNER_INACTIVE,
         )
-    return Actor(user_id=user.id, email=user.email, is_active=True)
+    return owner
 
 
 __all__ = [

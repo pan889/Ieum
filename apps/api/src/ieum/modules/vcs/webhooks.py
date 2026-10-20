@@ -63,7 +63,7 @@ def verify_github(*, body: bytes, secret: str, header: str | None) -> bool:
     if not header or not header.startswith("sha256="):
         return False
     expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header.removeprefix("sha256="))
+    return hmac.compare_digest(expected.encode("ascii"), _raw(header.removeprefix("sha256=")))
 
 
 def verify_gitlab(*, secret: str, header: str | None) -> bool:
@@ -74,7 +74,19 @@ def verify_gitlab(*, secret: str, header: str | None) -> bool:
     것이 아니고, 그래서 토큰을 시크릿과 같은 급으로 다룬다(암호화 저장, 한 번
     만 보여 주기).
     """
-    return bool(header) and hmac.compare_digest(secret, header or "")
+    return bool(header) and hmac.compare_digest(_raw(secret), _raw(header or ""))
+
+
+def _raw(value: str) -> bytes:
+    """비교할 바이트. **글자로 비교하지 않는다.**
+
+    `hmac.compare_digest` 는 `str` 둘을 받으면 ASCII 만 받고, 그 밖의 글자가
+    하나라도 있으면 `TypeError` 를 낸다. 헤더는 보내는 쪽 마음대로라 인증 없는
+    문에 `é` 하나를 넣으면 401 이 아니라 **500** 이 났다. 바이트로 바꿔 비교하면
+    틀린 값은 그냥 틀린 값이다. `surrogatepass` 는 어떤 `str` 도 바이트가 되게
+    한다 — 여기서 다시 예외가 나면 같은 고장이다.
+    """
+    return value.encode("utf-8", "surrogatepass")
 
 
 def parse_github(event: str, payload: dict[str, Any]) -> list[Change]:

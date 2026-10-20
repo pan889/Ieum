@@ -55,6 +55,7 @@ from ieum.modules.issues.models import (
     SavedFilter,
     WorkflowState,
 )
+from ieum.modules.issues.visibility import visible_issues
 from ieum.modules.org import contracts as org
 
 
@@ -334,6 +335,12 @@ class SearchService:
         stmt = (
             select(IssueLabel.label)
             .join(Issue, Issue.id == IssueLabel.issue_id)
+            # **라벨도 이슈의 내용이다.** 보안 레벨이 걸린 이슈의 라벨
+            # ("인수-협상" 같은)이 자동완성으로 새면 목록이 막은 것을 여기서
+            # 연다. 검색 결과와 같은 규칙(`visible_issues`)을 건다 — 전역
+            # 권한도 봐주지 않는 것까지 같다. 휴지통의 이슈도 검색에 안
+            # 나오므로 그 라벨을 제안하면 0건짜리 질의를 권하는 셈이다.
+            .where(visible_issues(acl.principal_ids), Issue.archived_at.is_(None))
             .distinct()
             .order_by(IssueLabel.label)
             .limit(limit)

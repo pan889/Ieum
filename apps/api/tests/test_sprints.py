@@ -41,6 +41,7 @@ from ieum.modules.issues.models import (
     Board,
     Issue,
     IssueType,
+    SecurityLevel,
     SprintSnapshot,
     Workflow,
     WorkflowState,
@@ -580,6 +581,70 @@ class TestCounting:
                 actor, sprint_id=sprint.id, issue_ids=[new_id()], project_id=project.id
             )
         assert exc.value.code == "issues.sprint_issue_foreign"
+
+    async def test_an_issue_behind_a_security_level_looks_missing(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**배치도 이슈마다 보안 레벨을 본다.** 프로젝트 스코프만 보면 단건
+        수정은 403 인 이슈를 id 하나로 옮길 수 있다. 그리고 거절은 "없는 이슈"
+        와 같은 말이어야 한다 — 다르게 말하면 그 id 가 있다는 사실이 샌다."""
+        service = SprintService(session, permissions)
+        sprint = await service.create(actor, project_id=project.id, name="잠긴 것")
+        secret = await make_issue(session, permissions, actor, project, issue_type, "비밀")
+        insider = User(email=f"i-{new_id()}@example.com", display_name="I", status="active")
+        session.add(insider)
+        await session.flush()
+        level = SecurityLevel(
+            project_id=project.id,
+            name=f"Restricted-{secrets.token_hex(3)}",
+            grantees=[{"kind": "user", "id": str(insider.id)}],
+        )
+        session.add(level)
+        await session.flush()
+        row = await session.get(Issue, secret)
+        assert row is not None
+        row.security_level_id = level.id
+        await session.flush()
+
+        with pytest.raises(ValidationError) as hidden:
+            await service.assign_issues(
+                actor, sprint_id=sprint.id, issue_ids=[secret], project_id=project.id
+            )
+        with pytest.raises(ValidationError) as missing:
+            await service.assign_issues(
+                actor, sprint_id=sprint.id, issue_ids=[new_id()], project_id=project.id
+            )
+        assert hidden.value.code == missing.value.code == "issues.sprint_issue_foreign"
+        assert row.sprint_id is None
+
+    async def test_an_archived_issue_is_refused(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """휴지통의 이슈는 옮기지 않는다 — 닫기가 두고 가는 것과 같은 규칙이다."""
+        service = SprintService(session, permissions)
+        sprint = await service.create(actor, project_id=project.id, name="휴지통")
+        gone = await make_issue(session, permissions, actor, project, issue_type, "지운 것")
+        row = await session.get(Issue, gone)
+        assert row is not None
+        row.archived_at = utcnow()
+        await session.flush()
+
+        with pytest.raises(ValidationError) as exc:
+            await service.assign_issues(
+                actor, sprint_id=sprint.id, issue_ids=[gone], project_id=project.id
+            )
+        assert exc.value.code == "issues.sprint_issue_foreign"
+        assert row.sprint_id is None
 
     async def test_a_missing_sprint_is_not_found(
         self, session: AsyncSession, permissions: PermissionService, actor: Actor

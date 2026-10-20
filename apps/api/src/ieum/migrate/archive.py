@@ -491,5 +491,54 @@ def read_archive(data: bytes) -> Archive:
         if issue.source_id in seen:
             raise ArchiveError(f"{ISSUES_NAME}: `source_id` 가 겹친다 — {issue.source_id}")
         seen.add(issue.source_id)
+    _check_comment_ids(issues)
+    _check_parent_cycles(issues)
 
     return Archive(manifest=manifest, people=people, issues=issues)
+
+
+def _check_comment_ids(issues: list[Issue]) -> None:
+    """코멘트 `source_id` 는 **묶음 전체에서** 하나씩이다.
+
+    받는 쪽은 그 id 로 "이미 옮겼나" 를 기억한다(유니크 열쇠). 겹치면 둘째
+    것을 넣는 순간 유니크에 걸려 적재 전체가 500 으로 죽는다 — 미리 보기는
+    통과시켜 놓고. 소스(Redmine 의 journal id)에서 겹칠 수 없는 값이므로
+    겹쳤다면 어댑터나 손으로 고친 묶음이 잘못된 것이다.
+    """
+    seen: set[str] = set()
+    for issue in issues:
+        for comment in issue.comments:
+            if comment.source_id in seen:
+                raise ArchiveError(
+                    f"{ISSUES_NAME}: 코멘트의 `source_id` 가 겹친다 — {comment.source_id}"
+                    f" ({issue.source_id})"
+                )
+            seen.add(comment.source_id)
+
+
+def _check_parent_cycles(issues: list[Issue]) -> None:
+    """부모를 따라 올라가다 **제자리로 돌아오면** 거절한다.
+
+    자기 자신을 부모로 둔 것과 A↔B 처럼 도는 것이다. 그대로 실으면 롤업과
+    조상 질의가 끝없이 돈다 — 우리 쪽 화면에서는 그런 관계를 만들 수 없으므로
+    (`issues.parent_cycle`) 이관이 그 규칙을 뒷문으로 넘는 셈이 된다.
+
+    묶음 밖의 부모는 여기서 보지 않는다. 그건 받는 쪽이 "묶음 밖" 으로 따로
+    센다. 한 번 끝까지 올라가 본 줄은 `safe` 에 넣어 다시 오르지 않는다 —
+    안 그러면 긴 사슬 하나가 이슈 수의 제곱만큼 돈다.
+    """
+    parents = {issue.source_id: issue.parent for issue in issues if issue.parent}
+    safe: set[str] = set()
+    for start in parents:
+        path: list[str] = []
+        on_path: set[str] = set()
+        current: str | None = start
+        while current is not None and current not in safe:
+            if current in on_path:
+                if parents.get(current) == current:
+                    raise ArchiveError(f"{ISSUES_NAME}: 자기 자신을 부모로 둔다 — {current}")
+                raise ArchiveError(f"{ISSUES_NAME}: 부모 관계가 순환한다 — {current}")
+            on_path.add(current)
+            path.append(current)
+            current = parents.get(current)
+        safe.update(path)

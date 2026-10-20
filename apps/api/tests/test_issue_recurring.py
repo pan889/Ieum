@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -31,7 +32,7 @@ from ieum.core.exceptions import ConflictError, PermissionDeniedError, Validatio
 from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
-from ieum.modules.identity.models import User
+from ieum.modules.identity.models import GroupMember, User, UserGroup
 from ieum.modules.issues import permissions as perms
 from ieum.modules.issues import recurring as recurring_module
 from ieum.modules.issues.models import Issue, IssueType, RecurringIssue, Workflow, WorkflowState
@@ -349,7 +350,88 @@ class TestRunning:
         assert issue.priority == 2
         assert issue.assignee_id == actor.user_id
         assert issue.reporter_id == actor.user_id
-        assert issue.due_date == (utcnow() + timedelta(days=3)).date()
+        # 스케줄의 시간대(서울)에서 사흘 뒤다 — 아래 시험이 그 이유를 붙잡는다.
+        assert issue.due_date == (utcnow().astimezone(ZoneInfo(SEOUL)) + timedelta(days=3)).date()
+
+    async def test_the_due_date_counts_days_in_the_schedules_zone(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        actor: Actor,
+        project: Project,
+        issue_type: IssueType,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """**기한은 스케줄 시간대의 달력으로 센다.**
+
+        UTC 16시는 서울로 다음 날 새벽 1시다. UTC 날짜로 "사흘 뒤" 를 잡으면
+        서울 사람의 달력으로는 이틀 뒤가 된다 — 매일 도는 스케줄이라면 매번
+        하루씩 이른 기한을 단다.
+        """
+        row = await RecurringIssueService(session, permissions).create(
+            actor, _payload(project, issue_type, due_in_days=3)
+        )
+        moment = datetime(2026, 10, 20, 16, 0, tzinfo=UTC)
+        monkeypatch.setattr(recurring_module, "utcnow", lambda: moment)
+        row.next_run_at = moment - timedelta(minutes=1)
+        await session.flush()
+
+        assert await run_due(session, permissions) == 1
+
+        issue = (
+            await session.execute(select(Issue).where(Issue.project_id == project.id))
+        ).scalar_one()
+        assert issue.due_date == date(2026, 10, 24), "UTC 달력으로 기한을 셌다"
+
+    async def test_an_owner_who_works_through_a_group_keeps_it(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """**워커의 액터도 소속 그룹을 갖는다.**
+
+        권한을 그룹으로만 받은 사람이 담당자를 정해 둔 스케줄을 만들었다.
+        화면에서는 그룹 덕에 배정 권한이 있으므로 만들어진다. 워커가 그룹을
+        빼고 액터를 만들면 `issue.assign` 에서 거절당하고 스케줄이 **조용히
+        꺼진다** — 사람은 화면에서 잘 되는 것을 보고 왜 꺼졌는지 모른다.
+        """
+        user = User(email=f"g-{new_id()}@example.com", display_name="그룹원", status="active")
+        group = UserGroup(name=f"team-{secrets.token_hex(4)}")
+        session.add_all([user, group])
+        await session.flush()
+        session.add(GroupMember(group_id=group.id, user_id=user.id))
+        repo = RoleRepository(session)
+        role = Role(name=f"r-{secrets.token_hex(4)}", scope_kind="project")
+        repo.add(role)
+        await session.flush()
+        for permission in perms.project_scoped():
+            repo.grant(role.id, permission)
+        repo.assign(
+            role_id=role.id,
+            scope=Scope.project(project.id),
+            principal_kind="group",
+            principal_id=group.id,
+        )
+        await session.flush()
+        owner = Actor(
+            user_id=user.id,
+            email=user.email,
+            is_active=True,
+            mfa_satisfied_at=utcnow(),
+            group_ids=frozenset({group.id}),
+        )
+        row = await RecurringIssueService(session, permissions).create(
+            owner, _payload(project, issue_type, assignee_id=user.id)
+        )
+        row.next_run_at = utcnow() - timedelta(minutes=1)
+        await session.flush()
+
+        assert await run_due(session, permissions) == 1
+        assert row.is_enabled is True, f"그룹 권한을 잃고 꺼졌다: {row.last_error}"
+        assert row.last_error is None
+        assert await _count_issues(session, project) == 1
 
     async def test_an_inactive_owner_stops_it_with_a_reason(
         self,

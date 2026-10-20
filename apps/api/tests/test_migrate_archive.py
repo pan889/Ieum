@@ -289,6 +289,70 @@ class TestACommentNeedsItsOwnId:
         )
         assert read_archive(write_archive(archive)).issues[0].comments[0].source_id == "c1"
 
+    def test_the_same_id_on_two_issues_is_refused(self) -> None:
+        """코멘트 id 는 **묶음 전체에서** 하나다. 받는 쪽이 그 id 를 유니크
+        열쇠로 기억하므로, 겹치면 둘째 것을 넣는 순간 적재가 통째로 죽는다."""
+        archive = _replace_issues(
+            [
+                Issue(
+                    source_id="7",
+                    summary="하나",
+                    comments=[Comment(source_id="c1", body="a", created_at="", author="")],
+                ),
+                Issue(
+                    source_id="8",
+                    summary="둘",
+                    comments=[Comment(source_id="c1", body="b", created_at="", author="")],
+                ),
+            ]
+        )
+        with pytest.raises(ArchiveError, match="코멘트의 `source_id` 가 겹친다 — c1"):
+            read_archive(write_archive(archive))
+
+
+class TestParentsDoNotGoInCircles:
+    """부모를 따라 오르다 제자리로 오면 롤업과 조상 질의가 끝없이 돈다.
+
+    우리 화면은 그런 관계를 못 만든다(`issues.parent_cycle`). 이관이 그 규칙을
+    뒷문으로 넘으면 안 된다.
+    """
+
+    def test_an_issue_that_is_its_own_parent_is_refused(self) -> None:
+        archive = _replace_issues([Issue(source_id="7", summary="나", parent="7")])
+        with pytest.raises(ArchiveError, match="자기 자신을 부모로 둔다 — 7"):
+            read_archive(write_archive(archive))
+
+    def test_two_issues_that_are_each_others_parent_are_refused(self) -> None:
+        archive = _replace_issues(
+            [
+                Issue(source_id="7", summary="가", parent="8"),
+                Issue(source_id="8", summary="나", parent="7"),
+            ]
+        )
+        with pytest.raises(ArchiveError, match="부모 관계가 순환한다"):
+            read_archive(write_archive(archive))
+
+    def test_a_longer_loop_below_a_clean_branch_is_refused(self) -> None:
+        archive = _replace_issues(
+            [
+                Issue(source_id="1", summary="밖", parent="2"),
+                Issue(source_id="2", summary="가", parent="3"),
+                Issue(source_id="3", summary="나", parent="4"),
+                Issue(source_id="4", summary="다", parent="2"),
+            ]
+        )
+        with pytest.raises(ArchiveError, match="부모 관계가 순환한다"):
+            read_archive(write_archive(archive))
+
+    def test_a_deep_tree_and_an_outside_parent_go_through(self) -> None:
+        """막는 것은 순환뿐이다. 깊은 사슬도, 묶음 밖을 가리키는 부모도 통과한다
+        — 뒤의 것은 받는 쪽이 "묶음 밖" 으로 센다."""
+        chain = [
+            Issue(source_id=str(n), summary=f"{n}", parent=str(n + 1) if n < 500 else "밖")
+            for n in range(1, 501)
+        ]
+        assert len(read_archive(write_archive(_replace_issues(chain))).issues) == 500
+
 
 class TestTheLimitsMatchTheColumns:
     """여기 상수가 받는 쪽 열보다 크면 **아무것도 못 막는다.**
