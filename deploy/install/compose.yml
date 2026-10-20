@@ -45,6 +45,12 @@ x-api-env: &api-env
   # 만드는 `.env` 의 주석에 있다. `.env` 에 이 줄이 처음부터 적혀 있었는데
   # 여기서 안 넘겨서, `true` 로 바꿔도 컨테이너에는 닿지 않았다.
   IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS: ${IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS:-false}
+  # 접속자 IP 를 읽을 때 믿는 프록시 수(`X-Forwarded-For` 를 오른쪽에서 이만큼).
+  # 기본이 **2** 인 이유: 이 설치본은 TLS 를 앞의 프록시에 맡기라고 안내하고,
+  # 1.2.1 이하로 깐 `.env` 에는 이 줄이 없다. 프록시 뒤인데 1 로 두면 모두가
+  # 프록시 주소 하나로 보여 로그인 제한이 전원을 막는다. 프록시 없이 http 로
+  # 바로 연다면 `.env` 에 1 을 적는다.
+  IEUM_TRUSTED_PROXY_HOPS: ${IEUM_TRUSTED_PROXY_HOPS:-2}
 
 services:
   postgres:

@@ -97,6 +97,7 @@ ConfigMap 의 `data`. **본 ConfigMap 과 마이그레이션 훅의 사본이 �
   "IEUM_S3_BUCKET" .Values.config.s3Bucket
   "IEUM_S3_REGION" .Values.config.s3Region
   "IEUM_SEARCH_BACKEND" .Values.search.backend
+  "IEUM_TRUSTED_PROXY_HOPS" .Values.config.trustedProxyHops
 -}}
 {{- with .Values.config.s3EndpointUrl -}}
 {{- $_ := set $data "IEUM_S3_ENDPOINT_URL" . -}}

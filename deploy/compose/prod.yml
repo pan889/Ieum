@@ -37,6 +37,11 @@ x-prod-env: &prod-env
   IEUM_SMTP_USER: "${IEUM_SMTP_USER:-}"
   IEUM_SMTP_PASSWORD: "${IEUM_SMTP_PASSWORD:-}"
   IEUM_MAIL_FROM: "${IEUM_MAIL_FROM:-ieum@example.com}"
+  # 접속자 IP 를 읽을 때 믿는 프록시 수(`X-Forwarded-For` 를 오른쪽에서 이만큼).
+  # web 의 nginx 가 하나, 그 앞의 TLS 프록시가 하나 — 그래서 2. 프록시 없이
+  # web 포트를 바로 연다면 1 이다. 틀리게 크면 접속자가 IP 를 꾸밀 수 있고,
+  # 틀리게 작으면 모두가 프록시 주소 하나로 보여 로그인 제한이 전원을 막는다.
+  IEUM_TRUSTED_PROXY_HOPS: "${IEUM_TRUSTED_PROXY_HOPS:-2}"
   # **알려진 2FA 관리자를 운영에 두지 않는다.** 밑바탕은 개발·E2E 용으로
   # 비밀번호와 TOTP 시크릿이 저장소에 적힌 관리자를 시드하게 해 둔다. 그 값이
   # 운영 컨테이너에 들어가 있으면 누가 시드를 한 번 돌리는 순간(`docker compose

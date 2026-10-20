@@ -184,3 +184,21 @@ def test_a_fresh_install_writes_full_secrets(shell: str, sandbox: dict[str, Path
     assert len(env["IEUM_S3_ACCESS_KEY"]) == 20
     assert len(env["SEED_ADMIN_PASSWORD"]) == 20
     assert stat.S_IMODE((sandbox["site"] / ".env").stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize(
+    ("url", "hops"), [("http://localhost:8080", "1"), ("https://ieum.example.com", "2")]
+)
+def test_the_proxy_hops_follow_the_address(
+    shell: str, sandbox: dict[str, Path], url: str, hops: str
+) -> None:
+    """https 면 TLS 를 끝내는 프록시가 nginx 앞에 하나 더 있다.
+
+    1 로 남으면 모든 접속자가 그 프록시 주소 하나로 보여, IP 기준 로그인
+    제한이 몇 번의 실패로 전원을 막는다.
+    """
+    shutil.copy(INSTALL_DIR / "install.sh", sandbox["site"] / "install.sh")
+    done = _run(shell, sandbox, "--url", url, "--yes")
+    assert done.returncode == 0, done.stderr
+    assert _env(sandbox["site"])["IEUM_TRUSTED_PROXY_HOPS"] == hops
