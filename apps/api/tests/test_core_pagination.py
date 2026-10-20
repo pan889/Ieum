@@ -17,6 +17,8 @@ from ieum.core.pagination import (
     cursor_field,
     decode_cursor,
     encode_cursor,
+    offset,
+    text,
 )
 
 
@@ -103,6 +105,29 @@ class TestCursorField:
         ],
     )
     def test_a_bad_value_is_an_invalid_cursor(self, payload: dict[str, Any], parse: Any) -> None:
+        with pytest.raises(ValidationError) as exc:
+            cursor_field(payload, "id", parse)
+        assert exc.value.code == "common.invalid_cursor"
+
+
+class TestCursorShapes:
+    """키 이름이 맞아도 형이 틀리면 SQL 에서 형 오류(500)가 된다."""
+
+    def test_text_and_offset_read_good_values(self) -> None:
+        assert cursor_field({"key": "ENG"}, "key", text) == "ENG"
+        assert cursor_field({"offset": 40}, "offset", offset) == 40
+
+    @pytest.mark.parametrize(
+        ("payload", "parse"),
+        [
+            ({"id": 7}, text),
+            ({"id": ["ENG"]}, text),
+            ({"id": -1}, offset),
+            ({"id": "40"}, offset),
+            ({"id": True}, offset),
+        ],
+    )
+    def test_a_wrong_shape_is_an_invalid_cursor(self, payload: dict[str, Any], parse: Any) -> None:
         with pytest.raises(ValidationError) as exc:
             cursor_field(payload, "id", parse)
         assert exc.value.code == "common.invalid_cursor"

@@ -38,7 +38,7 @@ from ieum.core.context import Actor
 from ieum.core.exceptions import ConflictError, NotFoundError, ValidationError
 from ieum.core.logging import get_logger
 from ieum.core.pagination import Page as PageResult
-from ieum.core.pagination import PageRequest
+from ieum.core.pagination import PageRequest, cursor_field, text
 from ieum.core.permissions import PermissionService, Scope
 from ieum.modules.desk import permissions as perms
 from ieum.modules.desk.models import ASSET_STATUSES, Asset, AssetLink, AssetType
@@ -237,7 +237,10 @@ class AssetService:
         # 없다. 이름이 겹칠 수 있으므로 id 를 함께 실어 커서를 안정시킨다.
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(tuple_(Asset.name, Asset.id) > (payload["name"], UUID(payload["id"])))
+            stmt = stmt.where(
+                tuple_(Asset.name, Asset.id)
+                > (cursor_field(payload, "name", text), cursor_field(payload, "id", UUID))
+            )
         stmt = stmt.order_by(Asset.name, Asset.id).limit(request.fetch_limit)
         rows = list((await self._s.execute(stmt)).scalars().all())
         page = PageResult.from_rows(

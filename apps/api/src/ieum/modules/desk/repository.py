@@ -9,7 +9,7 @@ from sqlalchemy import Select, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page as PageResult
-from ieum.core.pagination import PageRequest
+from ieum.core.pagination import PageRequest, cursor_field, text
 from ieum.modules.desk.models import (
     CannedResponse,
     CustomerMembership,
@@ -169,7 +169,7 @@ class CustomerOrganizationRepository:
             # 조직이 생길 여지를 남기지 않으려면 id 가 함께 있어야 한다.
             stmt = stmt.where(
                 tuple_(CustomerOrganization.name, CustomerOrganization.id)
-                > (payload["name"], UUID(payload["id"]))
+                > (cursor_field(payload, "name", text), cursor_field(payload, "id", UUID))
             )
         stmt = stmt.order_by(CustomerOrganization.name, CustomerOrganization.id)
         rows = list((await self._s.execute(stmt.limit(request.fetch_limit))).scalars().all())
@@ -264,7 +264,7 @@ class TicketRepository:
         # `issue_id` 는 UUIDv7 이므로 id 역순이 곧 최신순이다.
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(TicketExt.issue_id < UUID(payload["id"]))
+            stmt = stmt.where(TicketExt.issue_id < cursor_field(payload, "id", UUID))
         stmt = stmt.order_by(TicketExt.issue_id.desc()).limit(request.fetch_limit)
         rows = list((await self._s.execute(stmt)).scalars().all())
         return PageResult.from_rows(rows, request, lambda t: {"id": str(t.issue_id)})

@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.core.pagination import Page, PageRequest
+from ieum.core.pagination import Page, PageRequest, cursor_field
 from ieum.core.time import utcnow
 from ieum.modules.notify.models import (
     Notification,
@@ -43,7 +43,7 @@ class NotificationRepository:
         payload = request.cursor_payload
         if payload:
             # UUIDv7 이라 id 역순이 곧 최신순이다.
-            stmt = stmt.where(Notification.id < UUID(payload["id"]))
+            stmt = stmt.where(Notification.id < cursor_field(payload, "id", UUID))
         stmt = stmt.order_by(Notification.id.desc()).limit(request.fetch_limit)
         rows = list((await self._s.execute(stmt)).scalars().all())
         return Page.from_rows(rows, request, lambda n: {"id": str(n.id)})
@@ -287,7 +287,7 @@ class DeliveryRepository:
         )
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(WebhookDelivery.id < UUID(payload["id"]))
+            stmt = stmt.where(WebhookDelivery.id < cursor_field(payload, "id", UUID))
         stmt = stmt.order_by(WebhookDelivery.id.desc()).limit(request.fetch_limit)
         rows = list((await self._s.execute(stmt)).scalars().all())
         return Page.from_rows(rows, request, lambda d: {"id": str(d.id)})
