@@ -57,6 +57,15 @@ class User(Entity):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     #: 조직·역할 정책과 무관하게 이 사용자에게 MFA 를 강제한다
     require_mfa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: 초대장의 세대. 다시 초대할 때마다 하나 오른다.
+    #:
+    #: 초대 토큰은 DB 행 없이 봉해서만 주므로(`invites.py`) 토큰 쪽에서는 되돌릴
+    #: 수 없다. 이 값이 없으면 **다시 초대하는 순간 7일 안에 나갔던 옛 초대
+    #: 메일이 전부 되살아난다** — 계정이 다시 `invited` 가 되면 그 토큰들이
+    #: 상태 검사를 통과하기 때문이다. 토큰이 실어 온 세대가 이 값과 다르면 거절한다.
+    invite_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
     #: 이 계정을 밀어 넣은 IdP. `NULL` 이면 SCIM 이 만든 계정이 아니다.
     #:
@@ -96,10 +105,21 @@ class UserGroup(Entity):
         ForeignKey("identity_provider.id", ondelete="SET NULL"), nullable=True
     )
     scim_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: 로그인 클레임으로 이 그룹을 만든 IdP (`source='idp'`). SCIM 칸과 따로 둔다 —
+    #: 그쪽을 쓰면 SCIM 표면이 클레임 그룹까지 자기 것으로 보고 고친다.
+    #:
+    #: **이름만으로 찾으면 IdP 끼리 그룹이 섞인다.** 협력사 IdP 가 `admins` 를
+    #: 보내면 우리 IdP 의 `admins` 에 들어가 그 그룹의 역할을 그대로 받는다.
+    #: `NULL` 인 `idp` 그룹은 주인을 가리지 못한 옛 행이다 — 아무 IdP 도 새로
+    #: 넣지 않는다(`SsoService._sync_groups`).
+    idp_provider_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("identity_provider.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(source.in_(GROUP_SOURCES), name="user_group_source"),
         Index("ix_user_group_scim_provider_id", "scim_provider_id"),
+        Index("ix_user_group_idp_provider_id", "idp_provider_id"),
     )
 
 
@@ -275,7 +295,10 @@ class AuditLog(Entity):
 
 
 class LoginAttempt(Entity):
-    """로그인 실패 제한용. 계정당 + IP당 슬라이딩 윈도우 (auth.md 2절)."""
+    """로그인 실패 제한용. (계정, IP) 쌍당 + IP당 슬라이딩 윈도우 (auth.md 2절).
+
+    계정만으로 세지 않는다 — `LoginAttemptRepository.recent_failures` 참조.
+    """
 
     __tablename__ = "login_attempt"
 

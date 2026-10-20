@@ -66,6 +66,7 @@ from ieum.modules.identity.models import (
     UserSession,
 )
 from ieum.modules.identity.repository import (
+    ApiTokenRepository,
     AuditFilter,
     AuditRepository,
     GroupRepository,
@@ -126,6 +127,22 @@ def _generate_backup_code() -> str:
     return f"{body[:5]}-{body[5:]}"
 
 
+@lru_cache(maxsize=4)
+def _dummy_password_hash(memory_cost: int, time_cost: int, parallelism: int) -> str:
+    """없는 계정에 대고 검증할 해시. **실제 해시와 같은 파라미터**로 만든다.
+
+    상수 해시(`m=8,t=1,p=1`)를 박아 두었던 적이 있다. 그러면 없는 계정의
+    검증은 수 마이크로초, 있는 계정은 64MB·3회라 응답 시간만 재도 이메일이
+    가입돼 있는지 갈린다 — 같은 예외·같은 메시지가 무색해진다.
+
+    argon2 한 번이 비싸므로 프로세스마다 파라미터 조합당 한 번만 만든다.
+    """
+    hasher = PasswordHashingService(
+        memory_cost=memory_cost, time_cost=time_cost, parallelism=parallelism
+    )
+    return hasher.hash(secrets.token_urlsafe(16))
+
+
 class AuthService:
     """로그인·세션·리프레시 로테이션."""
 
@@ -156,9 +173,7 @@ class AuthService:
 
         if user is None or user.password_hash is None:
             # 계정이 없어도 해시 검증과 동일한 시간을 쓴다. 타이밍으로 존재가 새면 안 된다.
-            self._passwords.verify(
-                "$argon2id$v=19$m=8,t=1,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaa", password
-            )
+            self._passwords.verify(self._dummy_hash(), password)
             await self._fail_login(email=email, ip=ip, reason="unknown_user")
             raise AuthenticationError("이메일 또는 비밀번호가 올바르지 않다.")
 
@@ -435,12 +450,21 @@ class AuthService:
             mfa_enrollment_required=enrollment_required,
         )
 
+    def _dummy_hash(self) -> str:
+        return _dummy_password_hash(
+            self._settings.argon2_memory_cost,
+            self._settings.argon2_time_cost,
+            self._settings.argon2_parallelism,
+        )
+
     async def _guard_rate_limit(self, *, email: str, ip: str | None) -> None:
         failures = await self._attempts.recent_failures(
             email=email, ip=ip, window_seconds=self._settings.login_attempt_window_seconds
         )
         if failures >= self._settings.login_max_attempts:
             # 잠그지 않고 지연시킨다. 잠그면 타인이 남의 계정을 잠글 수 있다.
+            # 그래서 계정만이 아니라 (계정, IP) 쌍으로 센다 — 다른 곳에서 남이
+            # 틀린 횟수로 본인이 막히면 그게 곧 잠금이다(`recent_failures`).
             raise RateLimitedError(
                 retry_after_seconds=min(
                     2 ** (failures - self._settings.login_max_attempts + 1), 300
@@ -562,11 +586,19 @@ class MFAService:
         publish(self._s, identity_events.MFAEnrolled(aggregate_id=user_id, kind="totp"))
 
     async def verify(self, *, user_id: UUID, session_id: UUID, code: str) -> None:
-        """로그인 후 2FA 확인. TOTP 우선, 실패하면 백업 코드로 시도한다."""
+        """로그인 후 2FA 확인. TOTP 우선, 실패하면 백업 코드로 시도한다.
+
+        **실패 횟수를 센다.** 안 세면 비밀번호를 아는 사람이 6자리 코드를
+        끝까지 찍어 볼 수 있다 — ±1 스텝이라 한 번에 세 개가 맞으므로 생각보다
+        빨리 뚫린다. 로그인 제한과 같은 꼴로(창 안의 실패 수, 넘으면 429)
+        **코드를 보기 전에** 막는다. 보고 나서 막으면 맞는 코드에만 다른 답이
+        나가 제한이 무의미해진다.
+        """
         row = await self._sessions.get(session_id)
         if row is None or row.user_id != user_id or row.revoked_at is not None:
             raise AuthenticationError("세션이 유효하지 않다.")
 
+        await self._guard_rate_limit(user_id)
         if await self._verify_totp(user_id, code) or await self._consume_backup_code(user_id, code):
             row.mfa_satisfied_at = utcnow()
             row.mfa_verified = True
@@ -578,10 +610,31 @@ class MFAService:
             )
             return
 
+        # 이 기록이 곧 실패 횟수다(`_guard_rate_limit`). 라우터가 실패 경로에서도
+        # 커밋하므로 남는다.
         self._audit.record(
             action=audit.MFA_FAILED, actor_id=user_id, target_type="session", target_id=row.id
         )
         raise ValidationError("인증 코드가 올바르지 않다.", code="auth.mfa_invalid_code")
+
+    async def _guard_rate_limit(self, user_id: UUID) -> None:
+        """**세션이 아니라 사람 단위로** 센다.
+
+        비밀번호를 아는 사람은 로그인을 다시 해 세션을 얼마든지 새로 만든다.
+        세션마다 세면 로그인 한 번에 시도 횟수가 다시 채워진다. 사람 단위로
+        세면 본인도 그동안 막히지만, 그 문 앞에 설 수 있는 것은 비밀번호를
+        아는 사람뿐이다 — 남이 아무 계정이나 잠글 수 있는 꼴은 아니다.
+
+        따로 표를 두지 않고 이미 남기는 `auth.mfa.failed` 감사 기록을 센다.
+        """
+        window = self._settings.login_attempt_window_seconds
+        failures = await self._audit.count_recent(
+            action=audit.MFA_FAILED, actor_id=user_id, window_seconds=window
+        )
+        limit = self._settings.mfa_max_attempts
+        if failures >= limit:
+            log.warning("auth.mfa_rate_limited", user_id=str(user_id), failures=failures)
+            raise RateLimitedError(retry_after_seconds=min(2 ** (failures - limit + 1), 300))
 
     # ── WebAuthn / 패스키 ───────────────────────────────────────
 
@@ -965,7 +1018,9 @@ class UserService:
         self._validate_password(new_password)
         user.password_hash = self._passwords.hash(new_password)
 
-    async def activate_with_password(self, *, user_id: UUID, password: str) -> User:
+    async def activate_with_password(
+        self, *, user_id: UUID, password: str, invite_generation: int = 0
+    ) -> User:
         """초대 수락. 비밀번호를 설정하고 계정을 활성화한다.
 
         **`invited` 인 계정만 받는다.** 이 한 줄이 초대 토큰을 한 번만 쓰이게
@@ -976,6 +1031,11 @@ class UserService:
         통째로 가져갈 수 있고, 본인 세션은 끊기지도 않아 눈치채지 못한다.
 
         비밀번호를 잊은 사람은 이 문을 쓰지 않는다 — 재설정 흐름이 따로 있다.
+
+        **세대도 본다**(`invite_generation`, 토큰이 실어 온 값). 다시 초대하면
+        계정이 `invited` 로 돌아가므로 상태 검사만으로는 그 전에 나간 초대
+        메일이 전부 되살아난다. 기본값 0 은 세대가 생기기 전의 토큰과 같은
+        뜻이라, 넘기지 않으면 더 엄격해질 뿐 느슨해지지는 않는다.
         """
         user = await self._users.get(user_id)
         if user is None:
@@ -984,6 +1044,12 @@ class UserService:
             raise ConflictError("정지된 계정이다.")
         if user.status != "invited":
             raise ConflictError("이미 수락한 초대다.", code="identity.invite_already_accepted")
+        if invite_generation != user.invite_generation:
+            # 만료와 같은 길로 보낸다. 받는 사람에게 할 말이 같다 — 새 초대장을 받아야 한다.
+            raise ValidationError(
+                "더 새 초대장이 나갔다. 가장 최근 메일의 링크를 쓴다.",
+                code="identity.invite_expired",
+            )
 
         self._validate_password(password)
         user.password_hash = self._passwords.hash(password)
@@ -1006,6 +1072,13 @@ class UserService:
         여는 일은 관리자의 결정으로만 일어나야 한다 — 감사 로그가 남고,
         기존 세션이 끊기고, 옛 비밀번호가 그 자리에서 사라진다.
 
+        **API 토큰(PAT)도 끊는다.** `invited` 동안은 `is_active` 검사가 막아 주지만
+        다시 수락하는 순간 옛 토큰이 그대로 살아난다 — 계정이 새면 다시 초대하는
+        것이 대응인데, 그 사람이 만들어 둔 토큰은 빠져나간다. 옛 초대 토큰도
+        세대를 올려 죽인다(`invite_generation`). **2FA 자격증명은 그대로 둔다** —
+        비밀번호를 잊은 사람이 돌아오는 정상 경로라, 인증기까지 지우면 돌아온
+        사람이 2차 요소를 처음부터 다시 등록해야 한다.
+
         **SSO·SCIM 계정에는 쓰지 않는다.** 그쪽은 비밀번호로 들어오지 않으므로
         `invited` 로 내리면 IdP 로그인까지 막힌다 — 되살릴 길이 없는 상태다.
         """
@@ -1023,13 +1096,19 @@ class UserService:
 
         user.status = "invited"
         user.password_hash = None
+        user.invite_generation += 1
         revoked = await self._sessions.revoke_all_for_user(user_id)
+        revoked_tokens = await ApiTokenRepository(self._s).revoke_all_for_user(user_id)
         self._audit.record(
             action=audit.USER_REINVITED,
             actor_id=actor_id,
             target_type="user",
             target_id=user_id,
-            metadata={"email": user.email, "revoked_sessions": revoked},
+            metadata={
+                "email": user.email,
+                "revoked_sessions": revoked,
+                "revoked_tokens": revoked_tokens,
+            },
         )
         publish(
             self._s,
@@ -1726,7 +1805,7 @@ class SsoService:
         있어, 받아들이는 시점과 세션을 여는 시점이 다르다.
         """
         user = await self._resolve_user(provider, claims)
-        await self._sync_groups(user, claims.groups)
+        await self._sync_groups(user, provider, claims.groups)
         user.last_login_at = utcnow()
         self._audit.record(
             action=audit.SSO_LOGIN_SUCCEEDED,
@@ -1816,25 +1895,52 @@ class SsoService:
         log.info("auth.sso_provisioned", user=str(user.id), provider=provider.name)
         return user
 
-    async def _sync_groups(self, user: User, names: list[str]) -> None:
+    async def _sync_groups(self, user: User, provider: IdentityProvider, names: list[str]) -> None:
         """IdP 가 준 그룹에 맞춘다. **뺀 것도 뺀다.**
 
         더하기만 하면 권한 회수가 안 된다 — 팀을 옮긴 사람이 옛 팀 자료를
         계속 본다. 손으로 만든 그룹(`source='local'`)은 건드리지 않는다.
+
+        **이 IdP 가 만든 그룹만 만진다**(`idp_provider_id`). 이름만 보고 찾던
+        때는 협력사 IdP 가 `admins` 를 보내면 우리 IdP 의 `admins` 에 들어가
+        그 그룹의 역할을 그대로 받았다. 클레임의 그룹 이름은 IdP 관리자가 마음대로
+        정하는 값이다 — 남의 IdP 가 고른 이름이 우리 권한의 열쇠가 되면 안 된다.
+
+        그룹 이름은 설치본 전체에서 하나다. 다른 IdP 가 먼저 가진 이름이면 이
+        IdP 는 그 그룹을 만들지도 들어가지도 못한다(경고만 남긴다).
+
+        주인이 비어 있는 옛 `idp` 그룹(마이그레이션이 주인을 가리지 못한 것)에는
+        **새로 넣지 않는다.** 이미 든 사람은 IdP 가 그 이름을 보내는 동안 남고,
+        안 보내면 빠진다 — 회수는 계속 되고, 남의 그룹에 새로 들어가는 길만 닫힌다.
         """
         wanted: set[UUID] = set()
+        current = await self._providers.idp_group_ids_for(user.id, provider.id)
         for name in names:
             group = await self._groups.get_by_name(name)
             if group is None:
-                group = self._groups.add(UserGroup(name=name, source="idp"))
+                group = self._groups.add(
+                    UserGroup(name=name, source="idp", idp_provider_id=provider.id)
+                )
                 await self._s.flush()
             elif group.source != "idp":
                 # 같은 이름의 로컬 그룹이 있으면 IdP 가 가져가지 않는다.
                 continue
+            elif group.idp_provider_id is None:
+                # 주인을 모르는 옛 그룹. 이미 든 사람만 남긴다.
+                if group.id in current:
+                    wanted.add(group.id)
+                continue
+            elif group.idp_provider_id != provider.id:
+                log.warning(
+                    "auth.sso_group_owned_by_other_idp",
+                    group=name,
+                    provider=str(provider.id),
+                    owner=str(group.idp_provider_id),
+                )
+                continue
             wanted.add(group.id)
             await self._groups.add_member(group.id, user.id)
 
-        current = await self._providers.idp_group_ids_for(user.id)
         await self._providers.drop_members(user.id, sorted(current - wanted))
 
     async def _require_provider(self, provider_id: UUID) -> IdentityProvider:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
@@ -28,12 +29,39 @@ def get_object_store(settings: AppSettings) -> ObjectStore:
 StorageDep = Annotated[ObjectStore, Depends(get_object_store)]
 
 
-def client_ip(request: Request) -> str | None:
-    """프록시 뒤를 가정한다. X-Forwarded-For 의 첫 항목이 원 클라이언트다."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else None
+def client_ip(request: Request, settings: AppSettings) -> str | None:
+    """요청을 보낸 주소. 로그인 제한과 감사 로그가 이 값을 쓴다.
+
+    **`X-Forwarded-For` 의 첫 항목을 믿지 않는다.** 그 자리는 클라이언트가
+    써 보낸 값이 그대로 남는 곳이다 — nginx 의 `$proxy_add_x_forwarded_for`
+    는 들어온 헤더 **뒤에** 자기가 본 주소를 붙일 뿐이다. 첫 항목을 쓰면
+    요청마다 다른 주소를 적어 보내는 것만으로 IP 기준 제한이 풀리고, 감사
+    로그의 IP 도 거짓이 된다.
+
+    믿을 수 있는 것은 우리 프록시가 붙인 항목뿐이다. 그래서 오른쪽에서
+    `trusted_proxy_hops` 만큼 들어간 항목을 쓴다. 항목이 그보다 적으면 가장
+    바깥(왼쪽)이 우리가 아는 가장 먼 곳이다.
+    """
+    socket_ip = request.client.host if request.client else None
+    hops = settings.trusted_proxy_hops
+    if hops <= 0:
+        return socket_ip
+    # 헤더가 여러 줄로 올 수도 있다. 한 줄만 보면 뒤에 붙은 줄을 놓친다.
+    parts = [
+        item.strip()
+        for line in request.headers.getlist("X-Forwarded-For")
+        for item in line.split(",")
+        if item.strip()
+    ]
+    if not parts:
+        return socket_ip
+    candidate = parts[-hops] if len(parts) >= hops else parts[0]
+    try:
+        # 주소가 아닌 것은 버린다. 그대로 두면 IP 칼럼(45자)에 넣다가 500 이
+        # 나고, 로그인 제한은 그 값을 열쇠로 센다.
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return socket_ip
 
 
 ClientIp = Annotated[str | None, Depends(client_ip)]

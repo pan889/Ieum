@@ -439,11 +439,11 @@ async def invite_user(
 async def accept_invite(
     body: AcceptInviteRequest, session: DbSession, settings: AppSettings
 ) -> UserResponse:
-    from ieum.modules.identity.invites import decode_invite_token
+    from ieum.modules.identity.invites import decode_invite
 
-    user_id = decode_invite_token(body.token, settings)
+    invite = decode_invite(body.token, settings)
     user = await UserService(session, settings).activate_with_password(
-        user_id=user_id, password=body.password
+        user_id=invite.user_id, password=body.password, invite_generation=invite.generation
     )
     await session.commit()
     return UserResponse.model_validate(user)

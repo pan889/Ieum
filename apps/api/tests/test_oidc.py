@@ -224,6 +224,22 @@ class TestClaimReading:
         got = self._read({"sub": "s", "email": "victim@example.com", "email_verified": False})
         assert got.email is None
 
+    @pytest.mark.parametrize("value", ["false", "False", "0", "", "no", 0, 1, None, [], {}])
+    def test_only_a_true_value_counts_as_verified(self, value: Any) -> None:
+        """ "거짓이 아니면 참" 으로 읽던 때는 문자열 `"false"`·`0`·`null` 이
+        전부 검증된 주소가 됐다. 값을 문자열로 보내는 IdP 가 있다."""
+        got = self._read({"sub": "s", "email": "victim@example.com", "email_verified": value})
+        assert got.email is None
+
+    @pytest.mark.parametrize("value", [True, "true", "TRUE", " True "])
+    def test_true_and_the_string_true_are_verified(self, value: Any) -> None:
+        got = self._read({"sub": "s", "email": "Me@Example.com", "email_verified": value})
+        assert got.email == "me@example.com"
+
+    def test_a_missing_claim_is_not_verified(self) -> None:
+        """안 보내는 IdP 는 "검증 안 됨" 으로 둔다 — 틀려도 안전한 쪽이다."""
+        assert self._read({"sub": "s", "email": "me@example.com"}).email is None
+
     def test_groups_default_to_empty(self) -> None:
         assert self._read({"sub": "s"}).groups == []
         # 문자열 하나로 오는 IdP 도 있다. 글자를 쪼개 그룹으로 만들면 안 된다.
@@ -489,3 +505,132 @@ class TestSsoFlow:
         found = await service.provider_for_email("someone@CORP.example.com")
         assert found is not None and found.id == provider.id
         assert await service.provider_for_email("someone@elsewhere.com") is None
+
+
+class TestIdpGroupIsolation:
+    """IdP 가 준 그룹 이름으로 **다른 IdP 의 그룹에 들어가지 못한다.**
+
+    이름과 `source='idp'` 만으로 찾던 때는 협력사 IdP 가 `admins` 를 보내면
+    우리 IdP 가 만든 `admins` 에 들어가 그 그룹의 역할을 그대로 받았다.
+    클레임의 그룹 이름은 그쪽 IdP 관리자가 마음대로 정하는 값이다.
+    """
+
+    async def _provider(self, session: Any, settings: Settings, name: str) -> Any:
+        from ieum.core.crypto import SecretBox
+        from ieum.modules.identity.models import IdentityProvider
+
+        box = SecretBox(settings.secret_key.get_secret_value(), purpose="identity.idp.secret")
+        row = IdentityProvider(
+            name=name,
+            kind="oidc",
+            is_enabled=True,
+            issuer=f"https://{name}.example.com",
+            client_id=f"client-{uuid4().hex[:8]}",
+            client_secret_enc=box.encrypt("s3cret"),
+            authorization_endpoint=f"https://{name}.example.com/authorize",
+            token_endpoint=f"https://{name}.example.com/token",
+            jwks_uri=f"https://{name}.example.com/jwks",
+            groups_claim="groups",
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def _accept(
+        self,
+        session: Any,
+        settings: Settings,
+        provider: Any,
+        sub: str,
+        email: str,
+        groups: list[str],
+    ) -> Any:
+        from ieum.modules.identity.service import SsoService
+        from ieum.modules.identity.sso import Claims
+
+        user = await SsoService(session, settings).accept(
+            provider,
+            Claims(subject=sub, email=email, name=None, groups=groups, mfa_satisfied=False),
+        )
+        await session.flush()
+        return user
+
+    async def _group(self, session: Any, name: str) -> Any:
+        from ieum.modules.identity.repository import GroupRepository
+
+        return await GroupRepository(session).get_by_name(name)
+
+    async def test_another_idps_group_name_does_not_get_you_in(
+        self, session: Any, settings: Settings
+    ) -> None:
+        from ieum.modules.identity.repository import UserRepository
+
+        ours = await self._provider(session, settings, "ours")
+        partner = await self._provider(session, settings, "partner")
+        name = f"admins-{uuid4().hex[:6]}"
+
+        insider = await self._accept(session, settings, ours, "in-1", "in@ours.example", [name])
+        group = await self._group(session, name)
+        assert group is not None and group.idp_provider_id == ours.id
+
+        outsider = await self._accept(
+            session, settings, partner, "out-1", "out@partner.example", [name]
+        )
+        users = UserRepository(session)
+        assert group.id in await users.group_ids_for(insider.id)
+        assert group.id not in await users.group_ids_for(outsider.id)
+        # 주인도 바뀌지 않았다.
+        assert (await self._group(session, name)).idp_provider_id == ours.id
+
+    async def test_logging_in_through_one_idp_leaves_the_others_groups_alone(
+        self, session: Any, settings: Settings
+    ) -> None:
+        """한 사람이 두 IdP 에 이어져 있으면, 한쪽으로 들어올 때마다 다른 쪽이
+        준 그룹에서 빠지면 안 된다."""
+        from ieum.modules.identity.repository import UserRepository
+
+        a = await self._provider(session, settings, "alpha")
+        b = await self._provider(session, settings, "beta")
+        red, blue = f"red-{uuid4().hex[:6]}", f"blue-{uuid4().hex[:6]}"
+        email = f"both-{uuid4().hex[:6]}@example.com"
+
+        user = await self._accept(session, settings, a, "a-sub", email, [red])
+        # 같은 검증된 이메일이라 b 도 같은 계정에 이어진다.
+        again = await self._accept(session, settings, b, "b-sub", email, [blue])
+        assert again.id == user.id
+
+        users = UserRepository(session)
+        red_group, blue_group = await self._group(session, red), await self._group(session, blue)
+        assert await users.group_ids_for(user.id) == {red_group.id, blue_group.id}
+
+        # a 가 이제 아무 그룹도 안 준다. a 의 그룹만 빠지고 b 의 것은 남는다.
+        await self._accept(session, settings, a, "a-sub", email, [])
+        assert await users.group_ids_for(user.id) == {blue_group.id}
+
+    async def test_a_legacy_group_without_an_owner_takes_no_one_new(
+        self, session: Any, settings: Settings
+    ) -> None:
+        """주인을 가리지 못한 옛 `idp` 그룹. 이미 든 사람은 IdP 가 그 이름을
+        보내는 동안 남고, 안 보내면 빠진다. 새로 들어가는 길만 닫힌다."""
+        from ieum.modules.identity.models import UserGroup
+        from ieum.modules.identity.repository import GroupRepository, UserRepository
+
+        provider = await self._provider(session, settings, "legacy")
+        name = f"old-{uuid4().hex[:6]}"
+        member = await self._accept(session, settings, provider, "m-1", "m@legacy.example", [])
+        group = GroupRepository(session).add(UserGroup(name=name, source="idp"))
+        await session.flush()
+        await GroupRepository(session).add_member(group.id, member.id)
+        await session.flush()
+
+        users = UserRepository(session)
+        newcomer = await self._accept(
+            session, settings, provider, "n-1", "n@legacy.example", [name]
+        )
+        assert group.id not in await users.group_ids_for(newcomer.id)
+
+        await self._accept(session, settings, provider, "m-1", "m@legacy.example", [name])
+        assert group.id in await users.group_ids_for(member.id)
+
+        await self._accept(session, settings, provider, "m-1", "m@legacy.example", [])
+        assert group.id not in await users.group_ids_for(member.id)
