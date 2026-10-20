@@ -75,7 +75,7 @@ def sandbox(tmp_path: Path) -> dict[str, Path]:
 
     # 원격: 두 판을 놓는다. 새 판은 알아볼 수 있게 표시를 붙인다.
     remote = tmp_path / "remote"
-    for version, mark in (("1.2.1", ""), ("9.9.9", "# 판 9.9.9 의 것\n")):
+    for version, mark in (("1.2.2", ""), ("9.9.9", "# 판 9.9.9 의 것\n")):
         dest = remote / f"v{version}" / "deploy" / "install"
         dest.mkdir(parents=True)
         for name in ("compose.yml", "install.sh"):
@@ -152,7 +152,7 @@ class TestUpgradingInPlace:
 
         done = _run(shell, sandbox, "--version", "8.8.8", script="./install.sh")
         assert done.returncode != 0
-        assert _env(site)["IEUM_VERSION"] == "1.2.1"
+        assert _env(site)["IEUM_VERSION"] == "1.2.2"
         assert (site / "compose.yml").read_text(encoding="utf-8") == before
         assert not list(site.glob("*.new.*")), "반쪽짜리 파일이 남았다"
 
