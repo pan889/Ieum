@@ -83,6 +83,15 @@ jobs:
         # (Makefile) 여기가 이 파일을 실제로 보는 유일한 자리다.
         run: shellcheck -s sh deploy/install/install.sh
 
+      - name: helm (차트 렌더 시험)
+        # `test_helm_chart.py` 가 `helm template` 으로 차트를 펴 놓고 **매니페스트
+        # 사이의 이름**이 맞는지 본다(훅이 가리키는 것이 훅보다 먼저 서는가, web
+        # 이 API 의 Service 이름을 아는가). 로컬에서는 helm 이 없으면 건너뛰지만
+        # CI 에서는 실패한다 — 여기가 그 시험을 실제로 돌리는 자리다.
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
       - name: mypy --strict
         # --config-file 없이 워크스페이스 루트에서 돌리면 루트 pyproject.toml 이
         # 잡혀 strict 설정이 통째로 무시된다.

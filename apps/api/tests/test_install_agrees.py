@@ -19,9 +19,10 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 import yaml
@@ -182,27 +183,37 @@ class TestTheProdOverrideActuallyOverrides:
     시험은 `docker compose config` 가 내놓는 것을 본다.
     """
 
-    @staticmethod
-    def _merged() -> dict[str, Any]:
-        import json
+    #: 운영자가 반드시 주는 값. 하나라도 빠지면 `config` 가 멈춘다 — 그래서
+    #: 여기에 하나를 더 요구하게 되면 이 목록도 늘어야 한다. 안 늘리면 아래
+    #: `_merged` 가 **건너뛰어서** 이 클래스의 시험이 전부 조용히 빠진다.
+    OPERATOR_ENV: ClassVar[dict[str, str]] = {
+        "IEUM_SECRET_KEY": "x" * 32,
+        "IEUM_BASE_URL": "https://ieum.example.com",
+        "IEUM_S3_PUBLIC_ENDPOINT_URL": "https://files.example.com",
+        "IEUM_WEB_ORIGINS": "https://ieum.example.com",
+        "IEUM_DB_PASSWORD": "db-password",
+        "IEUM_S3_ACCESS_KEY": "access",
+        "IEUM_S3_SECRET_KEY": "secret",
+        "IEUM_SMTP_HOST": "smtp.example.com",
+    }
+
+    @classmethod
+    def _config(cls, **overrides: str | None) -> subprocess.CompletedProcess[str]:
+        """`docker compose config` 를 부른다. 값이 `None` 이면 그 변수를 **뺀다**."""
         import os
         import shutil
-        import subprocess
 
         # 절대 경로로 부른다 — 시험이 PATH 를 믿지 않게 한다.
         docker = shutil.which("docker")
         if docker is None:
             pytest.skip("docker 가 없다")
-        env = {
-            **os.environ,
-            "IEUM_SECRET_KEY": "x" * 32,
-            "IEUM_S3_PUBLIC_ENDPOINT_URL": "https://files.example.com",
-            "IEUM_WEB_ORIGINS": "https://ieum.example.com",
-            "IEUM_DB_PASSWORD": "db-password",
-            "IEUM_S3_ACCESS_KEY": "access",
-            "IEUM_S3_SECRET_KEY": "secret",
-        }
-        done = subprocess.run(  # noqa: S603 - 인자가 전부 우리가 적은 상수다
+        env = {**os.environ, **cls.OPERATOR_ENV}
+        for key, value in overrides.items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
+        return subprocess.run(  # noqa: S603 - 인자가 전부 우리가 적은 상수다
             [
                 docker,
                 "compose",
@@ -220,11 +231,23 @@ class TestTheProdOverrideActuallyOverrides:
             text=True,
             timeout=120,
         )
+
+    @classmethod
+    def _merged(cls, **overrides: str | None) -> dict[str, Any]:
+        import json
+
+        done = cls._config(**overrides)
         if done.returncode != 0:
             pytest.skip(f"compose config 가 안 돈다: {done.stderr[:200]}")
         loaded = json.loads(done.stdout)
         assert isinstance(loaded, dict)
         return loaded
+
+    def test_the_operator_values_are_enough(self) -> None:
+        """위 목록이 모자라면 `_merged` 가 건너뛰고, 이 클래스가 통째로 빈다.
+        건너뛰지 않고 **붉어지는** 자리를 하나 둔다."""
+        done = self._config()
+        assert done.returncode == 0, done.stderr[:500]
 
     def test_only_the_web_port_is_published(self) -> None:
         services = self._merged()["services"]
@@ -281,6 +304,195 @@ class TestTheProdOverrideActuallyOverrides:
             if leftover in json.dumps(spec.get("environment", {}), ensure_ascii=False)
         }
         assert offenders == {}, offenders
+
+    @pytest.mark.parametrize("missing", ["IEUM_BASE_URL", "IEUM_SMTP_HOST"])
+    def test_the_operator_has_to_name_it(self, missing: str) -> None:
+        """밑바탕의 기본값(`localhost:5173`, `mailpit`)으로 조용히 뜨지 않는다."""
+        done = self._config(**{missing: None})
+        assert done.returncode != 0
+        assert missing in done.stderr
+
+    def test_mail_goes_where_the_operator_says(self) -> None:
+        """밑바탕은 `mailpit` 을 박아 둔다. 그것이 넘어오면 운영의 메일이 전부
+        개발용 상자로 들어가고 아무에게도 안 간다 — 오류도 없다."""
+        services = self._merged()["services"]
+        for name in ("api", "worker"):
+            env = services[name]["environment"]
+            assert env["IEUM_SMTP_HOST"] == "smtp.example.com", (name, env["IEUM_SMTP_HOST"])
+            assert env["IEUM_SMTP_PORT"] == "587"
+            assert env["IEUM_SMTP_TLS"] == "true"
+
+    def test_mail_can_be_turned_off_on_purpose(self) -> None:
+        """빈 값은 "안 보낸다" 는 선택이다. 그것까지 막으면 메일 없는 설치가 못 선다."""
+        services = self._merged(IEUM_SMTP_HOST="")["services"]
+        assert services["api"]["environment"]["IEUM_SMTP_HOST"] == ""
+
+    def test_the_public_addresses_are_the_operators(self) -> None:
+        # `.env.example` 을 베낀 `.env` 에는 `IEUM_API_URL=http://localhost:8000` 이
+        # 들어 있다. 그것이 넘어오는지까지 본다.
+        services = self._merged(IEUM_API_URL="http://localhost:8000")["services"]
+        for name in ("api", "worker"):
+            env = services[name]["environment"]
+            assert env["IEUM_BASE_URL"] == "https://ieum.example.com"
+            # 비우면 앱이 IEUM_BASE_URL 을 쓴다(한 오리진). `localhost:8000` 이
+            # 넘어오면 SAML 의 ACS 주소가 localhost 로 나간다.
+            assert env["IEUM_API_URL"] == ""
+
+    def test_the_known_mfa_admin_does_not_reach_a_container(self) -> None:
+        """밑바탕의 2FA 시드 관리자는 비밀번호와 TOTP 시크릿이 저장소에 적혀 있다.
+
+        `.env` 에 개발 값이 남아 있는 경우까지 본다 — 운영 오버라이드는 그것을
+        변수로 받지 않고 빈 값으로 박아야 한다.
+        """
+        services = self._merged(
+            SEED_MFA_ADMIN_EMAIL="mfa-admin@example.com",
+            SEED_MFA_ADMIN_PASSWORD="seed-mfa-admin-password-1234",
+            SEED_MFA_ADMIN_TOTP_SECRET="IEUMDEVSEEDTOTPSECRET234",
+        )["services"]
+        leaked = {
+            name: {
+                k: v
+                for k, v in spec.get("environment", {}).items()
+                if k.startswith("SEED_MFA_") and v
+            }
+            for name, spec in services.items()
+        }
+        assert all(not values for values in leaked.values()), leaked
+
+
+class TestEveryInstallerSettingReachesTheApp:
+    """**`.env` 에 적어 주는 값은 compose 가 넘겨야 한다.**
+
+    `IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS` 를 install.sh 가 처음부터 `.env` 에 적어
+    주고 주석으로 설명까지 했는데, compose.yml 이 그것을 컨테이너로 안 넘겼다.
+    사람은 `true` 로 바꾸고 다시 띄우는데 앱은 계속 막는다 — 오류도 없다.
+    """
+
+    @staticmethod
+    def _written_keys() -> set[str]:
+        text = INSTALL_SCRIPT.read_text(encoding="utf-8")
+        body = text.split('cat > "$env_file" <<ENV', 1)[1].split("\nENV\n", 1)[0]
+        return set(re.findall(r"^([A-Z][A-Z0-9_]*)=", body, re.M))
+
+    def test_there_are_keys_to_check(self) -> None:
+        """0개를 0개와 견주면서 통과하는 것을 막는다."""
+        assert {"IEUM_SECRET_KEY", "IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS"} <= self._written_keys()
+
+    def test_every_written_key_is_read_by_the_compose_file(self) -> None:
+        compose = INSTALL_COMPOSE.read_text(encoding="utf-8")
+        unread = sorted(key for key in self._written_keys() if f"${{{key}" not in compose)
+        assert unread == [], f".env 에 적는데 compose 가 안 읽는다: {unread}"
+
+
+class TestTheWebImageIsATemplate:
+    """웹 이미지의 nginx 설정은 **템플릿**이다 — API 의 이름이 배포마다 다르다.
+
+    compose 에서는 `api`, Helm 에서는 `<fullname>-api` 다. `api:8000` 을 박아 둔
+    동안 Helm 의 web 파드는 nginx 가 그 이름을 못 찾아 기동 루프에 빠졌다.
+    """
+
+    WEB_DOCKERFILE = REPO / "apps" / "web" / "Dockerfile"
+
+    def _placeholders(self) -> set[str]:
+        return set(
+            re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", WEB_NGINX.read_text(encoding="utf-8"))
+        )
+
+    def test_the_image_ships_it_as_a_template(self) -> None:
+        text = self.WEB_DOCKERFILE.read_text(encoding="utf-8")
+        assert "apps/web/nginx.conf /etc/nginx/templates/default.conf.template" in text
+
+    def test_only_our_variables_are_expanded(self) -> None:
+        """envsubst 는 환경에 있는 이름을 다 편다. 거르지 않으면 `$http_upgrade`
+        같은 nginx 변수와 이름이 같은 환경변수 하나가 설정을 갈아 버린다."""
+        text = self.WEB_DOCKERFILE.read_text(encoding="utf-8")
+        assert "NGINX_ENVSUBST_FILTER=^IEUM_" in text
+        assert self._placeholders(), "템플릿에 펼 자리가 없다 — 이 시험이 아무것도 안 본다"
+        assert all(name.startswith("IEUM_") for name in self._placeholders())
+
+    def test_every_placeholder_has_a_default(self) -> None:
+        """envsubst 는 **정의된** 이름만 편다. 기본값이 없으면 `${...}` 가 글자
+        그대로 남아 nginx 가 기동을 거부한다 — compose 설치본은 이 값을 안 준다."""
+        text = self.WEB_DOCKERFILE.read_text(encoding="utf-8")
+        for name in self._placeholders():
+            assert re.search(rf"\b{name}=\S", text), f"{name} 의 기본값이 Dockerfile 에 없다"
+
+    def test_the_default_is_the_compose_service(self) -> None:
+        """기본값이 compose 의 api 서비스여야 compose 설치본들이 그대로 돈다."""
+        text = self.WEB_DOCKERFILE.read_text(encoding="utf-8")
+        found = re.search(r"IEUM_API_UPSTREAM=(\S+)", text)
+        assert found is not None
+        host, _, port = found.group(1).partition(":")
+        for path in (INSTALL_COMPOSE, DEV_COMPOSE):
+            assert host in _compose(path)["services"], path
+        command = _compose(INSTALL_COMPOSE)["services"][host]["command"]
+        assert command[command.index("--port") + 1] == port
+
+    def test_scim_reaches_the_api(self) -> None:
+        """SCIM 은 `/scim/v2` 다(`/api/v1` 아래가 아니다). 한 포트 설치본에서 이
+        자리가 없으면 IdP 의 프로비저닝 요청이 SPA 의 index.html 을 200 으로 받는다."""
+        from ieum.modules.identity.scim_service import SCIM_BASE
+
+        text = WEB_NGINX.read_text(encoding="utf-8")
+        prefix = "/" + SCIM_BASE.strip("/").split("/")[0] + "/"
+        assert f"location {prefix} {{" in text
+        api_block = text.split("location /api/ {", 1)[1].split("\n    }", 1)[0]
+        scim_block = text.split(f"location {prefix} {{", 1)[1].split("\n    }", 1)[0]
+        api_pass = re.search(r"proxy_pass\s+(\S+);", api_block)
+        scim_pass = re.search(r"proxy_pass\s+(\S+);", scim_block)
+        assert api_pass is not None and scim_pass is not None
+        assert scim_pass.group(1) == api_pass.group(1)
+
+    @pytest.mark.parametrize("upstream", ["api:8000", "r-ieum-api:8000"])
+    def test_nginx_accepts_the_rendered_config(self, upstream: str, tmp_path: Path) -> None:
+        """실제 nginx 이미지의 진입점에 템플릿을 넣고 `nginx -t` 를 돌린다.
+
+        `http_upgrade` 라는 환경변수를 일부러 넣는다 — 거르기가 빠지면 그것이
+        `$http_upgrade` 자리를 갈아 버리는 것을 여기서 본다.
+        """
+        import shutil
+
+        docker = shutil.which("docker")
+        if docker is None:
+            pytest.skip("docker 가 없다")
+        image = re.search(
+            r"^FROM (nginx:\S+)", self.WEB_DOCKERFILE.read_text(encoding="utf-8"), re.M
+        )
+        assert image is not None
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        host = upstream.partition(":")[0]
+        done = subprocess.run(  # noqa: S603 - 인자가 전부 우리가 적은 상수다
+            [
+                docker,
+                "run",
+                "--rm",
+                "--add-host",
+                f"{host}:127.0.0.1",
+                "-e",
+                f"IEUM_API_UPSTREAM={upstream}",
+                "-e",
+                "NGINX_ENVSUBST_FILTER=^IEUM_",
+                "-e",
+                "http_upgrade=BROKEN",
+                "-v",
+                f"{WEB_NGINX}:/etc/nginx/templates/default.conf.template:ro",
+                "-v",
+                f"{extra}:/etc/nginx/ieum-extra:ro",
+                image.group(1),
+                "sh",
+                "-c",
+                "/docker-entrypoint.sh nginx -t && cat /etc/nginx/conf.d/default.conf",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if done.returncode != 0 and "Unable to find image" in done.stderr and "pull" in done.stderr:
+            pytest.skip(f"nginx 이미지를 못 받았다: {done.stderr[-200:]}")
+        assert done.returncode == 0, done.stderr[-1000:]
+        assert f"proxy_pass http://{upstream};" in done.stdout
+        assert "$http_upgrade" in done.stdout and "BROKEN" not in done.stdout
 
 
 class TestTheScriptDefaultsToADeclaredVersion:

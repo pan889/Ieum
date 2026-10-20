@@ -398,6 +398,19 @@ async def _seed_mfa_admin(session: AsyncSession, settings: Settings, admin_role:
     secret = os.getenv("SEED_MFA_ADMIN_TOTP_SECRET")
     if not (email and password and secret):
         return
+    # **운영에서는 값이 있어도 안 만든다.** 개발 스택의 기본값은 비밀번호와
+    # TOTP 시크릿이 저장소에 적혀 있다(`docker-compose.yml`). 운영 오버라이드가
+    # 그것을 안 지우던 동안, 운영 컨테이너에서 시드를 돌리면 **누구나 아는
+    # 비밀번호와 2FA 코드로 들어오는 관리자**가 생겼다. 설정 파일 한 곳의
+    # 실수로 그렇게 되지 않게 여기서도 막는다 — 멈추지는 않는다(시드는 판을
+    # 올릴 때마다 도는 단계라, 여기서 죽으면 앱이 안 뜬다).
+    if settings.is_production:
+        log.warning(
+            "seed.mfa_admin_refused",
+            reason="운영(IEUM_ENV=production)에서는 SEED_MFA_ADMIN_* 를 무시한다",
+            email=email,
+        )
+        return
 
     from ieum.core.crypto import SecretBox
     from ieum.modules.identity.models import MFACredential

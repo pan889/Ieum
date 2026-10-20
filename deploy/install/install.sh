@@ -192,13 +192,95 @@ if [ "$fresh" -eq 1 ]; then
     [ -n "$admin" ] || admin="admin@example.com"
 fi
 
+# ── compose.yml ─────────────────────────────────────────────────
+#
+# **판을 올릴 때마다 그 판의 것으로 갈아 끼운다.** 처음 깔 때만 놓으면, 새 판이
+# 서비스를 하나 늘리거나 헬스체크를 고쳐도 옛 파일이 그대로 남아서 이미지만
+# 새것이 된다 — 그 어긋남은 몇 달 뒤 엉뚱한 증상으로 나타난다.
+#
+# 그래서 이 파일은 **우리 것**이다. 고칠 것이 있으면 `compose.override.yml` 에
+# 적는다 — compose 가 알아서 겹쳐 읽고, 이 스크립트는 그 파일을 건드리지 않는다.
+#
+# 어디서 가져오나:
+#
+# - 스크립트 옆에 compose.yml 이 있고 그곳이 설치 자리가 **아니면**(저장소
+#   체크아웃, 풀어 둔 묶음) 그것을 복사한다 — 스크립트와 같이 온 한 벌이다.
+# - 그 밖에는 **그 판의 태그에서 받는다.** 설치 자리에서 `./install.sh --version X`
+#   를 치는 판올림이 여기에 든다. 예전에는 이 경우를 "이미 이 자리에 있다" 로
+#   보고 지나갔다 — 안내대로 판을 올리면 이미지만 새것이 되고 compose.yml 과
+#   install.sh 는 옛 판 그대로 남았다. 바로 위 단락이 막으려던 어긋남이다.
+#
+# **.env 를 고치기 전에** 놓는다. 받다가 끊겨 멈췄는데 .env 의 판만 새것이면,
+# 다음 `docker compose up` 이 옛 compose.yml 로 새 이미지를 띄운다.
+step "compose.yml 을 놓는다"
+# 둘 다 **실제 경로**로 견준다. 심볼릭 링크를 거쳐 들어오면 논리 경로가 달라서
+# 같은 자리를 다른 자리로 본다.
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+dir_real=$(CDPATH='' cd -- "$dir" && pwd -P)
+self="$dir/install.sh"
+
+# 다 받은 뒤에만 제자리로 옮긴다. 받다 끊기면 반쪽짜리 파일이 남는다.
+fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$1" -o "$2" || { rm -f "$2"; return 1; }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$2" "$1" || { rm -f "$2"; return 1; }
+    else
+        die "curl 도 wget 도 없다. v$version 의 compose.yml·install.sh 를 손으로 받아 $dir 에 둔다."
+    fi
+}
+
+# 설치 자리가 **자기 판올림 도구를 들고 있게** 한다. 안 그러면 마지막에
+# 찍어 주는 `./install.sh --version …` 이 그 디렉터리에서 안 먹는다.
+#
+# `mv` 로 갈아 끼운다 — `cp` 로 덮으면 지금 **자기 자신을 실행 중인** 파일을
+# 제자리에서 고치는 것이 되고, sh 는 스크립트를 조금씩 읽으므로 남은 부분이
+# 어긋난다. 이름 바꾸기는 열려 있는 inode 를 안 건드린다.
+if [ "$script_dir" != "$dir_real" ] && [ -f "$script_dir/compose.yml" ]; then
+    cp "$script_dir/compose.yml" "$compose_file"
+    say "$script_dir/compose.yml 에서 복사했다"
+    if [ -f "$script_dir/install.sh" ]; then
+        cp "$script_dir/install.sh" "$self.new.$$"
+        chmod +x "$self.new.$$"
+        mv "$self.new.$$" "$self"
+    fi
+else
+    remote="$RAW_BASE/v$version/deploy/install"
+    say "$remote 에서 받는다"
+    fetch "$remote/compose.yml" "$compose_file.new.$$" \
+        || die "compose.yml 을 못 받았다. v$version 태그가 있는지 본다."
+    fetch "$remote/install.sh" "$self.new.$$" \
+        || { rm -f "$compose_file.new.$$"; die "install.sh 를 못 받았다. v$version 태그가 있는지 본다."; }
+    # 받은 것이 셸 스크립트인지 본다. 중간의 프록시가 오류 화면을 200 으로
+    # 주는 일이 있다 — 그것을 판올림 도구 자리에 놓으면 다음 판올림이 막힌다.
+    sh -n "$self.new.$$" 2>/dev/null \
+        || { rm -f "$compose_file.new.$$" "$self.new.$$"; die "받은 install.sh 가 셸 스크립트가 아니다: $remote/install.sh"; }
+    mv "$compose_file.new.$$" "$compose_file"
+    chmod +x "$self.new.$$"
+    mv "$self.new.$$" "$self"
+fi
+
 # ── .env ────────────────────────────────────────────────────────
 if [ "$fresh" -eq 1 ]; then
     step ".env 를 만든다"
-    admin_password=$(rand | cut -c1-20)
+    # **비밀을 먼저 변수에 받는다.** `$(rand | cut …)` 이나 heredoc 안의
+    # `$(rand)` 로 쓰면 rand 의 `die` 는 명령 치환의 서브셸만 끝내고, 스크립트는
+    # 빈 값을 .env 에 적은 채 계속 간다 — 그러면 앱은 빈 비밀 키로 기동을
+    # 거부하고(차라리 낫다) 시드는 빈 비밀번호라 관리자를 안 만든다.
+    # 단독 대입은 치환의 종료 상태를 그대로 받으므로 여기서 멈출 수 있다.
+    secret_key=$(rand) || exit 1
+    db_password=$(rand) || exit 1
+    s3_secret_key=$(rand) || exit 1
+    s3_access_key=$(rand) || exit 1
+    admin_password=$(rand) || exit 1
+    s3_access_key=$(printf '%s' "$s3_access_key" | cut -c1-20)
+    admin_password=$(printf '%s' "$admin_password" | cut -c1-20)
+    for _value in "$secret_key" "$db_password" "$s3_secret_key" "$s3_access_key" "$admin_password"; do
+        [ "${#_value}" -ge 20 ] || die "무작위 값이 비었거나 너무 짧다 (${#_value}자). .env 를 만들지 않고 멈춘다."
+    done
     # 만들어지는 **그 순간부터** 남이 못 읽게 한다. 뒤에서 chmod 를 해도
     # 그 사이의 짧은 창에 비밀이 노출된다. 끝나면 되돌린다 — 안 그러면
-    # 뒤에 놓는 compose.yml·install.sh 까지 0600 이 된다.
+    # 이 스크립트가 뒤에 만드는 파일까지 0600 이 된다.
     _umask=$(umask)
     umask 077
     cat > "$env_file" <<ENV
@@ -218,10 +300,10 @@ IEUM_HTTP_PORT=$port
 IEUM_HTTP_BIND=$bind
 
 # 비밀 — 자동 발급.
-IEUM_SECRET_KEY=$(rand)
-IEUM_DB_PASSWORD=$(rand)
-IEUM_S3_ACCESS_KEY=$(rand | cut -c1-20)
-IEUM_S3_SECRET_KEY=$(rand)
+IEUM_SECRET_KEY=$secret_key
+IEUM_DB_PASSWORD=$db_password
+IEUM_S3_ACCESS_KEY=$s3_access_key
+IEUM_S3_SECRET_KEY=$s3_secret_key
 
 # 첫 관리자. 들어가서 비밀번호를 바꾸고 나면 이 두 줄은 지워도 된다.
 SEED_ADMIN_EMAIL=$admin
@@ -263,51 +345,6 @@ else
     umask "$_umask"
     # 원본의 권한을 지키려고 **덮어쓴다**(`mv` 는 임시 파일의 것을 가져온다).
     cat "$tmp" > "$env_file" && rm -f "$tmp"
-fi
-
-# ── compose.yml ─────────────────────────────────────────────────
-#
-# **판을 올릴 때마다 그 판의 것으로 갈아 끼운다.** 처음 깔 때만 놓으면, 새 판이
-# 서비스를 하나 늘리거나 헬스체크를 고쳐도 옛 파일이 그대로 남아서 이미지만
-# 새것이 된다 — 그 어긋남은 몇 달 뒤 엉뚱한 증상으로 나타난다.
-#
-# 그래서 이 파일은 **우리 것**이다. 고칠 것이 있으면 `compose.override.yml` 에
-# 적는다 — compose 가 알아서 겹쳐 읽고, 이 스크립트는 그 파일을 건드리지 않는다.
-step "compose.yml 을 놓는다"
-script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-if [ -f "$script_dir/compose.yml" ] && [ "$script_dir/compose.yml" != "$compose_file" ]; then
-    cp "$script_dir/compose.yml" "$compose_file"
-    say "$script_dir/compose.yml 에서 복사했다"
-elif [ ! -f "$script_dir/compose.yml" ]; then
-    remote="$RAW_BASE/v$version/deploy/install/compose.yml"
-    say "$remote 에서 받는다"
-    # 내려받다 끊기면 반쪽짜리 파일이 남는다. 다 받은 뒤에 옮긴다.
-    tmp_compose="$compose_file.new.$$"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$remote" -o "$tmp_compose" \
-            || { rm -f "$tmp_compose"; die "compose.yml 을 못 받았다. v$version 태그가 있는지 본다."; }
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$tmp_compose" "$remote" \
-            || { rm -f "$tmp_compose"; die "compose.yml 을 못 받았다. v$version 태그가 있는지 본다."; }
-    else
-        die "curl 도 wget 도 없다. compose.yml 을 손으로 받아 $dir 에 둔다."
-    fi
-    mv "$tmp_compose" "$compose_file"
-else
-    say "이미 이 자리에 있다"
-fi
-
-# 설치 자리가 **자기 판올림 도구를 들고 있게** 한다. 안 그러면 마지막에
-# 찍어 주는 `./install.sh --version …` 이 그 디렉터리에서 안 먹는다.
-#
-# `mv` 로 갈아 끼운다 — `cp` 로 덮으면 지금 **자기 자신을 실행 중인** 파일을
-# 제자리에서 고치는 것이 되고, sh 는 스크립트를 조금씩 읽으므로 남은 부분이
-# 어긋난다. 이름 바꾸기는 열려 있는 inode 를 안 건드린다.
-self="$dir/install.sh"
-if [ "$script_dir/install.sh" != "$self" ] && [ -f "$script_dir/install.sh" ]; then
-    cp "$script_dir/install.sh" "$self.new.$$"
-    chmod +x "$self.new.$$"
-    mv "$self.new.$$" "$self"
 fi
 
 # ── 당긴다 ──────────────────────────────────────────────────────

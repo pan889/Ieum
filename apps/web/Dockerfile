@@ -21,7 +21,26 @@ RUN test -f apps/api/openapi.json && pnpm --filter @ieum/api-client run generate
 RUN pnpm --filter @ieum/web run build
 
 FROM nginx:1.29-alpine AS runtime
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+# **설정은 템플릿이다** (`nginx.conf` 머리 주석). 진입점이 기동할 때
+# `/etc/nginx/templates/*.template` 를 envsubst 로 펴서 `conf.d/` 에 쓴다.
+#
+# - `IEUM_API_UPSTREAM` 의 기본값이 compose 의 서비스 이름이다. 그래서 compose
+#   설치본들은 아무것도 안 줘도 예전과 같이 돈다. Helm 은 `<fullname>-api` 를 준다.
+# - `NGINX_ENVSUBST_FILTER` 로 `IEUM_` 만 편다. 안 거르면 환경에 있는 아무
+#   이름이나 nginx 의 `$변수` 자리를 갈아 버린다.
+ENV IEUM_API_UPSTREAM=api:8000 \
+    NGINX_ENVSUBST_FILTER=^IEUM_
+COPY apps/web/nginx.conf /etc/nginx/templates/default.conf.template
+# **기본값으로 한 번 미리 펴 둔다.** 진입점은 명령이 `nginx` 일 때만 템플릿을
+# 펴므로, 명령을 갈아 끼운 배포에서는 이미지에 든 `default.conf` 가 그대로
+# 쓰인다 — 안 펴 두면 그것이 nginx 의 환영 페이지다.
+#
+# 읽기 전용 루트로 돌린다면 `/etc/nginx/conf.d` 도 쓸 수 있는 자리(emptyDir·
+# tmpfs)여야 한다. 진입점이 거기에 쓰지 못하면 컨테이너가 기동하지 않는다
+# (재어 봤다). `/var/cache/nginx`·`/run` 과 같은 처지다.
+RUN envsubst '${IEUM_API_UPSTREAM}' \
+        < /etc/nginx/templates/default.conf.template \
+        > /etc/nginx/conf.d/default.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 # `default.conf` 의 server 블록이 여기를 `include` 한다. 배포가 자기 자리를
 # 덧붙이는 칸이다(번들 MinIO 를 같은 오리진에 붙이는 설치본이 쓴다). 비어

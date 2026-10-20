@@ -8,7 +8,81 @@ initContainer 가 아닌 이유: 파드 수만큼 동시에 `alembic upgrade` �
 
 `helm upgrade` 에서도 도는 이유: 새 코드가 옛 스키마 위에서 뜨면 조용히
 틀린다 — 없는 열을 읽거나, 있어야 할 제약이 없다.
+
+**이 Job 이 읽는 설정·비밀·서비스 어카운트는 훅 전용 사본이다.**
+
+훅은 일반 리소스보다 **먼저** 만들어진다. `pre-install` 시점에는 차트의
+`-config`·`-secrets`·서비스 어카운트가 아직 없어서, 그것들을 가리키던 동안
+첫 `helm install` 은 Job 파드가 영영 못 떴다(설정이 없으면
+`CreateContainerConfigError`, 서비스 어카운트가 없으면 파드 생성 거절). 그
+사이 Helm 은 Job 이 끝나기를 기다리다 시간 초과로 설치를 실패시키고, 일반
+리소스는 끝내 만들어지지 않는다 — 서로를 기다린다.
+
+고를 수 있던 길과 고르지 않은 이유:
+
+- **본 ConfigMap·Secret 자체를 훅으로 만든다** — 훅 리소스는 Helm 이 릴리스
+  리소스로 다루지 않는다. `helm uninstall` 이 안 지우고, `before-hook-creation`
+  이 판을 올릴 때마다 **지웠다가 다시 만든다** — 그 틈에 재시작한 앱 파드는
+  설정을 못 찾는다.
+- **훅 가중치만 낮춘다** — 일반 리소스는 가중치와 상관없이 `pre-install`
+  훅이 다 끝난 **뒤에** 만들어진다. 순서로는 못 푼다.
+- **훅 전용 사본을 더 낮은 가중치로 먼저 만든다 (이것)** — 본 리소스는 그대로
+  릴리스 리소스로 남고, 사본은 같은 helper(`ieum.configData`·`ieum.secretData`)
+  로 펴서 내용이 갈리지 않는다. `pre-upgrade` 에서도 **이번 판의 값**으로
+  돌아간다는 덤이 있다 — 본 리소스를 가리키면 마이그레이션이 옛 값(옛 DB
+  주소)으로 돈다. 성공하면 사본은 지운다(`hook-succeeded`). 실패하면 Job 과
+  함께 남고, 다음 시도가 `before-hook-creation` 으로 갈아 끼운다.
+
+`existingSecret` 은 차트 밖에서 이미 만들어져 있으므로 사본을 안 만들고 그대로
+가리킨다. `serviceAccount.create: false` 도 같은 이유로 이미 있는 것을 쓴다.
 */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ieum.fullname" . }}-migrate-config
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+data:
+  {{- include "ieum.configData" . | trim | nindent 2 }}
+---
+{{- if not .Values.secrets.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "ieum.migrateSecretName" . }}
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+type: Opaque
+stringData:
+  {{- include "ieum.secretData" . | trim | nindent 2 }}
+---
+{{- end }}
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "ieum.migrateServiceAccountName" . }}
+  labels:
+    {{- include "ieum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+# 본 서비스 어카운트와 같다 — 마이그레이션은 쿠버네티스 API 를 안 부른다.
+automountServiceAccountToken: false
+---
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -32,7 +106,7 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "ieum.serviceAccountName" . }}
+      serviceAccountName: {{ include "ieum.migrateServiceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -47,10 +121,10 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
           env:
-            {{- include "ieum.env" . | nindent 12 }}
+            {{- include "ieum.envFor" (dict "root" . "secretName" (include "ieum.migrateSecretName" .)) | nindent 12 }}
           envFrom:
             - configMapRef:
-                name: {{ include "ieum.fullname" . }}-config
+                name: {{ include "ieum.fullname" . }}-migrate-config
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -103,6 +177,26 @@ spec:
           command: ["python", "-m", "ieum.cli", "seed"]
           env:
             {{- include "ieum.env" . | nindent 12 }}
+            # **첫 관리자.** 시드는 이 둘을 `os.getenv` 로 본다. 차트가 이것을
+            # 안 넘기던 동안 첫 설치는 관리자 없이 끝났다 — 시드가 "비밀번호가
+            # 없다" 고 로그 한 줄만 남기고 지나가서, 아무도 로그인할 수 없었다.
+            # 이 Job 에만 준다. 앱·워커는 이 값이 필요 없다.
+            #
+            # `config.extra`·`secrets.extra` 로 이미 넘기던 설치는 그 값을 덮지
+            # 않는다 — 메일 주소가 바뀌면 시드는 **관리자를 하나 더** 만든다.
+            {{- with .Values.seed.adminEmail }}
+            - name: SEED_ADMIN_EMAIL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if not (hasKey .Values.secrets.extra "SEED_ADMIN_PASSWORD") }}
+            - name: SEED_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ieum.secretName" . }}
+                  key: SEED_ADMIN_PASSWORD
+                  # 관리자가 이미 있거나 SSO 로만 들어오는 설치는 없어도 된다.
+                  optional: true
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "ieum.fullname" . }}-config
