@@ -94,7 +94,12 @@ async def drain_outbox() -> int:
         if not rows:
             return 0
 
-        handler_ctx = HandlerContext(session=session, settings=settings)
+        # 권한 서비스를 **명시해서** 넘긴다. 알림이 워처마다 대상을 아직 볼 수
+        # 있는지 다시 묻는데, 기동 배선(`worker.settings.startup`)이 꽂은 것과
+        # 같은 관문(보안 레벨·문서 제한)을 써야 한다.
+        handler_ctx = HandlerContext(
+            session=session, settings=settings, permissions=get_permission_service()
+        )
         identity_ctx = IdentityContext(session=session, settings=settings)
         desk_ctx = OutboundContext(session=session, settings=settings)
         for row in rows:
@@ -107,6 +112,13 @@ async def drain_outbox() -> int:
                 aggregate_id=row.aggregate_id,
                 payload=dict(row.payload),
             )
+            # **이 이벤트의 것은 따로 모은다.** 세이브포인트 안에서 바깥 목록에
+            # 바로 붙이면, 뒤 핸들러가 터져 세이브포인트가 되돌아가도 앞에서
+            # 모은 메일은 목록에 남아 발송된다 — 그리고 이벤트는 재시도되어 같은
+            # 메일을 **또** 모은다. 고객은 같은 회신을 재시도 횟수만큼 받는다.
+            # 세이브포인트가 성공한 뒤에만 바깥으로 넘긴다.
+            event_notifications: list[Any] = []
+            event_mail: list[Mail] = []
             try:
                 # **세이브포인트로 감싼다.** 한 건이 DB 오류로 죽으면 그 세션은
                 # 못 쓰는 상태가 되고, 아래 `except` 가 적으려는 `attempts` 도
@@ -116,15 +128,15 @@ async def drain_outbox() -> int:
                 # (`MAX_ATTEMPTS`)이 영원히 안 걸린다. 세이브포인트는 그 한
                 # 건만 되돌리고 바깥 트랜잭션을 살려 둔다.
                 async with session.begin_nested():
-                    notification_ids.extend(await handle_issue_event(handler_ctx, envelope))
-                    notification_ids.extend(await handle_page_event(handler_ctx, envelope))
-                    standalone.extend(await collect_invite_mail(identity_ctx, envelope))
+                    event_notifications.extend(await handle_issue_event(handler_ctx, envelope))
+                    event_notifications.extend(await handle_page_event(handler_ctx, envelope))
+                    event_mail.extend(await collect_invite_mail(identity_ctx, envelope))
                     # 메일 채널의 회신 (C6). 알림과 따로 나가는 이유: 받는 사람이
                     # 우리 사용자가 아니라 **고객**이고, 인앱 알림을 볼 수 없다.
-                    standalone.extend(await collect_reply_mail(desk_ctx, envelope))
+                    event_mail.extend(await collect_reply_mail(desk_ctx, envelope))
                     # 만족도 조사 (C11). 회신과 같은 자리에서 모은다 — 받는 사람이
                     # 우리 사용자가 아니라 고객이고, 인앱 알림을 볼 수 없다.
-                    standalone.extend(
+                    event_mail.extend(
                         await collect_survey_mail(
                             SurveyContext(session=session, settings=settings), envelope
                         )
@@ -149,6 +161,8 @@ async def drain_outbox() -> int:
                     error=row.last_error,
                 )
                 continue
+            notification_ids.extend(event_notifications)
+            standalone.extend(event_mail)
 
             # 모듈이 스스로 등록한 구독자도 돌린다.
             await dispatch(session, row)

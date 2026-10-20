@@ -30,6 +30,15 @@ DaySpans = tuple[tuple[time, time], ...]
 #: 요일 → 구간들. 월요일이 0 이다(`date.weekday()`).
 WEEKDAYS = (0, 1, 2, 3, 4, 5, 6)
 
+#: 구간의 끝으로 적은 `"24:00"` — **그날 자정 직전이 아니라 다음 날 0시**다.
+#:
+#: `time` 은 24:00 을 담지 못한다. `23:59` 로 적게 두면 하루에 1분씩 업무
+#: 시간이 비고(24시간 창구가 하루 23시간 59분이 된다), 그 1분이 밤마다 SLA 를
+#: 깎는다. 그래서 `time.max` 를 표지로 쓰고 창을 만들 때(`_windows`) 다음 날
+#: 자정으로 바꾼다. `"%H:%M"` 으로 읽은 값은 23:59 를 넘지 않으므로 다른 값과
+#: 헷갈리지 않는다.
+END_OF_DAY = time.max
+
 
 class CalendarError(ValueError):
     """달력 정의가 성립하지 않는다."""
@@ -84,8 +93,8 @@ class BusinessCalendar:
         return self.week.get(day.weekday(), ())
 
 
-def _local(moment: datetime, tz: ZoneInfo) -> datetime:
-    """UTC 시각을 달력의 현지 시각으로. **naive 를 받지 않는다.**
+def _utc(moment: datetime) -> datetime:
+    """aware 시각을 UTC 로. **naive 를 받지 않는다.**
 
     naive datetime 을 UTC 로 가정하면, 어딘가에서 현지 시각을 그대로 넘긴
     순간 조용히 시차만큼 틀린 답이 나온다. 그 종류는 며칠 뒤에 "SLA 가 이상
@@ -93,20 +102,27 @@ def _local(moment: datetime, tz: ZoneInfo) -> datetime:
     """
     if moment.tzinfo is None:
         raise CalendarError("timezone 없는 시각은 받지 않는다")
-    return moment.astimezone(tz)
+    return moment.astimezone(UTC)
 
 
 def _windows(calendar: BusinessCalendar, day: date) -> list[tuple[datetime, datetime]]:
-    """이 현지 날짜의 업무 구간을 현지 aware datetime 쌍으로."""
+    """이 현지 날짜의 업무 구간을 **UTC** aware datetime 쌍으로.
+
+    **빼기·더하기·비교는 전부 UTC 에서 한다.** 파이썬은 tzinfo 가 같은 두
+    aware 시각을 벽시계로 뺀다 — 현지 시각끼리 빼면 여름 시간이 시작하는 날의
+    01:00~04:00 이 실제로는 두 시간인데 세 시간으로 세어지고, 더할 때도 사라진
+    한 시간만큼 목표가 앞당겨졌다. 구간의 **경계**만 현지 벽시계로 정하고(그것이
+    "9시에 연다" 의 뜻이다), 길이는 실제로 흐른 초로 잰다.
+    """
     tz = calendar.tz
     out: list[tuple[datetime, datetime]] = []
     for start, end in calendar.spans_on(day):
-        out.append(
-            (
-                datetime.combine(day, start, tzinfo=tz),
-                datetime.combine(day, end, tzinfo=tz),
-            )
-        )
+        opens = datetime.combine(day, start, tzinfo=tz)
+        if end == END_OF_DAY:
+            closes = datetime.combine(day + timedelta(days=1), time(0), tzinfo=tz)
+        else:
+            closes = datetime.combine(day, end, tzinfo=tz)
+        out.append((opens.astimezone(UTC), closes.astimezone(UTC)))
     return out
 
 
@@ -126,15 +142,17 @@ def working_seconds_between(calendar: BusinessCalendar, start: datetime, end: da
     # `CalendarError` 로 거절하려던 자리를 지나쳐 버린 것이다. 그러면 부르는
     # 쪽은 "달력 정의가 틀렸다" 가 아니라 알 수 없는 타입 오류를 본다.
     tz = calendar.tz
-    a = _local(start, tz)
-    b = _local(end, tz)
+    a = _utc(start)
+    b = _utc(end)
     if b <= a:
         return 0
 
     total = 0
-    day = a.date()
+    # 훑는 날은 **현지 날짜**다. 업무 구간과 휴일이 현지 날짜에 걸려 있다.
+    day = a.astimezone(tz).date()
+    last = b.astimezone(tz).date()
     for _ in range(MAX_DAYS):
-        if day > b.date():
+        if day > last:
             break
         for window_start, window_end in _windows(calendar, day):
             lo = max(window_start, a)
@@ -157,10 +175,10 @@ def add_working_seconds(calendar: BusinessCalendar, start: datetime, seconds: in
     if seconds < 0:
         raise CalendarError("음수 업무 초는 받지 않는다")
     tz = calendar.tz
-    cursor = _local(start, tz)
+    cursor = _utc(start)
     remaining = seconds
 
-    day = cursor.date()
+    day = cursor.astimezone(tz).date()
     for _ in range(MAX_DAYS):
         for window_start, window_end in _windows(calendar, day):
             if window_end <= cursor:
@@ -169,9 +187,9 @@ def add_working_seconds(calendar: BusinessCalendar, start: datetime, seconds: in
             available = int((window_end - lo).total_seconds())
             if remaining == 0:
                 # 다음 업무 시각이 곧 답이다.
-                return lo.astimezone(UTC)
+                return lo
             if available >= remaining:
-                return (lo + timedelta(seconds=remaining)).astimezone(UTC)
+                return lo + timedelta(seconds=remaining)
             remaining -= available
         day += timedelta(days=1)
     raise CalendarError("목표 시각 계산이 상한을 넘었다")

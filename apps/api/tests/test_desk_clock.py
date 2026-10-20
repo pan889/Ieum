@@ -22,11 +22,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ieum.core.events import EventEnvelope
 from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, set_permission_service
 from ieum.core.time import utcnow
@@ -242,6 +244,77 @@ class TestFinishingTheFirstResponse:
 
         assert (
             await desk_clock.on_comment(session, issue.id, actor_id=customer.id, is_internal=False)
+            == 0
+        )
+        row = await _clock(session, issue, policy)
+        assert row is not None and row.completed_at is None
+
+    async def test_the_customers_mail_reply_does_not(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**메일 티켓에는 요청자 계정이 없다.**
+
+        `reporter_customer_id` 는 비어 있고, 메일로 온 회신의 행위자는 nil
+        UUID 다(게스트 액터). 요청자 id 만 비교하던 때는 고객이 메일로 한 번
+        더 묻자 첫 응답 SLA 가 끝났다 — 상담원은 아직 아무 말도 안 했는데.
+        """
+        project, issue, _ = await _ticket(session)
+        ticket = await session.get(TicketExt, issue.id)
+        assert ticket is not None
+        ticket.reporter_customer_id = None
+        ticket.guest_email = "hong@school.example"
+        ticket.channel = "email"
+        await session.flush()
+        policy = await _policy(session, project, metric="first_response")
+        await desk_clock.start_clocks(session, issue.id)
+
+        assert (
+            await desk_clock.on_comment(session, issue.id, actor_id=UUID(int=0), is_internal=False)
+            == 0
+        )
+        row = await _clock(session, issue, policy)
+        assert row is not None and row.completed_at is None
+
+    async def test_an_automated_reply_does_not(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """규칙이 "접수했습니다" 를 공개로 달자마자 첫 응답이 끝나면, 사람이
+        아무도 안 본 티켓이 SLA 를 지킨다. **워커가 넘기는 모양 그대로** 본다 —
+        이벤트의 `automated` 가 판정까지 닿아야 한다."""
+        project, issue, _ = await _ticket(session)
+        policy = await _policy(session, project, metric="first_response")
+        await desk_clock.start_clocks(session, issue.id)
+
+        envelope = EventEnvelope(
+            id=new_id(),
+            event_type="issue.commented",
+            aggregate_type="issue",
+            aggregate_id=issue.id,
+            payload={"actor_id": str(UUID(int=0)), "is_internal": False, "automated": True},
+        )
+        assert await desk_clock.handle_desk_event(desk_clock.ClockContext(session), envelope) == 0
+        row = await _clock(session, issue, policy)
+        assert row is not None and row.completed_at is None
+
+    async def test_a_colleague_of_the_customer_does_not(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """같은 조직의 다른 고객이 포털에서 답해도 고객 쪽이다. 요청자 본인만
+        빼면 동료가 "저도 그래요" 를 남기는 순간 SLA 가 끝난다."""
+        project, issue, _ = await _ticket(session)
+        policy = await _policy(session, project, metric="first_response")
+        await desk_clock.start_clocks(session, issue.id)
+        colleague = User(
+            email=f"c-{new_id()}@example.com",
+            display_name="동료",
+            status="active",
+            is_customer=True,
+        )
+        session.add(colleague)
+        await session.flush()
+
+        assert (
+            await desk_clock.on_comment(session, issue.id, actor_id=colleague.id, is_internal=False)
             == 0
         )
         row = await _clock(session, issue, policy)
@@ -681,6 +754,66 @@ class TestEscalation:
         )
         done = await desk_clock.sweep_escalations(session)
         assert [item.rule.at_percent for item in done] == [50, 100]
+
+    async def test_finished_clocks_do_not_crowd_out_a_new_one(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**규칙을 다 돌린 클럭이 상한만큼 쌓이면 새 클럭이 영원히 안 돌았다.**
+
+        위반한 채 열려 있는 티켓은 규칙을 다 돌린 뒤에도 "안 끝나고 안 멈춘"
+        클럭이다. 스윕은 `target_at` 순으로 상한(200)만큼 집으므로 그런
+        클럭이 늘 맨 앞에 오고, 그것이 상한만큼 쌓인 날부터 스윕은 할 일 없는
+        묶음만 읽고 끝났다. 상한을 작게 주어 그 날을 만든다.
+        """
+        who = await _person(session)
+        rules = [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}]
+        for _ in range(3):
+            # 오래전에 위반했고 규칙은 이미 돌았다. 목표가 더 과거라 맨 앞에 온다.
+            _, _, old = await self._overdue(session, rules, consumed_ratio=5.0)
+            old.escalated = ["100:notify"]
+        await session.flush()
+        issue, _, _ = await self._overdue(session, rules, consumed_ratio=1.5)
+
+        done = await desk_clock.sweep_escalations(session, limit=2)
+        assert [item.clock.issue_id for item in done] == [issue.id]
+
+    async def test_clocks_without_a_recorded_goal_do_not_crowd_out_a_new_one(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """목표 컬럼이 생기기 전에 걸린 클럭(`goal_seconds = 0`)은 소비율이 늘
+        0 이라 어떤 규칙도 안 걸린다. 그런 클럭도 묶음의 자리를 차지하면 안
+        된다."""
+        who = await _person(session)
+        rules = [{"at_percent": 100, "action": "notify", "user_id": str(who.id)}]
+        for _ in range(3):
+            _, _, legacy = await self._overdue(session, rules, consumed_ratio=5.0)
+            legacy.goal_seconds = 0
+        await session.flush()
+        issue, _, _ = await self._overdue(session, rules, consumed_ratio=1.5)
+
+        done = await desk_clock.sweep_escalations(session, limit=2)
+        assert [item.clock.issue_id for item in done] == [issue.id]
+
+    async def test_a_clock_with_a_rule_still_to_come_is_still_looked_at(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """빼는 것은 **할 일이 하나도 안 남은** 클럭뿐이다. 75% 를 돌린 클럭은
+        100% 가 남아 있으므로 계속 집혀야 한다."""
+        who = await _person(session)
+        _, _, clock = await self._overdue(
+            session,
+            [
+                {"at_percent": 75, "action": "notify", "user_id": str(who.id)},
+                {"at_percent": 100, "action": "raise_priority", "priority": 5},
+            ],
+            consumed_ratio=1.5,
+        )
+        clock.escalated = ["75:notify"]
+        await session.flush()
+
+        done = await desk_clock.sweep_escalations(session)
+        assert [item.rule.key for item in done] == ["100:raise_priority"]
+        assert clock.escalated == ["75:notify", "100:raise_priority"]
 
     async def test_a_policy_without_rules_is_not_even_looked_at(
         self, session: AsyncSession, permissions: PermissionService

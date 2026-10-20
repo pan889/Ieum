@@ -34,7 +34,6 @@ from ieum.modules.desk import approvals
 from ieum.modules.desk.email import ParsedEmail, ticket_key_in
 from ieum.modules.desk.events import TicketSubmitted
 from ieum.modules.desk.models import EmailChannel, EmailMessage, RequestType, TicketExt
-from ieum.modules.desk.repository import CustomerOrganizationRepository
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
 
@@ -229,15 +228,16 @@ async def _create_ticket(
     **계정이 있는 주소라도 그 계정의 티켓으로 만들지 않는다.** 메일의 From 은
     검증되지 않은 값이고(SPF 가 있어도 우리가 판정하지 않는다), 증명 없이 남의
     이름으로 티켓을 만드는 일이 된다 — 게스트 제출과 같은 판단이다.
+
+    **고객 조직에도 붙이지 않는다.** 같은 판단이다: 조직은 그 조직 사람들이
+    포털에서 티켓을 읽는 근거라, From 의 도메인만 보고 붙이면 아무나 남의
+    조직의 요청 목록에 글을 꽂아 넣는다 (`service.submit_as_guest`).
     """
     request_type = await session.get(RequestType, channel.default_request_type_id)
     if request_type is None:
         raise ValueError("채널의 요청 유형이 없다")
 
     summary = (parsed.subject.strip() or NO_SUBJECT)[:SUMMARY_LIMIT]
-    organization = await CustomerOrganizationRepository(session).find_by_domain(
-        parsed.from_email.rpartition("@")[2]
-    )
     issue = await issues.create_ticket(
         session,
         permissions,
@@ -257,7 +257,7 @@ async def _create_ticket(
             guest_email=parsed.from_email,
             guest_name=parsed.from_name.strip(),
             channel="email",
-            organization_id=organization.id if organization else None,
+            organization_id=None,
         )
     )
     await session.flush()
@@ -277,7 +277,6 @@ async def _create_ticket(
             issue_key=issue.key,
             request_type_id=request_type.id,
             guest_email=parsed.from_email,
-            organization_id=organization.id if organization else None,
         ),
     )
     return issue.id

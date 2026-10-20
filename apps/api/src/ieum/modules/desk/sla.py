@@ -15,10 +15,12 @@ from datetime import UTC, date, datetime, time
 from typing import Any
 from uuid import UUID
 
-from ieum.modules.desk.calendar import BusinessCalendar, CalendarError
+from ieum.modules.desk.calendar import END_OF_DAY, BusinessCalendar, CalendarError
 
 #: 하루의 업무 구간 문자열을 `time` 으로 읽는 형식.
 _TIME = "%H:%M"
+#: 구간의 **끝**에만 쓸 수 있는 "하루의 끝". `strptime` 은 24 시를 읽지 못한다.
+_MIDNIGHT_END = "24:00"
 
 
 def parse_calendar(*, timezone: str, working_hours: Any, holidays: Any) -> BusinessCalendar:
@@ -42,12 +44,7 @@ def parse_calendar(*, timezone: str, working_hours: Any, holidays: Any) -> Busin
             if not (isinstance(span, list) and len(span) == 2):
                 raise CalendarError(f"{day} 요일의 구간은 [시작, 끝] 이어야 한다")
             try:
-                spans.append(
-                    (
-                        datetime.strptime(str(span[0]), _TIME).time(),
-                        datetime.strptime(str(span[1]), _TIME).time(),
-                    )
-                )
+                spans.append((_read_time(span[0]), _read_time(span[1], end=True)))
             except ValueError as exc:
                 raise CalendarError(f"시각을 읽을 수 없다: {span!r}") from exc
         week[day] = tuple(spans)
@@ -62,6 +59,19 @@ def parse_calendar(*, timezone: str, working_hours: Any, holidays: Any) -> Busin
             raise CalendarError(f"휴일 날짜를 읽을 수 없다: {raw!r}") from exc
 
     return BusinessCalendar(timezone=timezone, week=week, holidays=frozenset(days))
+
+
+def _read_time(raw: Any, *, end: bool = False) -> time:
+    """`"09:00"` 을 `time` 으로. 끝 자리의 `"24:00"` 은 하루의 끝이다.
+
+    **"24:00" 을 받는다.** 24시간 창구는 `00:00~24:00` 으로 적는 것이 자연스럽고,
+    거절하면 관리자는 `23:59` 로 적는다 — 그러면 하루에 1분씩 업무 시간이 빈다.
+    시작 자리의 "24:00" 은 뜻이 없으므로 그대로 거절된다.
+    """
+    text = str(raw)
+    if end and text == _MIDNIGHT_END:
+        return END_OF_DAY
+    return datetime.strptime(text, _TIME).time()
 
 
 @dataclass(frozen=True, slots=True)

@@ -128,6 +128,21 @@ class TestSavingACalendar:
         assert view.calendar.timezone == "Asia/Seoul"
         assert view.calendar.holidays == ["2026-09-08"]
 
+    async def test_a_round_the_clock_calendar_saves(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """`00:00-24:00` 은 저장되어야 한다. 화면도 `HH:MM` 이면 받는데 서버만
+        거절해서, 24시간 창구를 만들 방법이 `23:59`(매일 1분이 빈다)뿐이었다."""
+        admin = await _admin(session)
+        view = await SlaAdminService(session, permissions).create_calendar(
+            actor_for(admin),
+            name=f"24h {new_id().hex[-4:]}",
+            timezone="Asia/Seoul",
+            working_hours={str(day): [["00:00", "24:00"]] for day in range(7)},
+            holidays=[],
+        )
+        assert view.calendar.working_hours["0"] == [["00:00", "24:00"]]
+
     @pytest.mark.parametrize(
         "hours",
         [

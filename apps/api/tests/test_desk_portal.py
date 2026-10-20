@@ -928,15 +928,25 @@ class TestCustomerOrganizations:
 
 
 class TestGuestOrganization:
-    async def test_a_guest_lands_in_the_organization_that_claims_the_domain(
+    """**게스트는 도메인으로 조직에 붙지 않는다.**
+
+    예전 시험은 "도메인을 주장하는 조직에 게스트가 들어간다" 를 붙잡았다. 그런데
+    티켓의 조직은 그 조직 사람들이 포털에서 티켓을 읽는 근거이고
+    (`get_my_ticket`·`list_my_tickets`), 게스트 주소는 검증하지 않는다 — 아무나
+    `누구든@hanbit.example.com` 을 적어 한빛초 교사 전원의 요청 목록에 글을 꽂을
+    수 있었다. 이 파일의 다른 시험(`test_the_domain_only_suggests`)과 계약
+    (`organization_for_email`)이 이미 말하는 원칙 — "도메인은 제안이고 가시성의
+    근거는 사람이 확인한 소속이다" — 과도 어긋났다. 그래서 의도를 뒤집지 않고
+    **증명된 길에서만** 붙는 것으로 고쳐 붙잡는다.
+    """
+
+    async def test_a_guest_does_not_land_in_the_organization_that_claims_the_domain(
         self, session: AsyncSession, permissions: PermissionService, settings: Settings
     ) -> None:
         admin = await _customer_admin(session)
-        org = (
-            await CustomerOrgService(session, permissions, settings).create(
-                actor_for(admin), name="한빛초", domains=["hanbit.example.com"], note=None
-            )
-        ).organization
+        await CustomerOrgService(session, permissions, settings).create(
+            actor_for(admin), name="한빛초", domains=["hanbit.example.com"], note=None
+        )
         _, _, _, request_type = await _portal_with_form(
             session, permissions, slug="bydomain", is_public=True
         )
@@ -947,7 +957,60 @@ class TestGuestOrganization:
             name="교사",
             answers={"summary": "프린터"},
         )
-        assert view.ticket.organization_id == org.id
+        assert view.ticket.organization_id is None
+
+    async def test_the_claimed_organization_cannot_read_a_guests_ticket(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """붙지 않으니 그 조직의 고객은 게스트가 꽂은 글을 못 본다 — 이것이
+        막으려는 일이다."""
+        admin = await _customer_admin(session)
+        orgs = CustomerOrgService(session, permissions, settings)
+        school = (
+            await orgs.create(
+                actor_for(admin), name="한빛초", domains=["hanbit.example.com"], note=None
+            )
+        ).organization
+        teacher = await _person(session, customer=True)
+        await orgs.add_member(actor_for(admin), school.id, user_id=teacher.id)
+        _, _, _, request_type = await _portal_with_form(
+            session, permissions, slug="planted", is_public=True
+        )
+        service = CustomerPortalService(session, permissions)
+        planted = await service.submit_as_guest(
+            "planted",
+            request_type_id=request_type.id,  # type: ignore[attr-defined]
+            email="principal@hanbit.example.com",
+            name="교장(을 사칭)",
+            answers={"summary": "비밀번호를 여기서 다시 입력하세요"},
+        )
+
+        page = await service.list_my_tickets(
+            _customer_actor(teacher), "planted", PageRequest(limit=50)
+        )
+        assert planted.issue.id not in [v.issue.id for v in page.items]
+        with pytest.raises(NotFoundError):
+            await service.get_my_ticket(_customer_actor(teacher), "planted", planted.issue.id)
+
+    async def test_a_signed_in_customer_still_lands_in_their_organization(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """증명된 길 — 로그인한 고객의 **소속 행** — 은 그대로 붙는다."""
+        admin = await _customer_admin(session)
+        orgs = CustomerOrgService(session, permissions, settings)
+        school = (
+            await orgs.create(actor_for(admin), name="한빛초", domains=[], note=None)
+        ).organization
+        teacher = await _person(session, customer=True)
+        await orgs.add_member(actor_for(admin), school.id, user_id=teacher.id)
+        _, _, _, request_type = await _portal_with_form(session, permissions, slug="member")
+        view = await CustomerPortalService(session, permissions).submit(
+            _customer_actor(teacher),
+            "member",
+            request_type_id=request_type.id,  # type: ignore[attr-defined]
+            answers={"summary": "프린터"},
+        )
+        assert view.ticket.organization_id == school.id
 
     async def test_an_unclaimed_domain_lands_nowhere(
         self, session: AsyncSession, permissions: PermissionService

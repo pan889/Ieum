@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from ieum.modules.desk.calendar import BusinessCalendar, CalendarError
+from ieum.modules.desk.calendar import END_OF_DAY, BusinessCalendar, CalendarError
 from ieum.modules.desk.sla import (
     SlaError,
     TicketFacts,
@@ -69,9 +69,20 @@ class TestReadingAStoredCalendar:
         # 휴일은 현지 날짜다.
         assert calendar.spans_on(seoul("2026-09-08 00:00").date()) == ()
 
+    def test_twenty_four_hundred_is_the_end_of_the_day(self) -> None:
+        """**`24:00` 을 받는다.** 거절하면 관리자는 `23:59` 로 적고, 그러면
+        24시간 창구가 매일 1분씩 닫힌다."""
+        calendar = parse_calendar(
+            timezone="Asia/Seoul", working_hours={"0": [["00:00", "24:00"]]}, holidays=[]
+        )
+        assert calendar.spans_on(seoul("2026-09-07 00:00").date()) == ((time(0, 0), END_OF_DAY),)
+
     @pytest.mark.parametrize(
         "working_hours,holidays",
         [
+            # `24:00` 은 끝 자리에만 뜻이 있다.
+            ({"0": [["24:00", "24:00"]]}, []),
+            ({"0": [["09:00", "24:01"]]}, []),
             ("not a dict", []),
             ({"월": [["09:00", "18:00"]]}, []),
             ({"0": "not a list"}, []),

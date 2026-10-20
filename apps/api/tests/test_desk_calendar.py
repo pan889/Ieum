@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from ieum.modules.desk.calendar import (
+    END_OF_DAY,
     BusinessCalendar,
     CalendarError,
     add_working_seconds,
@@ -214,6 +215,127 @@ class TestDaylightSaving:
         """금요일 09:00 + 16시간 = 다음 월요일 17:00 — 그 사이에 전환이 있다."""
         target = add_working_seconds(self.BERLIN, self.berlin("2026-03-27 09:00"), 16 * HOUR)
         assert target == self.berlin("2026-03-30 17:00").astimezone(UTC)
+
+
+class TestDaylightSavingInAZoneThatJumpsAtNight:
+    """**여름 시간이 시작·끝나는 날의 시간을 벽시계로 셌다.**
+
+    파이썬은 tzinfo 가 같은 두 aware 시각을 벽시계로 뺀다. 업무 구간을 현지
+    시각으로 만들어 빼고 더했더니, 뉴욕에서 02:00 이 03:00 으로 건너뛰는 날의
+    24시간 창구가 24시간으로 세어졌고(실제로는 23시간), 목표 시각은 사라진 한
+    시간만큼 앞당겨졌다. 위의 베를린 시험은 업무 시간(09~17시)이 전환 시각을
+    비껴가서 이것을 잡지 못했다.
+
+    2026년 뉴욕: 3월 8일(일) 02:00 → 03:00, 11월 1일(일) 02:00 → 01:00.
+    """
+
+    ALWAYS = BusinessCalendar(
+        timezone="America/New_York",
+        week={day: ((time(0, 0), END_OF_DAY),) for day in range(7)},
+    )
+    #: 일요일 새벽 01:00~04:00 만 연다. 전환이 구간 한가운데에 있다.
+    NIGHT = BusinessCalendar(
+        timezone="America/New_York",
+        week={6: ((time(1, 0), time(4, 0)),)},
+    )
+
+    def new_york(self, text: str) -> datetime:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M").replace(
+            tzinfo=ZoneInfo("America/New_York")
+        )
+
+    def test_the_spring_forward_day_has_twenty_three_hours(self) -> None:
+        assert (
+            working_seconds_between(
+                self.ALWAYS, self.new_york("2026-03-08 00:00"), self.new_york("2026-03-09 00:00")
+            )
+            == 23 * HOUR
+        )
+
+    def test_the_fall_back_day_has_twenty_five_hours(self) -> None:
+        assert (
+            working_seconds_between(
+                self.ALWAYS, self.new_york("2026-11-01 00:00"), self.new_york("2026-11-02 00:00")
+            )
+            == 25 * HOUR
+        )
+
+    def test_a_window_across_the_jump_is_two_real_hours(self) -> None:
+        """01:00 EST ~ 04:00 EDT 는 벽시계로 세 시간, 실제로는 두 시간이다."""
+        assert (
+            working_seconds_between(
+                self.NIGHT, self.new_york("2026-03-08 00:00"), self.new_york("2026-03-09 00:00")
+            )
+            == 2 * HOUR
+        )
+
+    def test_the_target_counts_real_hours_across_the_jump(self) -> None:
+        """자정(EST, 05:00 UTC)에서 업무 세 시간이면 08:00 UTC — 현지로는
+        04:00 EDT 다. 벽시계로 더하면 03:00 EDT(07:00 UTC)가 나와, 약속이 실제로
+        두 시간이 된다."""
+        target = add_working_seconds(self.ALWAYS, self.new_york("2026-03-08 00:00"), 3 * HOUR)
+        assert target == datetime(2026, 3, 8, 8, 0, tzinfo=UTC)
+
+    def test_the_target_inside_a_window_across_the_jump(self) -> None:
+        """구간의 두 시간을 다 쓰면 구간의 끝(04:00 EDT = 08:00 UTC)이다.
+        한 시간을 더 쓰면 다음 주 일요일 02:00 EST(07:00 UTC)다."""
+        start = self.new_york("2026-03-08 01:00")
+        assert add_working_seconds(self.NIGHT, start, 2 * HOUR) == datetime(
+            2026, 3, 8, 8, 0, tzinfo=UTC
+        )
+        assert add_working_seconds(self.NIGHT, start, 3 * HOUR) == datetime(
+            2026, 3, 15, 6, 0, tzinfo=UTC
+        )
+
+    def test_the_two_functions_stay_inverses_across_the_jump(self) -> None:
+        start = self.new_york("2026-03-07 22:00")
+        target = add_working_seconds(self.ALWAYS, start, 10 * HOUR)
+        assert working_seconds_between(self.ALWAYS, start, target) == 10 * HOUR
+
+
+class TestTheEndOfTheDay:
+    """`24:00` 은 **다음 날 0시**다. `23:59` 로 적게 두면 24시간 창구가 매일
+    1분씩 문을 닫는다."""
+
+    ALWAYS = BusinessCalendar(
+        timezone="Asia/Seoul",
+        week={day: ((time(0, 0), END_OF_DAY),) for day in range(7)},
+    )
+
+    def test_a_whole_day_is_twenty_four_hours(self) -> None:
+        assert (
+            working_seconds_between(
+                self.ALWAYS, seoul("2026-09-07 00:00"), seoul("2026-09-08 00:00")
+            )
+            == 24 * HOUR
+        )
+
+    def test_midnight_is_not_a_gap(self) -> None:
+        """자정을 넘는 두 시간도 두 시간이다."""
+        assert (
+            working_seconds_between(
+                self.ALWAYS, seoul("2026-09-07 23:00"), seoul("2026-09-08 01:00")
+            )
+            == 2 * HOUR
+        )
+        assert add_working_seconds(self.ALWAYS, seoul("2026-09-07 23:00"), 2 * HOUR) == seoul(
+            "2026-09-08 01:00"
+        ).astimezone(UTC)
+
+    def test_an_evening_span_can_run_to_midnight(self) -> None:
+        evening = BusinessCalendar(timezone="Asia/Seoul", week={0: ((time(18, 0), END_OF_DAY),)})
+        # 2026-09-07 은 월요일.
+        assert (
+            working_seconds_between(evening, seoul("2026-09-07 00:00"), seoul("2026-09-09 00:00"))
+            == 6 * HOUR
+        )
+
+    def test_nothing_can_follow_the_end_of_the_day(self) -> None:
+        with pytest.raises(CalendarError):
+            BusinessCalendar(
+                timezone="Asia/Seoul",
+                week={0: ((time(9, 0), END_OF_DAY), (time(23, 0), time(23, 30)))},
+            )
 
 
 class TestRefusingABrokenCalendar:

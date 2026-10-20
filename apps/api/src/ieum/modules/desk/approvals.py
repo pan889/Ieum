@@ -408,7 +408,12 @@ class ApprovalService:
                 code="desk.invalid_decision",
                 details={"allowed": ", ".join(APPROVAL_DECISIONS)},
             )
-        row = await self._require(approval_id)
+        # **행을 잠그고 시작한다.** `all` 모드에서 두 승인자가 동시에 누르면,
+        # 잠그지 않을 때 각자 자기 표만 보고(상대의 표는 아직 커밋 전이다)
+        # "아직 다 안 모였다" 로 끝난다 — 전원이 승인했는데 승인은 영원히
+        # 대기에 남고, 티켓은 관문에 막힌다. 잠그면 뒤에 온 쪽이 앞의 커밋을
+        # 기다렸다가 두 표를 함께 센다.
+        row = await self._require(approval_id, for_update=True)
         if row.status != "pending":
             raise ConflictError("이미 끝난 승인이다.", code="desk.approval_closed")
         if str(actor.user_id) not in row.approver_ids:
@@ -469,7 +474,9 @@ class ApprovalService:
         명단이 비거나 요청자가 물러선 티켓은 이것 없이는 영원히 멈춘다.
         누가 열었는지 행에 남는다.
         """
-        row = await self._require(approval_id)
+        # 결정과 같은 이유로 잠근다. 안 잠그면 취소와 마지막 승인이 엇갈려
+        # 취소한 승인이 "승인됨" 으로 덮인다.
+        row = await self._require(approval_id, for_update=True)
         ref = await issues.get_issue(self._s, row.issue_id)
         if ref is None:
             raise NotFoundError("티켓을 찾을 수 없다.")
@@ -488,8 +495,15 @@ class ApprovalService:
 
     # ── 내부 ────────────────────────────────────────────────────
 
-    async def _require(self, approval_id: UUID) -> Approval:
-        row = await self._s.get(Approval, approval_id)
+    async def _require(self, approval_id: UUID, *, for_update: bool = False) -> Approval:
+        # 잠글 때는 **다시 읽는다**(`populate_existing`). 세션이 이미 들고 있는
+        # 객체는 잠금을 기다리는 동안 남이 바꾼 `status` 를 모른다.
+        row = await self._s.get(
+            Approval,
+            approval_id,
+            with_for_update=True if for_update else None,
+            populate_existing=for_update,
+        )
         if row is None:
             raise NotFoundError("승인을 찾을 수 없다.")
         return row
