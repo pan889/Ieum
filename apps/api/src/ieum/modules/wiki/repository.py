@@ -9,7 +9,7 @@ from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page as PageResult
-from ieum.core.pagination import PageRequest
+from ieum.core.pagination import PageRequest, cursor_field, text
 from ieum.core.permissions import Acl
 from ieum.modules.wiki.models import (
     Page,
@@ -66,7 +66,7 @@ class SpaceRepository:
 
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(Space.key > payload["key"])
+            stmt = stmt.where(Space.key > cursor_field(payload, "key", text))
         stmt = stmt.order_by(Space.key).limit(request.fetch_limit)
 
         rows = list((await self._s.execute(stmt)).scalars().all())
@@ -247,7 +247,7 @@ class PageRepository:
 
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(Page.id > UUID(payload["id"]))
+            stmt = stmt.where(Page.id > cursor_field(payload, "id", UUID))
         stmt = stmt.order_by(Page.id).limit(request.fetch_limit)
 
         rows = list((await self._s.execute(stmt)).scalars().all())

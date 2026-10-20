@@ -9,7 +9,7 @@ from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.context import Actor
-from ieum.core.pagination import Page, PageRequest
+from ieum.core.pagination import Page, PageRequest, cursor_field, text
 from ieum.core.permissions import Acl, Scope, ScopeKind
 from ieum.modules.org.models import (
     PermissionGrant,
@@ -105,7 +105,7 @@ class ProjectRepository:
 
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(Project.key > payload["key"])
+            stmt = stmt.where(Project.key > cursor_field(payload, "key", text))
         stmt = stmt.order_by(Project.key).limit(request.fetch_limit)
 
         rows = list((await self._s.execute(stmt)).scalars().all())

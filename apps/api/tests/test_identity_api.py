@@ -694,6 +694,24 @@ class TestCursorOverHttp:
             assert r.status_code == 422, (path, r.text)
             assert r.json()["error"]["code"] == "common.invalid_cursor"
 
+    async def test_every_cursor_list_refuses_a_broken_cursor(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """사용자·감사 목록만이 아니다. 커서를 읽는 목록마다 같은 길을 지나야
+        한다 — 한 곳이라도 `payload["id"]` 를 그대로 읽으면 그 목록이 500 이다."""
+        from ieum.core.pagination import encode_cursor
+
+        headers = _auth(await _login(app_client))
+        cases = {
+            "/projects": encode_cursor({"key": 7}),
+            "/spaces": encode_cursor({"key": ["x"]}),
+            "/notifications": encode_cursor({"id": "not-a-uuid"}),
+        }
+        for path, broken in cases.items():
+            r = await app_client.get(f"{BASE}{path}?cursor={broken}", headers=headers)
+            assert r.status_code == 422, (path, r.text)
+            assert r.json()["error"]["code"] == "common.invalid_cursor"
+
 
 class TestReinviteOverHttp:
     async def test_the_invite_mailed_before_the_reinvite_is_dead(

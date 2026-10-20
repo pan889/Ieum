@@ -20,7 +20,8 @@ from ieum.core.exceptions import (
     PermissionDeniedError,
     ValidationError,
 )
-from ieum.core.pagination import Page, PageRequest
+from ieum.core.pagination import Page, PageRequest, cursor_field
+from ieum.core.pagination import offset as offset_field
 from ieum.core.permissions import PermissionService
 from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import permissions as perms
@@ -174,11 +175,12 @@ class SearchService:
             # 같은 스냅샷에서 결정적이다. 대신 **페이지를 넘기는 사이에 앞쪽
             # 행이 늘거나 줄면 한 건을 두 번 보거나 건너뛸 수 있다** — 행을
             # 절반씩 잃는 것과는 비교가 안 된다.
-            offset = int(payload.get("offset", 0))
+            if "offset" in payload:
+                offset = cursor_field(payload, "offset", offset_field)
             stmt = stmt.offset(offset)
         elif "id" in payload:
             # 정렬이 id 하나뿐이면 id 커서가 정확하고 깊은 페이지에서도 빠르다.
-            stmt = stmt.where(Issue.id > UUID(payload["id"]))
+            stmt = stmt.where(Issue.id > cursor_field(payload, "id", UUID))
         stmt = stmt.limit(min(request.fetch_limit, MAX_RESULTS))
 
         rows = list((await self._s.execute(stmt)).scalars().all())

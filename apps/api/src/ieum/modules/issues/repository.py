@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import CursorResult, Select, delete, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.core.pagination import Page, PageRequest
+from ieum.core.pagination import Page, PageRequest, cursor_field
 from ieum.core.permissions import Acl
 from ieum.modules.issues.models import (
     FieldDefinition,
@@ -331,7 +331,7 @@ class IssueRepository:
 
         payload = request.cursor_payload
         if payload:
-            stmt = stmt.where(Issue.id > UUID(payload["id"]))
+            stmt = stmt.where(Issue.id > cursor_field(payload, "id", UUID))
         # UUIDv7 은 시간 정렬이 되므로 id 하나로 안정적인 커서가 된다.
         stmt = stmt.order_by(Issue.id).limit(request.fetch_limit)
 

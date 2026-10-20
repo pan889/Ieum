@@ -60,6 +60,20 @@ def aware_datetime(raw: Any) -> datetime:
     return parsed
 
 
+def text(raw: Any) -> str:
+    """문자열 칸. 숫자나 목록이 들어오면 SQL 에서 형 오류(500)가 된다."""
+    if not isinstance(raw, str):
+        raise TypeError("문자열이어야 한다.")
+    return raw
+
+
+def offset(raw: Any) -> int:
+    """자리 수. 음수는 Postgres 가 거절하므로(500) 여기서 막는다."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError("0 이상의 정수여야 한다.")
+    return raw
+
+
 @dataclass(frozen=True, slots=True)
 class PageRequest:
     """목록 조회 요청. limit 상한은 강제된다."""
