@@ -241,11 +241,31 @@ Postgres·Redis·S3·SMTP 는 주소만 받는다. `helm uninstall` 이 데이�
 차트로 대체되지 않는다 — 되는 것처럼 기본값을 두면 검색이 조용히 안 되는
 설치가 생긴다.
 
+### 반드시 주는 값
+
+`config.baseUrl`(사람이 치는 앱 주소), `config.webOrigins`,
+`config.s3PublicEndpointUrl`, 그리고 비밀(`secrets.existingSecret` 권장). 없으면
+배포가 실패한다. `config.baseUrl` 이 없던 동안 앱은 개발 기본값
+`http://localhost:5173` 으로 떠서 메일 링크와 SSO 의 돌아올 주소가 localhost 를
+가리켰다.
+
+앱이 스토리지를 부르는 주소(`config.s3EndpointUrl`)와 열쇠
+(`secrets.s3AccessKey`·`s3SecretKey`), 첫 관리자(`seed.adminEmail`·
+`secrets.seedAdminPassword`)도 값으로 받는다. **첫 관리자의 비밀번호를 안 주면
+관리자가 안 만들어진다.** 메일은 `config.extra`·`secrets.extra` 의 `IEUM_SMTP_*`
+로 준다. 표는 차트의 `README.md` 에 있다.
+
 ### 스키마는 훅 Job 이 올린다
 
 `pre-install,pre-upgrade` 에서 `alembic upgrade head` 가 한 번 돈다.
 initContainer 로 두면 파드 수만큼 동시에 돌아 서로 경쟁한다. 실패한 Job 은
 남긴다 — 마이그레이션 실패는 그 로그가 유일한 단서다.
+
+이 Job 은 설정·비밀·서비스 어카운트의 **훅 전용 사본**을 읽는다
+(`-migrate-config`·`-migrate-secrets`). 훅은 일반 리소스보다 먼저 만들어져서,
+차트의 본 ConfigMap·Secret 을 가리키던 동안 첫 `helm install` 이 Job 을 못
+띄우고 시간 초과로 실패했다. 사본은 성공하면 지워진다. `existingSecret` 은 이미
+있으므로 그대로 가리킨다.
 
 `post-install,post-upgrade` 에서 시드가 돈다. 새 판이 권한을 하나 더 정의했을
 때 내장 역할에 그것을 더해 주는 일이라, `upgrade` 에서도 돌아야 한다.

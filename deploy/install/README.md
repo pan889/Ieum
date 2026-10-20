@@ -8,7 +8,7 @@ sh install.sh --url https://ieum.example.com
 ```
 
 > 남이 준 스크립트를 그냥 파이프로 넘기지 말고 **한 번 열어 보는 쪽**을 권한다.
-> 280줄이고 하는 일이 다 적혀 있다. 저장소를 받아 뒀다면
+> 400줄 남짓이고 하는 일이 다 적혀 있다. 저장소를 받아 뒀다면
 > `deploy/install/install.sh` 를 그대로 쓰면 된다 — 옆의 `compose.yml` 을
 > 알아서 집는다.
 
@@ -53,6 +53,21 @@ sh install.sh --version 1.2.1
 그래서 **`compose.yml` 은 우리 것**이다. 고칠 것이 있으면 옆에
 `compose.override.yml` 을 두면 compose 가 겹쳐 읽고, 설치 스크립트는 그
 파일을 건드리지 않는다.
+
+설치 자리에서 치면 `compose.yml` 과 `install.sh` 를 **그 판의 태그에서 받아**
+갈아 끼운다(`raw.githubusercontent.com/…/v<판>/deploy/install/`). 그래서 그
+주소로 나갈 수 있어야 한다. 받지 못하면 `.env` 의 판도 안 바꾸고 멈춘다 — 판만
+새것이고 `compose.yml` 은 옛것인 어중간한 상태를 남기지 않는다.
+
+> 1.2.1 까지의 `install.sh` 는 설치 자리에서 친 판올림에서 `compose.yml` 을 안
+> 바꿨다("이미 이 자리에 있다"). 그 스크립트로는 몇 번을 쳐도 안 바뀌므로,
+> **올릴 판의 `install.sh` 를 먼저 받아서** 친다:
+>
+> ```bash
+> cd <설치한 자리>
+> curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v<판>/deploy/install/install.sh
+> sh install.sh --version <판>
+> ```
 
 ## 백업할 것
 

@@ -31,6 +31,9 @@ x-api-env: &api-env
   # 브라우저는 이 주소를 모른다.
   IEUM_SEARCH_BACKEND: ${IEUM_SEARCH_BACKEND:-postgres}
   IEUM_OPENSEARCH_URL: ${IEUM_OPENSEARCH_URL:-}
+  # 개발용 메일 상자. **변수로 받지 않는다** — `.env.example` 의 `localhost` 는
+  # 호스트에서 uv 로 돌 때의 값이라, 여기서 받으면 컨테이너 안에서 자기 자신을
+  # 부르게 된다. 운영 오버라이드는 이 셋을 운영자의 값으로 갈아 끼운다.
   IEUM_SMTP_HOST: mailpit
   IEUM_SMTP_PORT: "1025"
   IEUM_SMTP_TLS: "false"
@@ -40,7 +43,10 @@ x-api-env: &api-env
   # "CI 의 E2E 는 개발 스택과 같은 대역을 세운다" 를 **거울로 뒤집은** 종류다:
   # 개발 스택이 CI 보다 적게 세우면, CI 에서만 되는 화면이 생긴다.
   #
-  # 개발·시험용 값이다. 운영 오버라이드(deploy/compose/prod.yml)에는 없다.
+  # 개발·시험용 값이다. 비밀번호와 TOTP 시크릿이 저장소에 적혀 있으므로 운영에
+  # 넘어가면 **누구나 아는 2FA 관리자**가 된다. 운영 오버라이드(deploy/compose/
+  # prod.yml)가 셋을 빈 값으로 박고, 시드도 운영(`IEUM_ENV=production`)에서는
+  # 이 계정을 만들지 않는다.
   SEED_MFA_ADMIN_EMAIL: ${SEED_MFA_ADMIN_EMAIL:-mfa-admin@example.com}
   SEED_MFA_ADMIN_PASSWORD: ${SEED_MFA_ADMIN_PASSWORD:-seed-mfa-admin-password-1234}
   SEED_MFA_ADMIN_TOTP_SECRET: ${SEED_MFA_ADMIN_TOTP_SECRET:-IEUMDEVSEEDTOTPSECRET234}

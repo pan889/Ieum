@@ -36,8 +36,8 @@ sh install.sh --url https://ieum.example.com
 ## 주소를 하나만 묻는 이유
 
 밖으로 여는 포트가 하나이기 때문입니다. 화면도 API 도 첨부도 같은 오리진으로
-나갑니다 — `web` 컨테이너의 nginx 가 `/api/` 는 API 로, 버킷 경로
-(`/ieum-attachments/`)는 스토리지로 넘깁니다.
+나갑니다 — `web` 컨테이너의 nginx 가 `/api/` 와 SCIM(`/scim/`)은 API 로,
+버킷 경로(`/ieum-attachments/`)는 스토리지로 넘깁니다.
 
 그래서 앞에 TLS 를 세울 때 붙일 곳이 한 군데입니다.
 
@@ -104,6 +104,20 @@ cd <설치한 자리> && ./install.sh --version 1.2.1
 `compose.override.yml` 을 두세요. compose 가 겹쳐 읽고, 스크립트는 그 파일을
 건드리지 않습니다.
 
+스크립트는 `compose.yml` 과 자기 자신(`install.sh`)을 **그 판의 태그에서 받아**
+갈아 끼웁니다. 받지 못하면 `.env` 의 판도 그대로 두고 멈춥니다.
+
+!!! warning "1.2.1 까지의 `install.sh` 로 올렸다면"
+    그 판들의 스크립트는 설치 자리에서 친 판올림에서 `compose.yml` 을 갈아
+    끼우지 않았습니다. 이미지만 새 판이고 설정은 처음 깐 판 그대로일 수
+    있습니다. **올릴 판의 `install.sh` 를 먼저 받아서** 치면 맞춰집니다:
+
+    ```bash
+    cd <설치한 자리>
+    curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v<판>/deploy/install/install.sh
+    sh install.sh --version <판>
+    ```
+
 되돌리는 이야기는 [올리기와 되돌리기](upgrade.md)에 있습니다.
 
 ## 소스에서 빌드해 올리기
@@ -113,15 +127,24 @@ cd <설치한 자리> && ./install.sh --version 1.2.1
 
 ```bash
 git clone https://github.com/pan889/Ieum.git && cd Ieum
-cp.env.example.env
-make secret          # 나온 값을.env 의 IEUM_SECRET_KEY 에
+cp .env.example .env
+make secret          # 나온 값을 .env 의 IEUM_SECRET_KEY 에
 ```
 
 ```bash
 IEUM_BASE_URL=https://ieum.example.com          # 브라우저가 앱을 여는 주소
 IEUM_WEB_ORIGINS=https://ieum.example.com       # CORS. 여기 없는 오리진은 막힙니다
 IEUM_S3_PUBLIC_ENDPOINT_URL=https://files.example.com   # 브라우저가 첨부를 여는 주소
+IEUM_SMTP_HOST=smtp.example.com                 # 메일 서버. 안 보내려면 빈 값으로
 ```
+
+- `IEUM_SMTP_HOST` 는 **꼭 고칩니다.** `.env.example` 의 `localhost` 는 개발용
+  값이라 그대로 두면 컨테이너가 자기 자신에게 메일을 보내고, 초대·알림이 오류
+  없이 아무에게도 안 갑니다. 메일을 안 쓸 거라면 `IEUM_SMTP_HOST=` 로 비웁니다.
+  포트·TLS·계정은 `IEUM_SMTP_PORT`(기본 587)·`IEUM_SMTP_TLS`·`IEUM_SMTP_USER`·
+  `IEUM_SMTP_PASSWORD`·`IEUM_MAIL_FROM` 입니다.
+- `IEUM_DB_PASSWORD`·`IEUM_S3_ACCESS_KEY`·`IEUM_S3_SECRET_KEY` 도 넣습니다. 운영
+  오버라이드는 개발 기본값(`postgres`·`minioadmin`)을 물려받지 않습니다.
 
 - `IEUM_WEB_ORIGINS` 가 틀리면 브라우저가 API 를 부르는 족족 프리플라이트에서
   막혀 **앱이 통째로 안 뜹니다.** `localhost` 와 `127.0.0.1` 은 브라우저에게
@@ -130,7 +153,7 @@ IEUM_S3_PUBLIC_ENDPOINT_URL=https://files.example.com   # 브라우저가 첨부
   주소로 계속 발급됩니다.** 서버는 컨테이너 이름으로 스토리지를 부르지만,
   서명된 링크는 브라우저가 엽니다.
 
-셋이 비어 있으면 **기동을 거부합니다.** 조용히 기본값으로 뜨는 것보다 안 뜨는
+이 값들이 없으면 **기동을 거부합니다.** 조용히 기본값으로 뜨는 것보다 안 뜨는
 쪽이 낫기 때문입니다.
 
 ```bash
@@ -141,7 +164,15 @@ docker compose exec api python -m ieum.cli seed
 
 `seed` 는 멱등합니다 — 두 번 돌려도 같습니다. 관리자, 내장 역할 여덟 개,
 기본 워크플로우, 이슈 종류를 만듭니다. `SEED_MFA_ADMIN_*` 세 줄은 **비워
-둡니다** — 그건 자동 테스트용이고, 비어 있으면 시드가 아무것도 만들지 않습니다.
+둡니다** — 그건 자동 테스트용 2FA 관리자이고 비밀번호와 TOTP 시크릿이 저장소에
+적혀 있습니다. 남겨 두어도 운영 오버라이드는 그 값을 컨테이너로 넘기지 않고,
+운영(`IEUM_ENV=production`)의 시드는 그 계정을 만들지 않습니다.
+
+!!! warning "예전 오버라이드로 시드를 돌린 적이 있다면"
+    운영 오버라이드가 그 세 값을 지우지 않던 판이 있습니다. 그때 운영
+    컨테이너에서 시드를 돌렸다면 `mfa-admin@example.com` 관리자가 **누구나 아는
+    비밀번호와 2FA 코드로** 만들어져 있습니다. 사용자 목록에서 찾아
+    비활성화하고, 감사 로그에서 그 계정의 로그인을 확인하세요.
 
 !!! warning "compose 프로젝트 이름이 겹칩니다"
     한 줄 설치본과 저장소의 compose 는 둘 다 프로젝트 이름이 `ieum` 입니다.

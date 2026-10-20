@@ -41,6 +41,10 @@ x-api-env: &api-env
   IEUM_SMTP_USER: ${IEUM_SMTP_USER:-}
   IEUM_SMTP_PASSWORD: ${IEUM_SMTP_PASSWORD:-}
   IEUM_MAIL_FROM: ${IEUM_MAIL_FROM:-ieum@example.com}
+  # 웹훅을 사내망 주소로도 보낼지. **기본은 막는다** — 이유는 install.sh 가
+  # 만드는 `.env` 의 주석에 있다. `.env` 에 이 줄이 처음부터 적혀 있었는데
+  # 여기서 안 넘겨서, `true` 로 바꿔도 컨테이너에는 닿지 않았다.
+  IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS: ${IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS:-false}
 
 services:
   postgres:

@@ -42,16 +42,13 @@ spec:
                 name: {{ include "ieum.fullname" . }}-api
                 port:
                   number: 8000
-          # 코드 호스트가 두드리는 문 (A22). 인증이 없고 서명으로 확인한다.
-          - path: /vcs
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "ieum.fullname" . }}-api
-                port:
-                  number: 8000
-          # IdP 가 돌려보내는 자리와 SCIM. `/api/v1` 아래가 아니다 — 바깥이
-          # 정한 규약이라 경로를 우리가 못 고른다(module-guide).
+          # 코드 호스트가 두드리는 문(A22)은 **따로 열지 않는다.** 그 라우터는
+          # `/api/v1/vcs/...` 에 붙고(설정 화면이 알려 주는 주소도 그것이다)
+          # 위의 `/api` 가 이미 덮는다. 예전에 있던 `/vcs` 자리는 앱에 없는
+          # 경로라 API 의 404 만 돌려주던 죽은 규칙이었다.
+          #
+          # SCIM 은 `/api/v1` 아래가 아니다 — 바깥이 정한 규약이라 경로를 우리가
+          # 못 고른다(module-guide). 웹 이미지의 nginx 도 같은 자리를 넘긴다.
           - path: /scim
             pathType: Prefix
             backend:

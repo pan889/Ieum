@@ -10,6 +10,43 @@
 # 지우려면 `!reset` 이 필요하다(Compose 스펙의 병합 재설정 태그). `docker compose
 # config` 로 실제 병합 결과를 찍어 보면 바로 드러난다 — 시험이 그것을 한다
 # (`test_install_agrees.py`).
+
+# api·worker 가 **똑같이** 받아야 하는 운영 값. 둘에 손으로 따로 적으면 한쪽만
+# 고쳐지는 날이 온다 — 워커가 메일을 보내고, 메일 안의 링크를 만든다.
+x-prod-env: &prod-env
+  IEUM_ENV: production
+  IEUM_DEBUG: "false"
+  # **사람이 치는 주소.** 메일 안의 링크, SSO 가 IdP 에 알려 주는 돌아올 주소가
+  # 이것에서 나온다. 밑바탕의 기본값(`localhost:5173`)이 그대로 넘어오면 화면은
+  # 멀쩡히 열리는데 초대 메일의 링크가 받는 사람의 localhost 를 가리킨다.
+  IEUM_BASE_URL: "${IEUM_BASE_URL:?화면 주소가 필요하다. 예) https://ieum.example.com}"
+  # **비워 둔다 — 변수로도 안 받는다.** 이 스택은 api 의 포트를 닫으므로(아래)
+  # API 는 web 의 nginx 를 거쳐 화면과 **같은 오리진**으로만 나간다. 비우면 앱이
+  # `IEUM_BASE_URL` 을 쓴다. 밑바탕의 `localhost:8000` 이나 `.env.example` 을
+  # 베낀 `.env` 의 값이 넘어오면 SAML 의 ACS 주소가 localhost 로 나간다.
+  IEUM_API_URL: ""
+  # **메일 서버를 운영자가 정한다.** 밑바탕은 개발용 mailpit 을 박아 두는데,
+  # 그것이 운영까지 넘어오면 초대·알림·비밀번호 재설정 메일이 전부 mailpit 의
+  # 상자로 들어가고 아무에게도 안 간다 — 오류도 없다.
+  #
+  # 안 적으면 기동 전에 멈춘다. **빈 값은 받는다** — `IEUM_SMTP_HOST=` 로
+  # 일부러 비우면 "메일을 안 보낸다" 는 뜻이다(앱은 뜨고 발송만 실패로 남는다).
+  IEUM_SMTP_HOST: "${IEUM_SMTP_HOST?메일 서버 주소가 필요하다. 안 보내려면 IEUM_SMTP_HOST= 로 비워 둔다}"
+  IEUM_SMTP_PORT: "${IEUM_SMTP_PORT:-587}"
+  IEUM_SMTP_TLS: "${IEUM_SMTP_TLS:-true}"
+  IEUM_SMTP_USER: "${IEUM_SMTP_USER:-}"
+  IEUM_SMTP_PASSWORD: "${IEUM_SMTP_PASSWORD:-}"
+  IEUM_MAIL_FROM: "${IEUM_MAIL_FROM:-ieum@example.com}"
+  # **알려진 2FA 관리자를 운영에 두지 않는다.** 밑바탕은 개발·E2E 용으로
+  # 비밀번호와 TOTP 시크릿이 저장소에 적힌 관리자를 시드하게 해 둔다. 그 값이
+  # 운영 컨테이너에 들어가 있으면 누가 시드를 한 번 돌리는 순간(`docker compose
+  # exec api python -m ieum.cli seed`) **누구나 아는 비밀번호와 2FA 코드로
+  # 들어오는 관리자**가 생긴다. 변수로 받지 않고 빈 값으로 박는다 — `.env` 에
+  # 개발 값이 남아 있어도 넘어오지 못하게.
+  SEED_MFA_ADMIN_EMAIL: ""
+  SEED_MFA_ADMIN_PASSWORD: ""
+  SEED_MFA_ADMIN_TOTP_SECRET: ""
+
 services:
   api:
     build:
@@ -17,8 +54,7 @@ services:
     command: ["uvicorn", "ieum.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
     volumes: !reset []
     environment:
-      IEUM_ENV: production
-      IEUM_DEBUG: "false"
+      <<: *prod-env
       # presigned URL 은 브라우저가 연다. 개발 기본값(`localhost:9000`)이 그대로
       # 넘어오면 운영에서 아무도 못 여는 링크를 조용히 계속 발급한다.
       IEUM_S3_PUBLIC_ENDPOINT_URL: "${IEUM_S3_PUBLIC_ENDPOINT_URL:?브라우저가 접근할 스토리지 주소가 필요하다. 예) https://files.example.com}"
@@ -43,8 +79,7 @@ services:
       target: runtime
     volumes: !reset []
     environment:
-      IEUM_ENV: production
-      IEUM_DEBUG: "false"
+      <<: *prod-env
       # api 와 **같은 값이어야 한다.** 한쪽만 바꾸면 워커가 개발 기본값으로
       # 붙어 조용히 다른 DB 를 본다.
       IEUM_DATABASE_URL: "postgresql+asyncpg://postgres:${IEUM_DB_PASSWORD:?DB 비밀번호가 필요하다. make secret 로 하나 만든다}@postgres:5432/ieum"

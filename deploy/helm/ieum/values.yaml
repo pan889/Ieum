@@ -61,13 +61,32 @@ migrate:
 # 설치 직후 내장 역할·워크플로우를 만든다. **다시 돌려도 안전하다**(멱등).
 seed:
   enabled: true
+  # 첫 관리자의 메일. 비우면 시드의 기본값(`admin@example.com`)이다.
+  # 비밀번호는 `secrets.seedAdminPassword`(또는 `existingSecret` 의
+  # `SEED_ADMIN_PASSWORD` 키)로 준다 — **안 주면 관리자가 안 만들어진다.**
+  # 같은 메일의 사용자가 이미 있으면 시드는 그 사람을 건드리지 않는다.
+  adminEmail: ""
 
 config:
-  # 브라우저가 앱을 여는 주소. CORS 가 이것으로 결정된다.
+  # **필수.** 사람이 브라우저에 치는 앱 주소. 메일 안의 링크, SSO 가 IdP 에
+  # 알려 주는 돌아올 주소가 이것에서 나온다. 비우면 배포가 실패한다 — 안
+  # 실패시키면 앱이 개발 기본값(`http://localhost:5173`)으로 뜬다.
+  baseUrl: ""
+  # 브라우저가 앱을 여는 오리진(콤마로 여럿). CORS 가 이것으로 결정된다.
+  # 보통 `baseUrl` 과 같은 값이다.
   webOrigins: ""
   # 브라우저가 첨부를 여는 스토리지 주소. presigned URL 에 실린다.
   s3PublicEndpointUrl: ""
-  # 그 밖의 `IEUM_*` 설정을 그대로 넘긴다.
+  # **앱이** 스토리지를 부르는 주소(클러스터 안에서 보이는 것).
+  # 예) `http://minio.storage.svc:9000`. 비우면 AWS S3 의 기본 주소로 간다.
+  # 열쇠는 `secrets.s3AccessKey`·`secrets.s3SecretKey` 다.
+  s3EndpointUrl: ""
+  s3Bucket: ieum-attachments
+  s3Region: us-east-1
+  # 그 밖의 `IEUM_*` 설정을 그대로 넘긴다. 메일(`IEUM_SMTP_HOST`·
+  # `IEUM_SMTP_PORT`·`IEUM_SMTP_TLS`·`IEUM_SMTP_USER`·`IEUM_MAIL_FROM`)이
+  # 여기로 온다 — 비밀번호는 `secrets.extra.IEUM_SMTP_PASSWORD`.
+  # 위에서 차트가 정하는 키와 겹치면 **차트의 값이 이긴다.**
   extra: {}
 
 # 검색 백엔드 (ADR-0005, ADR-0015).
@@ -105,6 +124,14 @@ secrets:
   redisUrl: ""
   # `search.backend: opensearch` 이고 클러스터가 비밀번호를 요구할 때만.
   opensearchPassword: ""
+  # 스토리지 열쇠. IAM 역할(IRSA·워크로드 아이덴티티)로 붙는 S3 라면 비운다 —
+  # 비우면 앱이 기본 자격 증명 체인을 쓴다. `existingSecret` 에서는
+  # `IEUM_S3_ACCESS_KEY`·`IEUM_S3_SECRET_KEY` 키다(없어도 된다).
+  s3AccessKey: ""
+  s3SecretKey: ""
+  # 첫 관리자의 비밀번호(`seed.adminEmail`). 들어가서 바꾼 뒤에는 지워도 된다.
+  # `existingSecret` 에서는 `SEED_ADMIN_PASSWORD` 키다(없어도 된다).
+  seedAdminPassword: ""
   extra: {}
 
 ingress:

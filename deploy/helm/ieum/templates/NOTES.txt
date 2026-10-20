@@ -17,6 +17,20 @@
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ieum.fullname" . }}-web 8080:80
 {{- end }}
 
+{{- if and .Release.IsInstall .Values.seed.enabled }}
+{{- if .Values.secrets.existingSecret }}
+
+첫 관리자는 `{{ .Values.secrets.existingSecret }}` 에 `SEED_ADMIN_PASSWORD` 키가 있을 때만
+만들어집니다. 없으면 시드가 관리자 없이 지나갑니다 — 로그로 확인합니다:
+
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "ieum.fullname" . }}-seed-{{ .Release.Revision }}
+{{- else if not (or .Values.secrets.seedAdminPassword (hasKey .Values.secrets.extra "SEED_ADMIN_PASSWORD")) }}
+
+⚠ 첫 관리자의 비밀번호(`secrets.seedAdminPassword`)를 안 줬습니다. 시드는 관리자를
+  만들지 않고 지나갑니다 — SSO 를 아직 안 붙였다면 들어갈 계정이 없습니다.
+{{- end }}
+{{- end }}
+
 {{ if not .Values.secrets.existingSecret -}}
 ⚠ 비밀을 값으로 받았습니다. **운영에서는 `secrets.existingSecret` 을 쓰세요** —
   값으로 준 것은 릴리스 이력에 남고 `helm get values` 로 되읽힙니다.

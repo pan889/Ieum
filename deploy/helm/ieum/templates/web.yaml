@@ -31,6 +31,13 @@ spec:
         - name: web
           image: {{ include "ieum.webImage" . }}
           imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          env:
+            # nginx 가 `/api/`·`/scim/` 을 넘길 곳. 이미지의 기본값은 compose 의
+            # 서비스 이름(`api:8000`)이라, 여기서 안 주면 nginx 가 그 이름을 못
+            # 찾아 기동하자마자 죽는다 — web 파드가 기동 루프에 빠진다.
+            # 포트는 `api.yaml` 의 Service 포트와 같아야 한다.
+            - name: IEUM_API_UPSTREAM
+              value: "{{ include "ieum.fullname" . }}-api:8000"
           ports:
             - name: http
               containerPort: 80
