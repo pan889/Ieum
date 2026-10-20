@@ -83,6 +83,11 @@ config:
   s3EndpointUrl: ""
   s3Bucket: ieum-attachments
   s3Region: us-east-1
+  # 접속자 IP 를 읽을 때 믿는 프록시 수(`X-Forwarded-For` 를 오른쪽에서 이만큼).
+  # 인그레스가 `/api` 를 API 로 바로 넘기므로 1. 인그레스 앞에 L7 로드밸런서가
+  # 하나 더 있으면 2. 틀리게 작으면 모두가 한 주소로 보여 로그인 제한이 전원을
+  # 막고, 틀리게 크면 접속자가 IP 를 꾸밀 수 있다.
+  trustedProxyHops: 1
   # 그 밖의 `IEUM_*` 설정을 그대로 넘긴다. 메일(`IEUM_SMTP_HOST`·
   # `IEUM_SMTP_PORT`·`IEUM_SMTP_TLS`·`IEUM_SMTP_USER`·`IEUM_MAIL_FROM`)이
   # 여기로 온다 — 비밀번호는 `secrets.extra.IEUM_SMTP_PASSWORD`.

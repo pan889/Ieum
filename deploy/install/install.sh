@@ -281,6 +281,12 @@ if [ "$fresh" -eq 1 ]; then
     # 만들어지는 **그 순간부터** 남이 못 읽게 한다. 뒤에서 chmod 를 해도
     # 그 사이의 짧은 창에 비밀이 노출된다. 끝나면 되돌린다 — 안 그러면
     # 이 스크립트가 뒤에 만드는 파일까지 0600 이 된다.
+    # https 주소면 TLS 는 이 설치본 앞의 프록시가 끝낸다(여기는 TLS 를 안
+    # 한다). 그러면 nginx 앞에 홉이 하나 더 있다.
+    case "$url" in
+        https://*) proxy_hops=2 ;;
+        *) proxy_hops=1 ;;
+    esac
     _umask=$(umask)
     umask 077
     cat > "$env_file" <<ENV
@@ -323,6 +329,12 @@ IEUM_MAIL_FROM=ieum@example.com
 # 보인다. 둘을 합치면 내부 주소를 아무거나 열어 읽는 도구가 된다.
 # 사내 수신처로 보내야 할 때만, 그 위험을 알고 켠다.
 IEUM_WEBHOOK_ALLOW_PRIVATE_TARGETS=false
+
+# 접속자 IP 를 읽을 때 믿는 프록시 수. \`X-Forwarded-For\` 를 오른쪽에서 이만큼만
+# 믿는다 — 그보다 왼쪽은 접속자가 마음대로 적을 수 있다. 이 설치본의 nginx 가
+# 하나, 그 앞에 TLS 프록시를 세웠다면(https 주소) 하나 더. **틀리면** 로그인
+# 제한이 모두를 프록시 주소 하나로 세어, 몇 번의 실패로 전원이 막힌다.
+IEUM_TRUSTED_PROXY_HOPS=$proxy_hops
 ENV
     chmod 600 "$env_file"
     umask "$_umask"
