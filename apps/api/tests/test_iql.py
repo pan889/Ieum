@@ -143,6 +143,32 @@ class TestParser:
         with pytest.raises(iql_errors.IQLError):
             parse("a = 1 AND " * 500)
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "(" * 200 + "priority = 1" + ")" * 200,
+            "NOT " * 600 + "priority = 1",
+            "(NOT " * 120 + "priority = 1" + ")" * 120,
+        ],
+        ids=["parentheses", "not", "mixed"],
+    )
+    def test_deep_nesting_is_a_syntax_error_not_a_crash(self, text: str) -> None:
+        """**길이 상한 안에서도 2천 겹은 들어간다.** 파스 트리를 AST 로 옮기는
+        일과 컴파일은 재귀라서, 막지 않으면 `RecursionError` 가 500 으로 나간다.
+        사람이 고칠 수 있게 다른 문법 오류와 같은 400 으로 낸다."""
+        assert len(text) <= 4000
+        with pytest.raises(iql_errors.IQLError) as exc:
+            parse(text)
+        assert exc.value.code == "iql.syntax_error"
+        assert "offset" in exc.value.details
+
+    def test_nesting_up_to_the_limit_still_parses_and_compiles(self) -> None:
+        from ieum.modules.issues.iql.parser import MAX_NESTING
+
+        text = "(" * MAX_NESTING + "priority = 1" + ")" * MAX_NESTING
+        assert isinstance(parse(text).where, Comparison)
+        compile_only("NOT " * MAX_NESTING + "priority = 1")
+
 
 # ── 컴파일 검증 (DB 불필요) ──────────────────────────────────────
 
@@ -1135,6 +1161,57 @@ class TestSuggest:
         actor = cast("Actor", fixture_set["actor"])
         items = await self.ask(session, permissions, actor, 'labels = "ur')
         assert [i.label for i in items] == ["urgent"]
+
+    async def test_labels_of_issues_i_cannot_see_are_not_suggested(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        fixture_set: dict[str, object],
+    ) -> None:
+        """**라벨도 이슈의 내용이다.** 보안 레벨이 걸린 이슈의 라벨이 자동완성에
+        뜨면, 검색 결과가 막은 것을 제안 목록이 연다. 휴지통 이슈의 라벨은
+        0건짜리 질의를 권하는 셈이라 함께 뺀다."""
+        actor = cast("Actor", fixture_set["actor"])
+        project = cast("Project", fixture_set["project"])
+        issue_type = cast("IssueType", fixture_set["type"])
+        service = IssueService(session, permissions)
+        sealed = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="인수 건",
+                labels=["acquisition-talks"],
+            ),
+        )
+        trashed = await service.create(
+            actor,
+            NewIssue(
+                project_id=project.id,
+                type_id=issue_type.id,
+                summary="버린 것",
+                labels=["abandoned-plan"],
+            ),
+        )
+        insider = User(email=f"i-{new_id()}@e.com", display_name="I", status="active")
+        session.add(insider)
+        await session.flush()
+        level = SecurityLevel(
+            project_id=project.id,
+            name=f"Board-{secrets.token_hex(3)}",
+            grantees=[{"kind": "user", "id": str(insider.id)}],
+        )
+        session.add(level)
+        await session.flush()
+        sealed.issue.security_level_id = level.id
+        trashed.issue.archived_at = utcnow()
+        await session.flush()
+
+        found = {i.label for i in await self.ask(session, permissions, actor, "labels = ")}
+        assert "acquisition-talks" not in found, "못 보는 이슈의 라벨이 제안됐다"
+        assert "abandoned-plan" not in found, "휴지통 이슈의 라벨이 제안됐다"
+        # 보이는 이슈의 라벨은 그대로다.
+        assert {"urgent", "auth", "perf"} <= found
 
     async def test_user_values_show_the_name_but_insert_the_id(
         self,

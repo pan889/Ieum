@@ -413,22 +413,39 @@ class SprintService:
         rows = list(
             (
                 await self._s.execute(
-                    select(Issue).where(Issue.id.in_(issue_ids), Issue.project_id == project_id)
+                    select(Issue).where(
+                        Issue.id.in_(issue_ids),
+                        Issue.project_id == project_id,
+                        # 휴지통의 이슈는 옮기지 않는다. 닫기가 두고 가는 것과
+                        # 같은 규칙이다(`_move_unfinished`).
+                        Issue.archived_at.is_(None),
+                    )
                 )
             )
             .scalars()
             .all()
         )
-        if len(rows) != len(set(issue_ids)):
-            # 다른 프로젝트의 이슈가 섞였다. 부분 성공으로 두면 부르는 쪽은
-            # 무엇이 안 들어갔는지 모른다.
+        # **이슈마다 보안 레벨 관문을 지난다.** 프로젝트 스코프만 보면 보안
+        # 레벨이 걸린 남의 이슈를 id 하나로 옮길 수 있다 — 단건 수정은 403
+        # 인데 배치로는 된다.
+        scope = Scope.project(project_id)
+        movable = [
+            issue
+            for issue in rows
+            if await self._perms.has(self._s, actor, perms.ISSUE_EDIT, scope=scope, subject=issue)
+        ]
+        if len(movable) != len(set(issue_ids)):
+            # 다른 프로젝트의 이슈가 섞였거나, 없거나, 휴지통에 있거나, 못
+            # 보는 이슈다. **모두 같은 말로 거절한다** — 못 보는 것만 403 이면
+            # 그 id 가 있다는 사실이 샌다. 부분 성공으로 두지 않는 이유는
+            # 부르는 쪽이 무엇이 안 들어갔는지 모르기 때문이다.
             raise ValidationError(
                 "이 프로젝트의 이슈가 아니다.", code="issues.sprint_issue_foreign"
             )
-        for issue in rows:
+        for issue in movable:
             issue.sprint_id = target.id if target else None
         await self._s.flush()
-        return len(rows)
+        return len(movable)
 
     # ── 내부 ────────────────────────────────────────────────────
 

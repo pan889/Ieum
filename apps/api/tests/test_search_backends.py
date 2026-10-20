@@ -27,6 +27,7 @@ import os
 import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -75,6 +76,106 @@ class TestTranslatingTheQuery:
 
     def test_minus_stays_minus(self) -> None:
         assert translate_query("배포 -절차") == "배포 -절차"
+
+
+def _os_matches(source: dict[str, Any], clause: dict[str, Any]) -> bool:
+    """`_restriction` 과 고객 화면이 쓰는 만큼의 질의 DSL 을 **OpenSearch 처럼** 읽는다.
+
+    요점은 하나다: OpenSearch 는 **빈 배열을 "값이 없는 열"** 로 색인하고,
+    `exists` 는 그 열을 없는 것으로 본다. 이 뜻을 모른 채 몸통과 질의를 따로
+    보면 둘 다 맞아 보이는데 합치면 새는 모양이 된다(실제로 그랬다). 진짜
+    OpenSearch 없이도 그 합을 붙잡으려고 여기 둔다.
+    """
+    if "bool" in clause:
+        spec = clause["bool"]
+        if any(_os_matches(source, c) for c in spec.get("must_not", [])):
+            return False
+        if not all(
+            _os_matches(source, c) for c in [*spec.get("filter", []), *spec.get("must", [])]
+        ):
+            return False
+        should = spec.get("should", [])
+        if should:
+            hits = sum(_os_matches(source, c) for c in should)
+            return hits >= spec.get("minimum_should_match", 1)
+        return True
+    if "exists" in clause:
+        return source.get(clause["exists"]["field"]) not in (None, [])
+    if "terms" in clause:
+        ((name, wanted),) = clause["terms"].items()
+        value = source.get(name)
+        values = value if isinstance(value, list) else [value]
+        return bool(set(values) & set(wanted))
+    raise AssertionError(f"이 시험이 모르는 절이다: {clause}")
+
+
+def _os_document(restricted_to: list[UUID] | None) -> dict[str, Any]:
+    from ieum.modules.search.backends.opensearch import _source
+
+    return _source(
+        {
+            "kind": "page",
+            "entity_id": new_id(),
+            "scope_kind": "space",
+            "scope_id": new_id(),
+            "ref": "r",
+            "title": "t",
+            "body": "b",
+            "source_updated_at": utcnow(),
+            "restricted_to": restricted_to,
+        }
+    )
+
+
+#: 고객 화면(`public_pages_in_space`)이 거는 조건. 제한이 **하나라도** 있으면 뺀다.
+_PUBLIC = {"bool": {"must_not": [{"exists": {"field": "restricted_to"}}]}}
+
+
+class TestTheRestrictionAsSent:
+    """OpenSearch 에 **실제로 보내는** 몸통과 질의를 붙잡는다. 붙는 것 없이 돈다.
+
+    아래 통합 시험은 `IEUM_TEST_OPENSEARCH_URL` 이 없으면 건너뛴다. 권한이
+    새는 자리를 그 조건 하나에 맡길 수는 없다.
+    """
+
+    def test_the_model_reads_an_empty_array_as_missing(self) -> None:
+        """시험 도구부터 확인한다 — 이게 틀리면 아래가 전부 헛것이다."""
+        assert not _os_matches({"restricted_to": []}, {"exists": {"field": "restricted_to"}})
+
+    def test_nobody_is_not_a_principal_id_shape(self) -> None:
+        from ieum.modules.search.backends.opensearch import NOBODY
+
+        with pytest.raises(ValueError):
+            UUID(NOBODY)
+
+    def test_an_empty_list_is_sent_as_nobody(self) -> None:
+        """**빈 목록은 "아무도 못 본다" 다.** 그대로 보내면 "제한 없음" 이 된다."""
+        from ieum.modules.search.backends.opensearch import NOBODY
+
+        assert _os_document([])["restricted_to"] == [NOBODY]
+
+    def test_no_restriction_leaves_the_field_out(self) -> None:
+        assert "restricted_to" not in _os_document(None)
+
+    def test_a_document_nobody_may_see_is_hidden_from_everyone(self) -> None:
+        from ieum.modules.search.backends.opensearch import _restriction
+
+        sealed = _os_document([])
+        for principals in (frozenset(), frozenset({new_id()}), frozenset({new_id(), new_id()})):
+            assert not _os_matches(sealed, _restriction(principals)), "빈 제한이 모두에게 열렸다"
+        assert not _os_matches(sealed, _PUBLIC), "빈 제한이 고객 화면에 열렸다"
+
+    def test_the_other_two_cases_still_hold(self) -> None:
+        from ieum.modules.search.backends.opensearch import _restriction
+
+        allowed = new_id()
+        open_doc = _os_document(None)
+        sealed = _os_document([allowed])
+        assert _os_matches(open_doc, _restriction(frozenset()))
+        assert _os_matches(open_doc, _PUBLIC)
+        assert _os_matches(sealed, _restriction(frozenset({allowed})))
+        assert not _os_matches(sealed, _restriction(frozenset({new_id()})))
+        assert not _os_matches(sealed, _PUBLIC)
 
 
 def _key() -> str:
@@ -306,6 +407,47 @@ class TestBothBackendsAgree:
                 await os_backend.aclose()
             assert _titles(pg) == expected, "Postgres 쪽 제한이 어긋났다"
             assert _titles(found) == expected, "OpenSearch 쪽 제한이 어긋났다"
+
+    async def test_a_document_nobody_may_see_is_hidden_from_both(
+        self, session: AsyncSession, space: Space, opensearch: Settings
+    ) -> None:
+        """**빈 제한 명단은 "아무도 못 본다" 다.** 위키의 중첩 제한이 서로 안
+        겹치면 그렇게 된다. OpenSearch 는 빈 배열을 "열 없음" 으로 보므로, 그대로
+        보내면 이 문서가 모두에게 뜬다 — 고객 화면까지."""
+        await _index(session, space, title="open notes", body="secret word inside")
+        await _index(
+            session, space, title="sealed notes", body="secret word inside", restricted_to=[]
+        )
+        await session.commit()
+        await _mirror(session, opensearch)
+
+        for principals in (frozenset(), frozenset({new_id()})):
+            pg, _ = await PostgresBackend(session).search(
+                query="secret",
+                acls=_acls(space),
+                principal_ids=principals,
+                kinds=("page",),
+                limit=10,
+                offset=0,
+            )
+            os_backend = OpenSearchBackend(opensearch)
+            try:
+                found, _ = await os_backend.search(
+                    query="secret",
+                    acls=_acls(space),
+                    principal_ids=principals,
+                    kinds=("page",),
+                    limit=10,
+                    offset=0,
+                )
+                public = await os_backend.public_pages_in_space(
+                    space_id=space.id, query="secret", limit=10
+                )
+            finally:
+                await os_backend.aclose()
+            assert _titles(pg) == {"open notes"}
+            assert _titles(found) == {"open notes"}, "OpenSearch 가 빈 제한을 열었다"
+            assert _titles(public) == {"open notes"}, "고객 화면이 빈 제한을 열었다"
 
     async def test_a_document_outside_the_scope_is_hidden_from_both(
         self, session: AsyncSession, space: Space, opensearch: Settings

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CursorResult, Select, delete, func, select
+from sqlalchemy import CursorResult, Select, delete, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ieum.core.pagination import Page, PageRequest
@@ -27,6 +27,11 @@ from ieum.modules.issues.models import (
     WorkflowTransition,
 )
 from ieum.modules.issues.visibility import visible_issues
+
+#: 조상을 거슬러 오르는 상한. 화면이 만드는 트리는 하위 3단까지지만 이관은
+#: 소스의 깊이를 그대로 옮기므로 넉넉히 둔다. 이 값은 순환이 섞였을 때
+#: 질의가 끝나게 하는 울타리이지 트리 깊이 규칙이 아니다.
+MAX_ANCESTOR_DEPTH = 100
 
 
 class WorkflowRepository:
@@ -277,17 +282,27 @@ class IssueRepository:
         return list((await self._s.execute(stmt)).scalars().all())
 
     async def ancestor_ids(self, issue_id: UUID) -> list[UUID]:
-        """자신을 포함한 조상. 부모-자식 순환을 막는 데 쓴다."""
+        """자신을 포함한 조상, 가까운 것부터. 부모-자식 순환을 막는 데 쓴다.
+
+        **순환이 이미 있어도 끝난다.** 순환을 막으려고 부르는 질의가 순환을
+        만나면 멈추지 않는 것은 앞뒤가 바뀐 일이다 — 화면은 막지만 이관이나
+        DB 직접 수정으로 생길 수 있고, 그때 `UNION ALL` 재귀는 같은 둘을 영원히
+        번갈아 내며 요청 하나가 커넥션을 붙잡는다. 그래서 깊이를 세어
+        `MAX_ANCESTOR_DEPTH` 에서 끊고, 돌아온 줄은 한 번만 남긴다.
+        """
         base = (
-            select(Issue.id, Issue.parent_id)
+            select(Issue.id, Issue.parent_id, literal(1).label("depth"))
             .where(Issue.id == issue_id)
             .cte("issue_ancestors", recursive=True)
         )
         parent = Issue.__table__.alias("p")
         base = base.union_all(
-            select(parent.c.id, parent.c.parent_id).join(base, base.c.parent_id == parent.c.id)
+            select(parent.c.id, parent.c.parent_id, (base.c.depth + 1).label("depth"))
+            .join(base, base.c.parent_id == parent.c.id)
+            .where(base.c.depth < MAX_ANCESTOR_DEPTH)
         )
-        return list((await self._s.execute(select(base.c.id))).scalars().all())
+        rows = (await self._s.execute(select(base.c.id).order_by(base.c.depth))).scalars().all()
+        return list(dict.fromkeys(rows))
 
     async def list_page(
         self,

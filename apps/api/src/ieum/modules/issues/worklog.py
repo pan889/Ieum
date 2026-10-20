@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,7 +77,7 @@ class WorklogService:
             issue_id=issue_id,
             user_id=actor.user_id,
             spent_minutes=_validate_spent(spent_minutes),
-            work_date=_validate_date(work_date),
+            work_date=_validate_date(work_date, today=_today_for(actor)),
             comment=_normalized_comment(comment),
         )
         self._s.add(row)
@@ -136,7 +137,7 @@ class WorklogService:
         if spent_minutes is not None:
             row.spent_minutes = _validate_spent(spent_minutes)
         if work_date is not None:
-            row.work_date = _validate_date(work_date)
+            row.work_date = _validate_date(work_date, today=_today_for(actor))
         if clear_comment:
             row.comment = None
         elif comment is not None:
@@ -198,9 +199,23 @@ def _validate_spent(minutes: int) -> int:
     return minutes
 
 
-def _validate_date(value: date | None) -> date:
+def _today_for(actor: Actor) -> date:
+    """**적는 사람의** 오늘.
+
+    작업 날짜는 사람이 달력에서 고르는 값이다. UTC 로 오늘을 잡으면 서울에서
+    오전 9시 전에 적는 사람은 아직 "어제" 에 갇혀 오늘 한 일을 미래라고 거절
+    당하고, 기본값도 어제가 된다. 모르는 시간대는 UTC 로 본다 — 이름이 틀렸다고
+    기록을 못 하게 하는 쪽이 더 나쁘다.
+    """
+    try:
+        zone = ZoneInfo(actor.timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    return utcnow().astimezone(zone).date()
+
+
+def _validate_date(value: date | None, *, today: date) -> date:
     """미래 날짜는 막는다. 아직 하지 않은 일을 기록할 수는 없다."""
-    today = utcnow().date()
     if value is None:
         return today
     if value > today:

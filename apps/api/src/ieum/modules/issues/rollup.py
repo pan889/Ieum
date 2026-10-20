@@ -53,10 +53,18 @@ async def recompute_ancestors(session: AsyncSession, issue_id: UUID) -> list[UUI
     바뀐 조상 id 를 돌려준다. 호출자는 트랜잭션 안에서 부르기만 하면 된다 —
     바뀐 게 없으면 아무것도 쓰지 않는다.
     """
-    changed: list[UUID] = []
     current = await session.get(Issue, issue_id)
-    parent_id = current.parent_id if current else None
+    return await recompute_from(session, current.parent_id if current else None)
 
+
+async def recompute_from(session: AsyncSession, parent_id: UUID | None) -> list[UUID]:
+    """이 이슈 **자신부터** 위로 다시 계산한다.
+
+    부모를 바꾼 자리가 쓴다. `recompute_ancestors` 는 이슈의 **지금** 부모
+    쪽만 오르므로, 떠나온 옛 부모는 나간 자식의 진행률을 계속 품고 있게 된다.
+    그 옛 부모를 여기에 넘긴다.
+    """
+    changed: list[UUID] = []
     seen: set[UUID] = set()
     depth = 0
     while parent_id is not None and depth < MAX_DEPTH:
@@ -91,4 +99,10 @@ async def recompute_ancestors(session: AsyncSession, issue_id: UUID) -> list[UUI
     return changed
 
 
-__all__ = ["MAX_DEPTH", "has_children", "recompute_ancestors", "weighted_progress"]
+__all__ = [
+    "MAX_DEPTH",
+    "has_children",
+    "recompute_ancestors",
+    "recompute_from",
+    "weighted_progress",
+]

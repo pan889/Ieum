@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.core.exceptions import ConflictError
+from ieum.core.exceptions import ConflictError, ValidationError
 from ieum.core.ids import new_id
 from ieum.core.permissions import PermissionService, Scope
 from ieum.migrate.archive import (
@@ -40,6 +40,7 @@ from ieum.modules.issues.models import Issue as IssueRow
 from ieum.modules.issues.models import IssueComment, IssueLabel, IssueLink
 from ieum.modules.org.models import Project
 from ieum.modules.org.repository import OrgPermissionResolver
+from ieum.modules.search.models import SearchDocument
 from role_grants import actor_for, grant
 
 
@@ -266,6 +267,38 @@ class TestTheHistoryComesAcross:
         ).scalar_one()
         assert row.created_at == datetime(2023, 4, 5, 6, 7, 8, tzinfo=UTC)
 
+    async def test_an_imported_issue_can_be_searched(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**워크플로는 건너뛰어도 색인은 건너뛰지 않는다.** 안 그러면 옮겨 온
+        이슈가 목록에는 있는데 검색창에서는 한 건도 안 나온다 — 그리고 사람은
+        이관이 반쯤 실패한 줄 안다."""
+        person = await _admin(session)
+        project = await _project(session)
+        await ImportService(session, permissions).load(
+            actor_for(person), project_id=project.id, data=_bundle(_two_issues())
+        )
+        rows = (
+            await session.execute(
+                select(IssueRow.id, IssueRow.key_seq).where(IssueRow.project_id == project.id)
+            )
+        ).all()
+        indexed = {
+            doc.entity_id: doc
+            for doc in (
+                await session.execute(
+                    select(SearchDocument).where(
+                        SearchDocument.kind == "issue",
+                        SearchDocument.entity_id.in_([row.id for row in rows]),
+                    )
+                )
+            ).scalars()
+        }
+        assert set(indexed) == {row.id for row in rows}, "이관한 이슈가 검색 색인에 없다"
+        for row in rows:
+            assert indexed[row.id].ref == f"{project.key}-{row.key_seq}"
+            assert indexed[row.id].scope_id == project.id
+
     async def test_a_closed_issue_lands_closed(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:
@@ -335,6 +368,52 @@ class TestLinks:
             .all()
         )
         assert list(kinds) == ["copied"]
+
+    async def test_a_relation_written_twice_links_once(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """같은 관계가 두 줄 적힌 묶음. 확인이 방금 넣은 것을 못 보면 둘 다
+        넣으려다 유니크에 걸리고 **적재 전체가 500 으로 죽는다.**"""
+        person = await _admin(session)
+        project = await _project(session)
+        issues = _two_issues()
+        issues[0] = Issue(
+            source_id="1",
+            summary="부모",
+            type="Bug",
+            status="Open",
+            relations=[Relation(kind="relates", target="2"), Relation(kind="relates", target="2")],
+        )
+        loaded = await ImportService(session, permissions).load(
+            actor_for(person), project_id=project.id, data=_bundle(issues)
+        )
+        assert loaded.relations_linked == 1
+        links = await session.scalar(
+            select(func.count())
+            .select_from(IssueLink)
+            .join(IssueRow, IssueRow.id == IssueLink.from_issue_id)
+            .where(IssueRow.project_id == project.id)
+        )
+        assert links == 1
+
+    async def test_a_parent_loop_made_across_two_runs_is_refused(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """묶음 하나만 보면 안 도는데, **앞선 실행이 이어 둔 부모**와 합치면
+        도는 경우다. 읽는 자리는 묶음만 보므로 이건 잇는 자리가 DB 를 보고 막는다."""
+        person = await _admin(session)
+        project = await _project(session)
+        service = ImportService(session, permissions)
+        await service.load(actor_for(person), project_id=project.id, data=_bundle(_two_issues()))
+
+        # 이번 묶음은 부모를 뒤집었다: 1 의 부모가 2. 2 는 앞선 실행에서 이미 1 의 자식이다.
+        flipped = [
+            Issue(source_id="1", summary="부모", type="Bug", status="Open", parent="2"),
+            Issue(source_id="2", summary="자식", type="Bug", status="Closed"),
+        ]
+        with pytest.raises(ValidationError) as exc:
+            await service.load(actor_for(person), project_id=project.id, data=_bundle(flipped))
+        assert exc.value.code == "issues.parent_cycle"
 
     async def test_an_unknown_relation_kind_is_named_not_swallowed(
         self, session: AsyncSession, permissions: PermissionService
@@ -430,6 +509,63 @@ class TestItRefusesRatherThanHalfLoading:
             await ImportService(session, permissions).load(
                 actor_for(person), project_id=project.id, data=_bundle(issues)
             )
+        assert await _count(session, IssueRow, IssueRow.project_id, project.id) == 0
+
+    @pytest.mark.parametrize(
+        ("issues", "reason"),
+        [
+            (
+                [Issue(source_id="1", summary="나", type="Bug", status="Open", parent="1")],
+                "자기 자신을 부모로",
+            ),
+            (
+                [
+                    Issue(source_id="1", summary="가", type="Bug", status="Open", parent="2"),
+                    Issue(source_id="2", summary="나", type="Bug", status="Open", parent="1"),
+                ],
+                "순환",
+            ),
+            (
+                [
+                    Issue(
+                        source_id="1",
+                        summary="가",
+                        type="Bug",
+                        status="Open",
+                        comments=[Comment(source_id="c1", body="a", created_at="")],
+                    ),
+                    Issue(
+                        source_id="2",
+                        summary="나",
+                        type="Bug",
+                        status="Open",
+                        comments=[Comment(source_id="c1", body="b", created_at="")],
+                    ),
+                ],
+                "코멘트",
+            ),
+        ],
+        ids=["self-parent", "parent-loop", "comment-id-twice"],
+    )
+    async def test_a_broken_bundle_is_a_user_error_not_a_crash(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        issues: list[Issue],
+        reason: str,
+    ) -> None:
+        """순환하는 부모나 겹치는 코멘트 id 는 **미리 보기에서** 사용자 오류다.
+        적재 도중 DB 제약이나 끝없는 롤업으로 처음 드러나면 500 이고, 사람은
+        묶음의 어디를 고칠지 모른다."""
+        person = await _admin(session)
+        project = await _project(session)
+        for run in (
+            ImportService(session, permissions).preview,
+            ImportService(session, permissions).load,
+        ):
+            with pytest.raises(ValidationError, match=reason) as exc:
+                await run(actor_for(person), project_id=project.id, data=_bundle(issues))
+            assert exc.value.code == "imports.unreadable_archive"
         assert await _count(session, IssueRow, IssueRow.project_id, project.id) == 0
 
     async def test_a_blank_status_stops_everything_too(

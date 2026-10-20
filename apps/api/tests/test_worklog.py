@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -19,6 +20,7 @@ from ieum.core.permissions import PermissionService, Scope
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import User
 from ieum.modules.issues import permissions as perms
+from ieum.modules.issues import worklog as worklog_module
 from ieum.modules.issues.models import IssueType, Workflow, WorkflowState, WorkflowTransition
 from ieum.modules.issues.search import SearchService
 from ieum.modules.issues.service import IssueService, NewIssue, SecurityLevelGuard
@@ -197,6 +199,76 @@ class TestAdd:
                 spent_minutes=30,
                 work_date=(utcnow() + timedelta(days=1)).date(),
             )
+
+    async def test_today_is_the_writers_today(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """**오늘은 적는 사람의 달력으로 센다.**
+
+        UTC 16시는 서울로 다음 날 새벽 1시다. UTC 로 오늘을 잡으면 서울 사람은
+        오늘 한 일을 "미래" 라고 거절당하고, 날짜를 안 고르면 어제로 적힌다.
+        """
+        base = await full_access(session, user, project)
+        issue_id = await make_issue(session, permissions, base, project, issue_type)
+        monkeypatch.setattr(
+            worklog_module, "utcnow", lambda: datetime(2026, 10, 20, 16, 0, tzinfo=UTC)
+        )
+        seoul = replace(base, timezone="Asia/Seoul")
+        service = WorklogService(session, permissions)
+
+        defaulted = await service.add(seoul, issue_id, spent_minutes=30)
+        assert defaulted.work_date == date(2026, 10, 21), "기본값이 UTC 의 오늘이다"
+        chosen = await service.add(seoul, issue_id, spent_minutes=30, work_date=date(2026, 10, 21))
+        assert chosen.work_date == date(2026, 10, 21)
+        with pytest.raises(ValidationError, match="미래"):
+            await service.add(seoul, issue_id, spent_minutes=30, work_date=date(2026, 10, 22))
+
+    async def test_a_day_that_has_not_begun_for_the_writer_is_future(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """반대쪽도 같다. UTC 로는 이미 21일이지만 로스앤젤레스는 아직 20일 저녁이다."""
+        base = await full_access(session, user, project)
+        issue_id = await make_issue(session, permissions, base, project, issue_type)
+        monkeypatch.setattr(
+            worklog_module, "utcnow", lambda: datetime(2026, 10, 21, 3, 0, tzinfo=UTC)
+        )
+        la = replace(base, timezone="America/Los_Angeles")
+        service = WorklogService(session, permissions)
+
+        row = await service.add(la, issue_id, spent_minutes=30)
+        assert row.work_date == date(2026, 10, 20)
+        with pytest.raises(ValidationError, match="미래"):
+            await service.add(la, issue_id, spent_minutes=30, work_date=date(2026, 10, 21))
+        with pytest.raises(ValidationError, match="미래"):
+            await service.update(la, row.id, work_date=date(2026, 10, 21))
+
+    async def test_an_unknown_zone_falls_back_to_utc(
+        self,
+        session: AsyncSession,
+        permissions: PermissionService,
+        user: User,
+        project: Project,
+        issue_type: IssueType,
+    ) -> None:
+        """시간대 이름이 틀렸다고 기록을 못 하게 하는 쪽이 더 나쁘다."""
+        base = await full_access(session, user, project)
+        issue_id = await make_issue(session, permissions, base, project, issue_type)
+        row = await WorklogService(session, permissions).add(
+            replace(base, timezone="Mars/Olympus"), issue_id, spent_minutes=30
+        )
+        assert row.work_date == utcnow().date()
 
     @pytest.mark.parametrize("minutes", [0, -5, MAX_SPENT_MINUTES + 1])
     async def test_rejects_out_of_range(

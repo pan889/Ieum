@@ -334,14 +334,28 @@ def _json(value: dict[str, Any]) -> str:
     return json.dumps(value, separators=(",", ":"), default=str)
 
 
+#: "아무도 못 본다" 를 색인에 적는 값.
+#:
+#: **빈 목록을 그대로 보내면 안 된다.** OpenSearch 는 `[]` 를 "값이 없는 열"
+#: 로 색인하고, `exists` 는 그 열을 없는 것으로 본다 — 그러면 `_restriction`
+#: 의 "제한 없음" 갈래에 걸려 아무도 못 볼 문서가 **모두에게** 검색된다.
+#: 그래서 빈 목록 자리에 이 값 하나를 넣어 "제한이 걸려 있다" 는 사실을 남긴다.
+#:
+#: UUID 꼴이 아닌 글자를 고른다. 주체 id 는 언제나 `str(UUID)` 라서 이것과
+#: 맞을 수 없다 — nil UUID 같은 값은 "아무도 그 id 를 안 쓴다" 는 약속에
+#: 기대야 하지만 이건 모양부터 다르다. 별도 boolean 열을 두는 길도 있었지만,
+#: 매핑이 `strict` 라 **되색인 전까지 미러 쓰기가 통째로 400** 이 된다.
+NOBODY = "nobody"
+
+
 def _source(doc: dict[str, Any]) -> dict[str, Any]:
     """색인에 실을 몸통. `restricted_to` 가 **`None` 이면** 열을 아예 뺀다.
 
     `null` 로 넣으면 `exists` 가 그 열을 "없다" 로 보므로 뜻이 같지만,
     빼는 쪽이 매핑의 `strict` 와 어긋날 일이 없고 저장도 작다.
 
-    **빈 목록은 빼지 않는다.** 빈 목록은 "제한 없음" 이 아니라 "아무도 못
-    본다" 이고, 빼 버리면 그 뜻이 정반대로 뒤집힌다.
+    **빈 목록은 "아무도 못 본다" 다.** "제한 없음" 으로 뒤집히지 않게
+    `NOBODY` 하나를 대신 싣는다 (`NOBODY` 주석 참조).
     """
     body = {
         "kind": doc["kind"],
@@ -358,7 +372,7 @@ def _source(doc: dict[str, Any]) -> dict[str, Any]:
     # "아무도 못 본다" 다 — 위키의 중첩 제한이 서로 안 겹치면 그렇게 된다.
     # 둘을 같이 보면 아무도 못 볼 문서가 모두에게 보이는 쪽으로 뒤집힌다.
     if restricted is not None:
-        body["restricted_to"] = [str(one) for one in restricted]
+        body["restricted_to"] = [str(one) for one in restricted] or [NOBODY]
     return body
 
 
@@ -377,6 +391,12 @@ def _matched(query: str, analyzer: str) -> dict[str, Any]:
 
 
 def _restriction(principal_ids: frozenset[UUID]) -> dict[str, Any]:
+    """제한이 없거나, 제한 명단에 이 주체 중 하나가 있거나.
+
+    "제한 없음" 은 열이 **없는** 것이다. 빈 제한 명단은 `_source` 가 `NOBODY`
+    로 채워 두므로 이 갈래에 들지 않고, `NOBODY` 는 어떤 주체 id 와도 안
+    맞으므로 둘째 갈래에도 안 든다.
+    """
     return {
         "bool": {
             "should": [
@@ -433,4 +453,4 @@ def _document(source: dict[str, Any]) -> IndexedDocument:
     )
 
 
-__all__ = ["FLAGS", "OpenSearchBackend", "document_id", "mapping", "translate_query"]
+__all__ = ["FLAGS", "NOBODY", "OpenSearchBackend", "document_id", "mapping", "translate_query"]
