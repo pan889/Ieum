@@ -147,6 +147,20 @@ class Settings(BaseSettings):
     password_min_length: int = 12
     login_max_attempts: int = 10
     login_attempt_window_seconds: int = 900
+    #: 2FA 코드 실패 상한(사용자당, 위 창 안에서). 비밀번호보다 낮게 둔다 —
+    #: 6자리 TOTP 는 ±1 스텝까지 세 개가 동시에 맞아서, 비밀번호 상한(10)을
+    #: 그대로 쓰면 하루 수백 번을 찍어 볼 수 있다.
+    mfa_max_attempts: int = 5
+
+    #: 앞에 선 **신뢰하는** 프록시 수. `X-Forwarded-For` 를 오른쪽에서 이만큼
+    #: 들어간 항목을 클라이언트 주소로 본다. 왼쪽 항목은 클라이언트가 마음대로
+    #: 써 보낼 수 있다 — 그걸 믿으면 로그인 제한이 헤더 한 줄로 풀린다.
+    #:
+    #: 기본 1 은 web 컨테이너의 nginx 하나다(`$proxy_add_x_forwarded_for` 로
+    #: 자기가 본 주소를 맨 끝에 붙인다). 그 앞에 TLS 종단(로드밸런서·Caddy 등)을
+    #: 하나 더 세웠으면 2 로 올린다. 0 이면 헤더를 무시하고 소켓 주소를 쓴다 —
+    #: API 를 프록시 없이 바로 열었다면 0 이어야 한다.
+    trusted_proxy_hops: int = Field(default=1, ge=0)
 
     # argon2id 파라미터. 상향하면 로그인 시 자동 리해시된다.
     argon2_memory_cost: int = 65_536  # 64MB

@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from ieum.core.exceptions import ValidationError
@@ -32,6 +34,30 @@ def decode_cursor(cursor: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise ValidationError("커서를 해석할 수 없다.", code="common.invalid_cursor")
     return decoded
+
+
+def cursor_field[T](payload: dict[str, Any], key: str, parse: Callable[[Any], T]) -> T:
+    """커서에서 값 하나를 꺼내 형을 되살린다. 못 하면 `common.invalid_cursor`.
+
+    커서는 클라이언트가 들고 다니다 돌려주는 값이다 — 디코딩이 된다고 안에
+    든 것이 맞다는 보장은 없다. `payload["id"]` 의 KeyError, `UUID(...)` 의
+    ValueError 를 그대로 흘리면 깨진 커서 하나가 422 가 아니라 500 이 된다.
+    """
+    try:
+        return parse(payload[key])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ValidationError("커서를 해석할 수 없다.", code="common.invalid_cursor") from exc
+
+
+def aware_datetime(raw: Any) -> datetime:
+    """ISO 시각. **시간대가 없으면 거절한다** — `timestamptz` 와 견줄 때 어느
+    시간대로 읽을지를 드라이버에 맡기면 경계가 조용히 몇 시간 밀린다."""
+    if not isinstance(raw, str):
+        raise TypeError("시각은 문자열이어야 한다.")
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        raise ValueError("시간대가 없는 시각이다.")
+    return parsed
 
 
 @dataclass(frozen=True, slots=True)

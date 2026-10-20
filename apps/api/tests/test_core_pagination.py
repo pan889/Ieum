@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
 import pytest
 
 from ieum.core.exceptions import ValidationError
@@ -9,6 +13,8 @@ from ieum.core.pagination import (
     MAX_LIMIT,
     Page,
     PageRequest,
+    aware_datetime,
+    cursor_field,
     decode_cursor,
     encode_cursor,
 )
@@ -68,3 +74,35 @@ class TestPage:
         """total 은 요청했을 때만 계산한다. 기본은 None."""
         assert Page.from_rows([1], PageRequest(), lambda r: {"id": r}).total is None
         assert Page.from_rows([1], PageRequest(), lambda r: {"id": r}, total=1).total == 1
+
+
+class TestCursorField:
+    """커서 안의 값이 틀리면 500 이 아니라 `common.invalid_cursor` 다.
+
+    디코딩이 됐다고 안에 든 것이 맞다는 보장은 없다 — 클라이언트가 들고
+    다니다 돌려주는 값이다.
+    """
+
+    def test_reads_a_good_value(self) -> None:
+        uid = "01929d4e-0000-7000-8000-000000000001"
+        assert cursor_field({"id": uid}, "id", UUID) == UUID(uid)
+        assert cursor_field({"t": "2026-09-06T00:00:00+00:00"}, "t", aware_datetime) == datetime(
+            2026, 9, 6, tzinfo=UTC
+        )
+
+    @pytest.mark.parametrize(
+        ("payload", "parse"),
+        [
+            ({}, UUID),
+            ({"id": "nope"}, UUID),
+            ({"id": 7}, UUID),
+            ({"id": None}, UUID),
+            ({"id": "yesterday"}, aware_datetime),
+            ({"id": 7}, aware_datetime),
+            ({"id": "2026-09-06T00:00:00"}, aware_datetime),
+        ],
+    )
+    def test_a_bad_value_is_an_invalid_cursor(self, payload: dict[str, Any], parse: Any) -> None:
+        with pytest.raises(ValidationError) as exc:
+            cursor_field(payload, "id", parse)
+        assert exc.value.code == "common.invalid_cursor"

@@ -439,6 +439,117 @@ class TestLoginFailureIsRecorded:
         assert any(r["metadata"].get("email") == email for r in rows), rows
 
 
+class TestMFAAttemptLimitOverHttp:
+    """2FA 실패 제한은 **실패 기록이 커밋돼야** 돈다. 라우터가 실패 경로에서도
+    커밋하는지까지 함께 본다 — 롤백되면 실패가 세어지지 않는다."""
+
+    async def test_wrong_codes_end_in_429(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        client = app_client
+        secret = await _enroll_totp(client, _auth(await _login(client)))
+        pending = _auth(await _login(client))
+
+        for _ in range(settings.mfa_max_attempts):
+            bad = await client.post(
+                f"{BASE}/auth/mfa/verify", headers=pending, json={"code": "000000"}
+            )
+            assert bad.status_code == 422, bad.text
+
+        right = pyotp.TOTP(secret).at(utcnow() + timedelta(seconds=30))
+        limited = await client.post(
+            f"{BASE}/auth/mfa/verify", headers=pending, json={"code": right}
+        )
+        assert limited.status_code == 429, limited.text
+        assert limited.json()["error"]["code"] == "common.rate_limited"
+        # 맞는 코드였어도 세션은 열리지 않았다.
+        assert (await client.get(f"{BASE}/auth/me", headers=pending)).status_code == 403
+
+
+class TestForwardedFor:
+    """`X-Forwarded-For` 의 **왼쪽은 클라이언트가 쓴 값**이다.
+
+    nginx 는 들어온 헤더 뒤에 자기가 본 주소를 붙일 뿐이다. 첫 항목을 믿으면
+    요청마다 다른 주소를 적어 보내는 것만으로 IP 기준 제한이 풀린다.
+    """
+
+    async def test_a_forged_first_entry_does_not_dodge_the_limit(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        codes = []
+        for i in range(settings.login_max_attempts + 1):
+            r = await app_client.post(
+                f"{BASE}/auth/login",
+                json={"email": f"spray-{i}-{uuid4().hex[:6]}@example.com", "password": "x" * 12},
+                # 앞은 공격자가 지어낸 값, 끝은 우리 nginx 가 붙인 실제 주소.
+                headers={"X-Forwarded-For": f"198.51.100.{i + 1}, 192.0.2.10"},
+            )
+            codes.append(r.status_code)
+        assert codes[-1] == 429, codes
+
+    async def test_the_audit_log_records_the_proxied_address(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        email = f"where-{uuid4().hex[:10]}@example.com"
+        await app_client.post(
+            f"{BASE}/auth/login",
+            json={"email": email, "password": "wrong-password-1234"},
+            headers={"X-Forwarded-For": "6.6.6.6, 192.0.2.44"},
+        )
+        headers = _auth(await _login(app_client))
+        rows = (
+            await app_client.get(f"{BASE}/audit?action=auth.login.failed", headers=headers)
+        ).json()["items"]
+        mine = [r for r in rows if r["metadata"].get("email") == email]
+        assert [r["ip"] for r in mine] == ["192.0.2.44"]
+
+
+class TestClientAddress:
+    """`client_ip` 자체. 신뢰할 프록시 수만큼 오른쪽에서 들어간 항목을 쓴다."""
+
+    @staticmethod
+    def _ip(settings: Settings, hops: int, *forwarded: str) -> str | None:
+        from starlette.requests import Request
+
+        from ieum.core.deps import client_ip
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/",
+                "headers": [(b"x-forwarded-for", line.encode()) for line in forwarded],
+                "client": ("10.9.9.9", 4242),
+            }
+        )
+        return client_ip(request, settings.model_copy(update={"trusted_proxy_hops": hops}))
+
+    def test_one_hop_takes_the_last_entry(self, settings: Settings) -> None:
+        assert self._ip(settings, 1, "1.1.1.1, 2.2.2.2, 3.3.3.3") == "3.3.3.3"
+
+    def test_two_hops_take_the_second_from_the_right(self, settings: Settings) -> None:
+        assert self._ip(settings, 2, "1.1.1.1, 2.2.2.2, 3.3.3.3") == "2.2.2.2"
+
+    def test_zero_ignores_the_header(self, settings: Settings) -> None:
+        assert self._ip(settings, 0, "1.1.1.1") == "10.9.9.9"
+
+    def test_no_header_falls_back_to_the_socket(self, settings: Settings) -> None:
+        assert self._ip(settings, 1) == "10.9.9.9"
+
+    def test_fewer_entries_than_hops_take_the_outermost(self, settings: Settings) -> None:
+        assert self._ip(settings, 3, "1.1.1.1, 2.2.2.2") == "1.1.1.1"
+
+    def test_several_header_lines_are_read_as_one_list(self, settings: Settings) -> None:
+        assert self._ip(settings, 1, "1.1.1.1", "4.4.4.4") == "4.4.4.4"
+
+    def test_something_that_is_not_an_address_is_ignored(self, settings: Settings) -> None:
+        """그대로 두면 IP 칼럼(45자)에 넣다가 500 이 난다."""
+        assert self._ip(settings, 1, "1.1.1.1, " + "x" * 80) == "10.9.9.9"
+
+    def test_ipv6_is_kept(self, settings: Settings) -> None:
+        assert self._ip(settings, 1, "2001:db8::1") == "2001:db8::1"
+
+
 class TestSessionRevocation:
     """기기 하나만 끊는 길. 전부 끊으면 지금 쓰는 자리에서도 튕겨 나간다."""
 
@@ -566,6 +677,60 @@ class TestAuditLog:
         assert (await app_client.get(f"{BASE}/audit/actions", headers=invited)).status_code == 403
         # 거절이 빈 파일로 보이면 안 된다 — 헤더가 나간 뒤에 막으면 그렇게 된다.
         assert (await app_client.get(f"{BASE}/audit/export", headers=invited)).status_code == 403
+
+
+class TestCursorOverHttp:
+    async def test_a_broken_cursor_is_refused_not_a_crash(
+        self, app_client: httpx.AsyncClient
+    ) -> None:
+        """커서는 클라이언트가 들고 다니다 돌려주는 값이다. 디코딩은 되는데 안이
+        틀린 커서가 500 이면 안 된다."""
+        from ieum.core.pagination import encode_cursor
+
+        headers = _auth(await _login(app_client))
+        broken = encode_cursor({"id": "not-a-uuid"})
+        for path in ("/users", "/audit"):
+            r = await app_client.get(f"{BASE}{path}?cursor={broken}", headers=headers)
+            assert r.status_code == 422, (path, r.text)
+            assert r.json()["error"]["code"] == "common.invalid_cursor"
+
+
+class TestReinviteOverHttp:
+    async def test_the_invite_mailed_before_the_reinvite_is_dead(
+        self, app_client: httpx.AsyncClient, settings: Settings
+    ) -> None:
+        """다시 초대하면 계정이 `invited` 로 돌아간다. 상태만 보면 그 전에 나간
+        초대 메일이 다시 통한다 — 라우터가 토큰의 세대를 서비스에 넘겨야 막힌다."""
+        from ieum.modules.identity.invites import encode_invite_token
+
+        admin = _auth(await _login(app_client))
+        await _enroll_totp(app_client, admin)  # 다시 초대는 step-up 이다.
+        invited = await app_client.post(
+            f"{BASE}/users/invite",
+            json={"email": f"again-{uuid4().hex[:10]}@example.com", "display_name": "Again"},
+            headers=admin,
+        )
+        user_id = UUID(invited.json()["id"])
+        old = encode_invite_token(user_id, settings)
+        first = await app_client.post(
+            f"{BASE}/users/accept-invite", json={"token": old, "password": INVITED_PASSWORD}
+        )
+        assert first.status_code == 200, first.text
+
+        r = await app_client.post(f"{BASE}/users/{user_id}/reinvite", headers=admin)
+        assert r.status_code == 200, r.text
+
+        stale = await app_client.post(
+            f"{BASE}/users/accept-invite", json={"token": old, "password": "attacker-pass-1234"}
+        )
+        assert stale.status_code == 422, stale.text
+        assert stale.json()["error"]["code"] == "identity.invite_expired"
+
+        fresh = encode_invite_token(user_id, settings, generation=1)
+        ok = await app_client.post(
+            f"{BASE}/users/accept-invite", json={"token": fresh, "password": INVITED_PASSWORD}
+        )
+        assert ok.status_code == 200, ok.text
 
 
 async def _invited_user(client: httpx.AsyncClient, settings: Settings) -> dict[str, str]:

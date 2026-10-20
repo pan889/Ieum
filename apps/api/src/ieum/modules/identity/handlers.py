@@ -51,7 +51,8 @@ async def collect_invite_mail(ctx: HandlerContext, envelope: EventEnvelope) -> l
     if user.status != "invited":
         return []
 
-    token = encode_invite_token(user.id, ctx.settings)
+    # 지금 세대를 싣는다. 다시 초대되면 세대가 올라 이 토큰은 거기서 죽는다.
+    token = encode_invite_token(user.id, ctx.settings, generation=user.invite_generation)
     # 초대받은 사람의 언어로 쓴다. 초대한 사람의 언어가 아니다 (i18n.md 3절).
     translate = translator_for(ctx.settings.i18n_catalog_dir, user.locale)
     log.info("identity.invite_mail", user=str(user.id))

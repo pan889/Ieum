@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select
@@ -27,7 +28,11 @@ from ieum.core.ids import new_id
 from ieum.core.outbox import OutboxEvent
 from ieum.core.time import utcnow
 from ieum.modules.identity.handlers import HandlerContext, collect_invite_mail
-from ieum.modules.identity.invites import decode_invite_token, encode_invite_token
+from ieum.modules.identity.invites import (
+    decode_invite,
+    decode_invite_token,
+    encode_invite_token,
+)
 from ieum.modules.identity.models import AuditLog, LoginAttempt, User, UserSession
 from ieum.modules.identity.repository import SessionRepository
 from ieum.modules.identity.service import AuthService, MFAService, UserService
@@ -259,9 +264,13 @@ class TestInvite:
         assert again.status == "invited"
         assert again.password_hash is None
 
-        token = encode_invite_token(user.id, settings)
+        # 새 초대장은 새 세대를 싣는다(`collect_invite_mail` 이 그렇게 만든다).
+        token = encode_invite_token(user.id, settings, generation=again.invite_generation)
+        invite = decode_invite(token, settings)
         restored = await service.activate_with_password(
-            user_id=decode_invite_token(token, settings), password="brand-new-password"
+            user_id=invite.user_id,
+            password="brand-new-password",
+            invite_generation=invite.generation,
         )
         assert restored.status == "active"
 
@@ -351,6 +360,25 @@ class TestInviteToken:
     def test_garbage_rejected(self, settings: Settings) -> None:
         with pytest.raises(ValidationError):
             decode_invite_token("not-a-token", settings)
+
+    def test_carries_the_generation(self, settings: Settings) -> None:
+        token = encode_invite_token(new_id(), settings, generation=3)
+        assert decode_invite(token, settings).generation == 3
+
+    def test_a_token_from_before_generations_reads_as_zero(self, settings: Settings) -> None:
+        """세대 칸이 생기기 전에 나간 메일. 아직 수락 안 한 초대는 그대로 통해야 한다."""
+        import json
+
+        from ieum.core.crypto import SecretBox
+        from ieum.core.time import in_seconds
+        from ieum.modules.identity.invites import INVITE_PURPOSE
+
+        user_id = new_id()
+        legacy = SecretBox(settings.secret_key.get_secret_value(), purpose=INVITE_PURPOSE).encrypt(
+            json.dumps({"user_id": str(user_id), "expires_at": in_seconds(60).isoformat()})
+        )
+        got = decode_invite(legacy, settings)
+        assert (got.user_id, got.generation) == (user_id, 0)
 
 
 class TestPasswordChange:
@@ -647,3 +675,426 @@ class TestMFAService:
             await MFAService(session, settings).verify(
                 user_id=user.id, session_id=new_id(), code="000000"
             )
+
+
+async def _enrolled(session: AsyncSession, settings: Settings) -> tuple[User, str]:
+    """TOTP 를 등록해 둔 사람과 그 시크릿."""
+    import pyotp
+
+    user = await make_user(session, settings)
+    mfa = MFAService(session, settings)
+    enrollment = await mfa.start_totp_enrollment(user_id=user.id, mfa_satisfied=True)
+    await session.flush()
+    await mfa.confirm_totp_enrollment(
+        user_id=user.id,
+        credential_id=enrollment.credential_id,
+        code=pyotp.TOTP(enrollment.secret).now(),
+        mfa_satisfied=True,
+    )
+    await session.flush()
+    return user, enrollment.secret
+
+
+class TestMFAAttemptLimit:
+    """2FA 코드도 찍어 볼 수 있는 횟수가 정해져 있다.
+
+    없으면 비밀번호를 아는 사람이 6자리를 끝까지 찍어 본다 — ±1 스텝이라
+    한 번에 세 개가 맞아서 생각보다 빨리 뚫린다.
+    """
+
+    async def _fail(
+        self, session: AsyncSession, settings: Settings, user: User, times: int
+    ) -> None:
+        mfa = MFAService(session, settings)
+        for _ in range(times):
+            issued = await AuthService(session, settings).login(email=user.email, password=PASSWORD)
+            await session.flush()
+            with pytest.raises(ValidationError):
+                await mfa.verify(user_id=user.id, session_id=issued.session_id, code="000000")
+            await session.flush()
+
+    async def test_past_the_limit_even_the_right_code_is_refused(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """**코드를 보기 전에** 막는다. 보고 나서 막으면 맞는 코드에만 다른
+        답이 나가 제한이 무의미해진다."""
+        import pyotp
+
+        user, secret = await _enrolled(session, settings)
+        await self._fail(session, settings, user, settings.mfa_max_attempts)
+
+        issued = await AuthService(session, settings).login(email=user.email, password=PASSWORD)
+        await session.flush()
+        right = pyotp.TOTP(secret).at(utcnow() + timedelta(seconds=30))
+        with pytest.raises(RateLimitedError) as exc:
+            await MFAService(session, settings).verify(
+                user_id=user.id, session_id=issued.session_id, code=right
+            )
+        assert exc.value.status_code == 429
+        assert exc.value.retry_after_seconds > 0
+        row = await session.get(UserSession, issued.session_id)
+        assert row is not None and row.mfa_satisfied_at is None
+
+    async def test_new_sessions_do_not_refill_the_attempts(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """세션마다 세면 로그인 한 번에 시도 횟수가 다시 채워진다. `_fail` 은
+        시도마다 새로 로그인한다 — 그래도 막혀야 한다."""
+        user, _ = await _enrolled(session, settings)
+        await self._fail(session, settings, user, settings.mfa_max_attempts)
+
+        issued = await AuthService(session, settings).login(email=user.email, password=PASSWORD)
+        await session.flush()
+        with pytest.raises(RateLimitedError):
+            await MFAService(session, settings).verify(
+                user_id=user.id, session_id=issued.session_id, code="000000"
+            )
+
+    async def test_backup_codes_sit_behind_the_same_limit(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        user, _ = await _enrolled(session, settings)
+        codes = await MFAService(session, settings).issue_backup_codes(
+            user_id=user.id, mfa_satisfied=True
+        )
+        await self._fail(session, settings, user, settings.mfa_max_attempts)
+
+        issued = await AuthService(session, settings).login(email=user.email, password=PASSWORD)
+        await session.flush()
+        with pytest.raises(RateLimitedError):
+            await MFAService(session, settings).verify(
+                user_id=user.id, session_id=issued.session_id, code=codes[0]
+            )
+
+    async def test_one_persons_failures_do_not_block_another(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        import pyotp
+
+        noisy, _ = await _enrolled(session, settings)
+        await self._fail(session, settings, noisy, settings.mfa_max_attempts)
+
+        quiet, secret = await _enrolled(session, settings)
+        issued = await AuthService(session, settings).login(email=quiet.email, password=PASSWORD)
+        await session.flush()
+        await MFAService(session, settings).verify(
+            user_id=quiet.id,
+            session_id=issued.session_id,
+            code=pyotp.TOTP(secret).at(utcnow() + timedelta(seconds=30)),
+        )
+
+
+class TestUnknownAccountTiming:
+    """없는 계정도 **같은 비용**으로 해시를 검증한다.
+
+    상수 해시(`m=8,t=1,p=1`)를 썼을 때는 없는 계정의 검증이 수 마이크로초,
+    있는 계정은 설정된 비용이라 응답 시간만으로 가입 여부가 갈렸다.
+    """
+
+    @pytest.mark.parametrize("kind", ["unknown", "sso_only"])
+    async def test_the_dummy_hash_uses_the_configured_parameters(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+    ) -> None:
+        seen: list[str] = []
+        original = PasswordHashingService.verify
+
+        def spy(self: PasswordHashingService, password_hash: str, password: str) -> bool:
+            seen.append(password_hash)
+            return original(self, password_hash, password)
+
+        monkeypatch.setattr(PasswordHashingService, "verify", spy)
+        if kind == "unknown":
+            email = f"nobody-{new_id()}@example.com"
+        else:
+            email = (await make_user(session, settings, password=None)).email
+
+        with pytest.raises(AuthenticationError):
+            await AuthService(session, settings).login(email=email, password=PASSWORD)
+
+        assert len(seen) == 1
+        assert seen[0].startswith(
+            f"$argon2id$v=19$m={settings.argon2_memory_cost},"
+            f"t={settings.argon2_time_cost},p={settings.argon2_parallelism}$"
+        )
+
+
+class TestLoginLimitIsNotALockout:
+    """제한은 지연이지 잠금이 아니다. **남이 틀린 횟수로 본인이 막히면 잠금이다.**
+
+    이메일만으로 셌을 때는 주소 하나만 알면 어디서든 열 번 틀려 주는 것으로
+    본인을 15분씩 계속 막아 둘 수 있었다.
+    """
+
+    async def test_failures_from_elsewhere_do_not_lock_the_owner_out(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        user = await make_user(session, settings)
+        auth = AuthService(session, settings)
+        for _ in range(settings.login_max_attempts + 2):
+            with pytest.raises((AuthenticationError, RateLimitedError)):
+                await auth.login(email=user.email, password="wrong-password", ip="203.0.113.66")
+            await session.flush()
+
+        # 본인은 자기 자리에서 그대로 들어온다.
+        issued = await auth.login(email=user.email, password=PASSWORD, ip="198.51.100.7")
+        assert issued.access_token
+
+        # 틀린 쪽은 여전히 막혀 있다 — 무차별 대입 방어는 그대로다.
+        with pytest.raises(RateLimitedError):
+            await auth.login(email=user.email, password=PASSWORD, ip="203.0.113.66")
+
+    async def test_one_place_trying_many_accounts_is_still_cut_off(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """한 곳에서 계정을 바꿔 가며 찔러 보는 것은 IP 기준이 막는다."""
+        auth = AuthService(session, settings)
+        for _ in range(settings.login_max_attempts):
+            with pytest.raises(AuthenticationError):
+                await auth.login(
+                    email=f"spray-{new_id()}@example.com",
+                    password="wrong-password",
+                    ip="203.0.113.99",
+                )
+            await session.flush()
+
+        user = await make_user(session, settings)
+        with pytest.raises(RateLimitedError):
+            await auth.login(email=user.email, password=PASSWORD, ip="203.0.113.99")
+
+
+class TestReinviteClosesTheOldDoors:
+    """다시 초대하면 **그 전에 나간 열쇠가 전부 죽어야 한다.**
+
+    다시 초대하는 것은 비밀번호를 잊었을 때만이 아니라 계정이 샜을 때의
+    대응이기도 하다. 옛 초대 메일과 그 사람이 만들어 둔 API 토큰이 살아
+    있으면, 새 비밀번호를 정하는 순간 빠져나간 것이 그대로 다시 열린다.
+    """
+
+    async def test_an_invite_mailed_before_the_reinvite_no_longer_works(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        service = UserService(session, settings)
+        admin = await make_user(session, settings)
+        user = await service.invite(email=f"carol-{new_id()}@example.com", display_name="Carol")
+        old = decode_invite(
+            encode_invite_token(user.id, settings, generation=user.invite_generation), settings
+        )
+        await service.activate_with_password(
+            user_id=old.user_id, password=PASSWORD, invite_generation=old.generation
+        )
+
+        await service.reinvite(actor_id=admin.id, user_id=user.id)
+        # 상태는 다시 `invited` 다 — 옛 토큰은 상태 검사를 통과한다. 세대가 막는다.
+        with pytest.raises(ValidationError) as exc:
+            await service.activate_with_password(
+                user_id=old.user_id, password="attacker-pass-1234", invite_generation=old.generation
+            )
+        assert exc.value.code == "identity.invite_expired"
+        assert user.status == "invited"
+        assert user.password_hash is None
+
+    async def test_the_new_invite_mail_carries_the_new_generation(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        service = UserService(session, settings)
+        admin = await make_user(session, settings)
+        user = await service.invite(email=f"dave-{new_id()}@example.com", display_name="Dave")
+        await service.activate_with_password(user_id=user.id, password=PASSWORD)
+        await service.reinvite(actor_id=admin.id, user_id=user.id)
+        await session.flush()
+
+        mails = await collect_invite_mail(
+            HandlerContext(session=session, settings=settings),
+            EventEnvelope(
+                id=new_id(),
+                event_type="identity.user.invited",
+                aggregate_type="user",
+                aggregate_id=user.id,
+                payload={},
+            ),
+        )
+        assert mails[0].link is not None
+        fresh = decode_invite(mails[0].link.removeprefix("/invite?token="), settings)
+        assert fresh.generation == user.invite_generation == 1
+        restored = await service.activate_with_password(
+            user_id=fresh.user_id, password="brand-new-password", invite_generation=fresh.generation
+        )
+        assert restored.status == "active"
+
+    async def test_reinvite_revokes_api_tokens_but_keeps_mfa(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        """2FA 는 그대로 둔다 — 비밀번호를 잊은 사람이 돌아오는 정상 경로다."""
+        from ieum.modules.identity.models import ApiToken, MFACredential
+
+        user, _ = await _enrolled(session, settings)
+        admin = await make_user(session, settings)
+        token = ApiToken(user_id=user.id, name="ci", token_hash=f"h-{new_id()}", scopes=[])
+        session.add(token)
+        await session.flush()
+
+        await UserService(session, settings).reinvite(actor_id=admin.id, user_id=user.id)
+        await session.flush()
+        await session.refresh(token)
+        assert token.revoked_at is not None
+
+        kept = (
+            (await session.execute(select(MFACredential).where(MFACredential.user_id == user.id)))
+            .scalars()
+            .all()
+        )
+        assert [c.kind for c in kept] == ["totp"]
+
+        logged = (
+            (
+                await session.execute(
+                    select(AuditLog).where(
+                        AuditLog.action == "identity.user.reinvited", AuditLog.target_id == user.id
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert logged.audit_metadata["revoked_tokens"] == 1
+
+
+class TestCursorPages:
+    """`(created_at, id)` 커서. **같은 시각의 행이 경계에 걸려도 빠지면 안 된다.**
+
+    파이썬 튜플끼리 `>` 를 쓰면 SQL 이 `created_at > x` 하나만 남는다.
+    한 트랜잭션 안의 행은 `now()` 가 같아 created_at 이 전부 같다 — 일괄
+    초대·SCIM 밀어넣기·로그인 폭주가 정확히 그 모양이다.
+    """
+
+    async def test_users_created_together_all_come_through(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        from ieum.core.pagination import PageRequest
+        from ieum.modules.identity.repository import UserRepository
+
+        made = [await make_user(session, settings) for _ in range(5)]
+        assert len({u.created_at for u in made}) == 1
+
+        seen: list[UUID] = []
+        cursor: str | None = None
+        for _ in range(5):
+            page = await UserRepository(session).list_page(
+                PageRequest(limit=2, cursor=cursor), ids=[u.id for u in made]
+            )
+            seen.extend(u.id for u in page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        assert sorted(seen) == sorted(u.id for u in made)
+
+    async def test_audit_rows_written_together_all_come_through(
+        self, session: AsyncSession, settings: Settings
+    ) -> None:
+        from ieum.core.pagination import PageRequest
+        from ieum.modules.identity.repository import AuditFilter, AuditRepository
+
+        actor = await make_user(session, settings)
+        audit = AuditRepository(session)
+        made = [audit.record(action="test.burst", actor_id=actor.id) for _ in range(5)]
+        await session.flush()
+
+        seen: list[UUID] = []
+        cursor: str | None = None
+        for _ in range(5):
+            page = await audit.list(
+                AuditFilter(actor_id=actor.id), PageRequest(limit=2, cursor=cursor)
+            )
+            seen.extend(r.id for r in page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        assert sorted(seen) == sorted(r.id for r in made)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"id": "00000000-0000-0000-0000-000000000000"},
+            {"created_at": "2026-01-01T00:00:00+00:00"},
+            {"created_at": "not-a-time", "id": "00000000-0000-0000-0000-000000000000"},
+            {"created_at": "2026-01-01T00:00:00+00:00", "id": "not-a-uuid"},
+            {"created_at": 12, "id": 34},
+            # 시간대가 없으면 어느 시간대로 읽을지 드라이버 마음이 된다.
+            {"created_at": "2026-01-01T00:00:00", "id": "00000000-0000-0000-0000-000000000000"},
+        ],
+    )
+    async def test_a_broken_cursor_is_refused_not_a_crash(
+        self, session: AsyncSession, payload: dict[str, object]
+    ) -> None:
+        """깨진 커서 하나가 500 이면 안 된다. 클라이언트가 들고 다니는 값이다."""
+        from ieum.core.pagination import PageRequest, encode_cursor
+        from ieum.modules.identity.repository import AuditFilter, AuditRepository, UserRepository
+
+        request = PageRequest(limit=2, cursor=encode_cursor(payload))
+        with pytest.raises(ValidationError) as users:
+            await UserRepository(session).list_page(request)
+        assert users.value.code == "common.invalid_cursor"
+        with pytest.raises(ValidationError) as rows:
+            await AuditRepository(session).list(AuditFilter(), request)
+        assert rows.value.code == "common.invalid_cursor"
+
+
+class TestRefreshRace:
+    """같은 리프레시 토큰이 **동시에** 두 번 오면 한 번만 돈다.
+
+    잠그지 않던 때는 두 요청이 같이 "아직 안 쓰인 토큰" 을 읽고 둘 다 새
+    세션을 받았다 — 탈취한 쪽과 본인이 함께 살아남고 재사용 탐지는 울리지
+    않았다. 두 연결이 진짜로 겹쳐야 보이므로 롤백 세션이 아니라 엔진에서
+    커밋하는 세션 둘을 쓴다.
+    """
+
+    async def test_the_second_one_waits_and_is_treated_as_reuse(
+        self, engine: object, settings: Settings
+    ) -> None:
+        import asyncio
+
+        from sqlalchemy import delete
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        factory = async_sessionmaker(bind=engine, expire_on_commit=False)  # type: ignore[call-overload]
+        async with factory() as setup:
+            user = await make_user(setup, settings)
+            issued = await AuthService(setup, settings).login(email=user.email, password=PASSWORD)
+            await setup.commit()
+
+        async def refresh_like_the_router(s: AsyncSession) -> object:
+            try:
+                return await AuthService(s, settings).refresh(refresh_token=issued.refresh_token)
+            except Exception:
+                await s.commit()  # 라우터처럼 실패 경로도 커밋한다(계열 폐기가 남게).
+                raise
+
+        try:
+            async with factory() as first, factory() as second:
+                won = await AuthService(first, settings).refresh(refresh_token=issued.refresh_token)
+                # 첫 요청이 커밋하기 전에 두 번째가 온다.
+                late = asyncio.create_task(refresh_like_the_router(second))
+                await asyncio.sleep(0.3)
+                assert not late.done(), "두 번째 요청이 잠금을 기다리지 않고 지나갔다"
+                await first.commit()
+
+                with pytest.raises(AuthenticationError, match="재사용"):
+                    await late
+
+            # 재사용으로 처리됐으니 이긴 쪽의 세션도 함께 죽었다.
+            async with factory() as check:
+                survivor = await check.get(UserSession, won.session_id)
+                assert survivor is not None and survivor.revoked_at is not None
+        finally:
+            async with factory() as cleanup:
+                await cleanup.execute(delete(AuditLog).where(AuditLog.actor_id == user.id))
+                await cleanup.execute(
+                    delete(OutboxEvent).where(OutboxEvent.aggregate_id == user.id)
+                )
+                await cleanup.execute(delete(LoginAttempt).where(LoginAttempt.email == user.email))
+                await cleanup.execute(delete(User).where(User.id == user.id))
+                await cleanup.commit()

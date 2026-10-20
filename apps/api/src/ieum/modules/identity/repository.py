@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CursorResult, Select, delete, func, select, update
+from sqlalchemy import CursorResult, Select, delete, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ieum.core.pagination import Page, PageRequest
+from ieum.core.pagination import Page, PageRequest, aware_datetime, cursor_field
 from ieum.core.time import utcnow
 from ieum.modules.identity.models import (
     ApiToken,
@@ -82,13 +82,16 @@ class UserRepository:
             # 실수로 고객을 담당자로 지정하게 된다.
             stmt = stmt.where(User.is_customer.is_(False))
         # 커서는 (created_at, id) 복합. 같은 시각에 만들어진 행도 안정적으로 넘긴다.
+        #
+        # **`tuple_` 이라야 한다.** 파이썬 튜플끼리 `>` 를 쓰면 SQL 이 아니라
+        # 파이썬이 먼저 비교해 버려서 `created_at > x` 하나만 남는다 — 같은
+        # 시각에 들어온 행(일괄 초대·SCIM 밀어넣기)이 페이지 경계에 걸리면
+        # 다음 페이지에서 통째로 빠졌다.
         payload = request.cursor_payload
         if payload:
-            cursor_created = datetime.fromisoformat(payload["created_at"])
-            cursor_id = UUID(payload["id"])
-            stmt = stmt.where(
-                (User.created_at, User.id) > (cursor_created, cursor_id)  # type: ignore[operator]
-            )
+            cursor_created = cursor_field(payload, "created_at", aware_datetime)
+            cursor_id = cursor_field(payload, "id", UUID)
+            stmt = stmt.where(tuple_(User.created_at, User.id) > (cursor_created, cursor_id))
         stmt = stmt.order_by(User.created_at, User.id).limit(request.fetch_limit)
         rows = list((await self._s.execute(stmt)).scalars().all())
         return Page.from_rows(
@@ -239,13 +242,23 @@ class IdentityProviderRepository:
         self._s.add(row)
         return row
 
-    async def idp_group_ids_for(self, user_id: UUID) -> set[UUID]:
-        """IdP 가 준 그룹만. 손으로 넣은 그룹은 동기화가 건드리면 안 된다."""
+    async def idp_group_ids_for(self, user_id: UUID, provider_id: UUID) -> set[UUID]:
+        """이 IdP 가 준 그룹만. 손으로 넣은 그룹은 동기화가 건드리면 안 된다.
+
+        **다른 IdP 의 그룹도 건드리지 않는다.** 한 사람이 두 IdP 에 이어져
+        있으면, 한쪽으로 로그인할 때마다 다른 쪽이 준 그룹에서 빠진다.
+
+        주인이 비어 있는 옛 `idp` 그룹은 함께 준다 — 빼는 쪽으로만 쓰인다.
+        빼지 않으면 IdP 가 더는 보내지 않는 옛 그룹의 권한이 그대로 남는다.
+        """
         stmt = (
             select(GroupMember.group_id)
             .join(UserGroup, UserGroup.id == GroupMember.group_id)
             .where(GroupMember.user_id == user_id)
             .where(UserGroup.source == "idp")
+            .where(
+                or_(UserGroup.idp_provider_id == provider_id, UserGroup.idp_provider_id.is_(None))
+            )
         )
         return set((await self._s.execute(stmt)).scalars().all())
 
@@ -320,7 +333,22 @@ class SessionRepository:
         return await self._s.get(UserSession, session_id)
 
     async def get_by_refresh_hash(self, token_hash: str) -> UserSession | None:
-        stmt = select(UserSession).where(UserSession.refresh_token_hash == token_hash)
+        """리프레시 로테이션용. **행을 잠근다.**
+
+        잠그지 않으면 같은 토큰을 든 요청 둘이 동시에 "아직 안 쓰인 토큰" 을
+        읽고 둘 다 새 세션을 받는다 — 탈취한 쪽과 본인이 함께 살아남고 재사용
+        탐지는 울리지 않는다. 잠그면 두 번째는 첫 번째가 커밋할 때까지 기다렸다가
+        `rotated_to_id` 가 찬 행을 다시 읽고, 재사용으로 처리된다.
+
+        `populate_existing` 은 같은 세션에 이미 올라와 있던 낡은 객체를 잠근
+        뒤의 값으로 덮어쓰게 한다.
+        """
+        stmt = (
+            select(UserSession)
+            .where(UserSession.refresh_token_hash == token_hash)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         return (await self._s.execute(stmt)).scalar_one_or_none()
 
     async def get_by_access_hash(self, token_hash: str) -> UserSession | None:
@@ -460,6 +488,17 @@ class ApiTokenRepository:
         self._s.add(token)
         return token
 
+    async def revoke_all_for_user(self, user_id: UUID) -> int:
+        """이 사람의 살아 있는 토큰을 전부 폐기한다. 폐기한 개수를 돌려준다."""
+        stmt = (
+            update(ApiToken)
+            .where(ApiToken.user_id == user_id)
+            .where(ApiToken.revoked_at.is_(None))
+            .values(revoked_at=utcnow())
+        )
+        result: CursorResult[Any] = await self._s.execute(stmt)  # type: ignore[assignment]
+        return int(result.rowcount or 0)
+
 
 class LoginAttemptRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -471,7 +510,16 @@ class LoginAttemptRepository:
         return attempt
 
     async def recent_failures(self, *, email: str, ip: str | None, window_seconds: int) -> int:
-        """슬라이딩 윈도우 안의 실패 횟수. 계정과 IP 중 큰 쪽을 쓴다."""
+        """슬라이딩 윈도우 안의 실패 횟수. (계정, IP) 쌍과 IP 중 큰 쪽을 쓴다.
+
+        **계정만으로 세지 않는다.** 그러면 이메일 주소 하나만 아는 사람이 어디서든
+        열 번 틀려 주는 것으로 본인을 15분씩 계속 막아 둘 수 있다 — 제한이 곧
+        남의 계정을 잠그는 스위치가 된다. 쌍으로 세면 남이 다른 곳에서 틀린
+        횟수는 본인 몫에 들어오지 않는다. 한 곳에서 여러 계정을 찔러 보는 것은
+        IP 기준이 막는다.
+
+        IP 를 모르면(소켓 주소조차 없는 경우) "모르는 곳" 하나로 묶어 센다.
+        """
         since = utcnow() - timedelta(seconds=window_seconds)
         base = (
             select(func.count())
@@ -479,13 +527,16 @@ class LoginAttemptRepository:
             .where(LoginAttempt.created_at >= since)
             .where(LoginAttempt.succeeded.is_(False))
         )
-        by_email = (
-            await self._s.execute(base.where(LoginAttempt.email == normalize_email(email)))
+        from_here = LoginAttempt.ip.is_(None) if ip is None else LoginAttempt.ip == ip
+        by_pair = (
+            await self._s.execute(
+                base.where(LoginAttempt.email == normalize_email(email)).where(from_here)
+            )
         ).scalar_one()
         if ip is None:
-            return int(by_email)
-        by_ip = (await self._s.execute(base.where(LoginAttempt.ip == ip))).scalar_one()
-        return int(max(by_email, by_ip))
+            return int(by_pair)
+        by_ip = (await self._s.execute(base.where(from_here))).scalar_one()
+        return int(max(by_pair, by_ip))
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,6 +557,21 @@ class AuditFilter:
 class AuditRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
+
+    async def count_recent(self, *, action: str, actor_id: UUID, window_seconds: int) -> int:
+        """이 사람이 창 안에서 남긴 그 행동의 수. 2FA 실패 제한이 쓴다.
+
+        `ix_audit_log_actor_id_created_at` 를 그대로 탄다.
+        """
+        since = utcnow() - timedelta(seconds=window_seconds)
+        stmt = (
+            select(func.count())
+            .select_from(AuditLog)
+            .where(AuditLog.actor_id == actor_id)
+            .where(AuditLog.created_at >= since)
+            .where(AuditLog.action == action)
+        )
+        return int((await self._s.execute(stmt)).scalar_one())
 
     async def list(self, filters: AuditFilter, request: PageRequest) -> Page[AuditLog]:
         """최신순. 감사 로그는 늘 "방금 무슨 일이 있었나" 부터 본다."""
@@ -531,12 +597,13 @@ class AuditRepository:
 
         # 커서는 (created_at, id) 복합. 같은 시각에 쌓인 행도 안정적으로 넘긴다 —
         # 로그인 폭주 때 한 밀리초에 수십 행이 들어온다.
+        # 파이썬 튜플 비교는 SQL 이 되지 않는다 — 사용자 목록의 주석 참조.
         payload = request.cursor_payload
         if payload:
-            cursor_created = datetime.fromisoformat(payload["created_at"])
-            cursor_id = UUID(payload["id"])
+            cursor_created = cursor_field(payload, "created_at", aware_datetime)
+            cursor_id = cursor_field(payload, "id", UUID)
             stmt = stmt.where(
-                (AuditLog.created_at, AuditLog.id) < (cursor_created, cursor_id)  # type: ignore[operator]
+                tuple_(AuditLog.created_at, AuditLog.id) < (cursor_created, cursor_id)
             )
         stmt = stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(
             request.fetch_limit

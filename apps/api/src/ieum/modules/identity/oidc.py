@@ -223,13 +223,26 @@ def read_claims(
         subject=subject,
         # 이메일이 검증되지 않았으면 **없는 것으로 본다.** 검증 안 된 주소로
         # 기존 계정에 이으면 남의 계정을 가져갈 수 있다.
-        email=str(email).strip().lower()
-        if email and claims.get("email_verified", False) is not False
-        else None,
+        email=str(email).strip().lower() if email and _email_verified(claims) else None,
         name=str(claims[name_claim]) if claims.get(name_claim) else None,
         groups=groups,
         mfa_satisfied=trust_idp_mfa and _idp_did_mfa(claims),
     )
+
+
+def _email_verified(claims: dict[str, Any]) -> bool:
+    """`email_verified` 가 **참이라고 말할 때만** 참이다.
+
+    "거짓이 아니면 참" 으로 읽은 적이 있다(`is not False`). 그러면 문자열
+    `"false"`, `0`, `null` 이 전부 검증된 주소가 됐다 — 값을 문자열로 보내는
+    IdP 가 있고, 그런 IdP 에서는 검증 안 된 주소를 적은 계정이 같은 주소의
+    기존 계정에 그대로 이어질 수 있었다. 참은 `true` 와 대소문자 무관한 `"true"` 뿐이다.
+    클레임이 아예 없으면 검증되지 않은 것으로 본다.
+    """
+    value = claims.get("email_verified")
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() == "true"
 
 
 def _idp_did_mfa(claims: dict[str, Any]) -> bool:
