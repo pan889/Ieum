@@ -862,6 +862,95 @@ class TestDeciding:
         assert made.cancelled_by == agent.user_id
 
 
+class TestTwoApproversAtOnce:
+    """**`all` 모드에서 두 승인자가 동시에 누르면 승인이 영원히 대기에 남았다.**
+
+    결정은 "내 표를 넣고 → 표를 다시 세고 → 다 모였으면 닫는다" 인데, 행을
+    잠그지 않아 두 트랜잭션이 각자 자기 표만 보고(상대의 표는 아직 커밋 전이다)
+    "아직 한 사람 남았다" 로 끝났다. 표는 둘 다 들어갔는데 승인은 pending 이고,
+    관문이 티켓을 막는다 — 다시 누를 사람도 없다(한 사람은 한 번만 결정한다).
+
+    롤백 세션(`session` 픽스처)으로는 두 트랜잭션을 만들 수 없어서 여기서는
+    실제로 커밋하고, 끝나면 치운다.
+    """
+
+    @pytest.mark.integration
+    async def test_the_second_decision_waits_and_counts_both(
+        self, engine: object, permissions: PermissionService
+    ) -> None:
+        import asyncio
+
+        from sqlalchemy import delete
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        factory = async_sessionmaker(bind=engine, expire_on_commit=False)  # type: ignore[arg-type]
+        async with factory() as setup:
+            one, two = await _user(setup), await _user(setup)
+            fixture = await _setup(
+                setup,
+                approval={
+                    "mode": "all",
+                    "user_ids": [str(one.id), str(two.id)],
+                    "group_ids": [],
+                },
+            )
+            made = await request_for(
+                setup,
+                issue_id=fixture.issue.id,
+                request_type=fixture.request_type,
+                reporter_id=None,
+            )
+            assert made is not None
+            await setup.commit()
+        approval_id = made.id
+
+        try:
+            async with factory() as first, factory() as second:
+                await ApprovalService(first, permissions).decide(
+                    _actor_of(one), approval_id, decision="approve"
+                )
+                # 첫째는 아직 커밋하지 않았다. 둘째가 지금 들어온다.
+                racing = asyncio.create_task(
+                    ApprovalService(second, permissions).decide(
+                        _actor_of(two), approval_id, decision="approve"
+                    )
+                )
+                # 잠그면 둘째는 첫째의 커밋을 기다린다. 안 잠그면 곧바로 끝난다 —
+                # 그때는 자기 표만 보고 "대기" 로 끝난 것이다.
+                await asyncio.wait({racing}, timeout=0.5)
+                await first.commit()
+                second_view = await racing
+                await second.commit()
+
+            assert second_view.status == "approved"
+            async with factory() as check:
+                row = await check.get(Approval, approval_id)
+                assert row is not None
+                assert row.status == "approved"
+                assert row.decided_at is not None
+        finally:
+            async with factory() as cleanup:
+                await cleanup.execute(
+                    delete(OutboxEvent).where(OutboxEvent.aggregate_id == fixture.issue.id)
+                )
+                await cleanup.execute(
+                    delete(RequestType).where(RequestType.id == fixture.request_type.id)
+                )
+                await cleanup.execute(
+                    delete(Portal).where(Portal.id == fixture.request_type.portal_id)
+                )
+                await cleanup.execute(delete(Issue).where(Issue.id == fixture.issue.id))
+                await cleanup.execute(
+                    delete(IssueType).where(IssueType.project_id == fixture.project.id)
+                )
+                await cleanup.execute(delete(Project).where(Project.id == fixture.project.id))
+                await cleanup.execute(
+                    delete(Workflow).where(Workflow.id == fixture.todo.workflow_id)
+                )
+                await cleanup.execute(delete(User).where(User.id.in_([one.id, two.id])))
+                await cleanup.commit()
+
+
 class TestReading:
     async def test_my_list_shows_only_what_i_can_still_decide(
         self, session: AsyncSession, permissions: PermissionService

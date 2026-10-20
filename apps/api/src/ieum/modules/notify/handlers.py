@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ieum.config import Settings
 from ieum.core.events import EventEnvelope
 from ieum.core.logging import get_logger
+from ieum.core.permissions import PermissionService, get_permission_service
 from ieum.modules.notify.models import WebhookDelivery
 from ieum.modules.notify.repository import DeliveryRepository, WebhookRepository
 from ieum.modules.notify.service import (
@@ -43,7 +44,7 @@ ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     "issue.transitioned": ("issue.transitioned", "notifications:issue.transitioned"),
     "issue.commented": ("issue.commented", "notifications:issue.commented"),
     # SLA 위반 (C5). **같은 표에 둔다** — 알림 경로가 하나여야 하고, 두 길로
-    # 만들면 환경설정(메일 끄기·워치)이 한쪽만 적용된다. `_recipients` 가
+    # 만들면 환경설정(메일 끄기·워치)이 한쪽만 적용된다. `_named_recipients` 가
     # 페이로드의 `assignee_id` 를 이미 더하므로, 담당자는 워치하지 않아도
     # 받는다. 담당자가 없으면 워처(= 큐를 보는 사람들)에게 간다.
     "desk.sla.breached": ("desk.sla.breached", "notifications:sla.breached"),
@@ -55,7 +56,7 @@ ISSUE_NOTIFICATIONS: dict[str, tuple[str, str]] = {
     #
     # 승인 요청의 수신자는 워처가 아니라 **찍어 둔 승인자들**이다. 그 사람들은
     # 티켓을 보고 있지 않고(부서장·고객이다), 지목하지 않으면 결정할 사람이
-    # 아무 소식을 못 받는다. `_recipients` 가 `to_user_ids` 를 읽는다.
+    # 아무 소식을 못 받는다. `_named_recipients` 가 `to_user_ids` 를 읽는다.
     "desk.approval.requested": ("desk.approval.requested", "notifications:approval.requested"),
     # 결정은 반대다: 기다리던 사람들(보고자·담당자·워처)에게 간다.
     "desk.approval.decided": ("desk.approval.decided", "notifications:approval.decided"),
@@ -88,6 +89,13 @@ class HandlerContext:
 
     session: AsyncSession
     settings: Settings
+    #: 워처가 아직 대상을 볼 수 있는지 다시 물을 때 쓴다. 비우면 기동 때
+    #: 꽂은 것(`wiring.install_permissions`)을 쓴다 — **없으면 터진다.** 검사를
+    #: 건너뛰는 쪽으로 넘어지면 그게 곧 새는 길이다.
+    permissions: PermissionService | None = None
+
+    def permission_service(self) -> PermissionService:
+        return self.permissions or get_permission_service()
 
 
 async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> list[UUID]:
@@ -104,13 +112,16 @@ async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> li
     if envelope.event_type == "issue.commented" and envelope.get("is_internal"):
         return []
 
-    watchers = await _recipients(ctx, envelope)
+    named = _named_recipients(envelope)
     # 멘션은 issues 가 이미 볼 권한을 확인해서 실어 보낸다 (notify 는 이슈
     # ACL 을 못 본다). 본인이 자기를 멘션한 건 알릴 필요가 없다.
     mentioned = {uid for uid in envelope.uuid_list("mentioned_ids") if uid != actor_id}
     # 멘션된 사람에게는 멘션 알림 하나만 간다. 워처이기도 하다고 두 번 보내면
-    # 같은 일로 알림이 두 개 쌓인다.
-    watchers -= mentioned
+    # 같은 일로 알림이 두 개 쌓인다. **거르기 전에 뺀다** — 어차피 안 받을
+    # 사람의 권한을 물을 이유가 없다.
+    named -= mentioned
+    candidates = await _watchers(ctx, envelope) - mentioned - named
+    watchers = named | await _still_visible(ctx, candidates, WATCH_TARGET_ISSUE, envelope)
     if not watchers and not mentioned:
         return []
 
@@ -163,12 +174,8 @@ async def handle_issue_event(ctx: HandlerContext, envelope: EventEnvelope) -> li
     return [n.id for n in created]
 
 
-async def _recipients(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]:
-    """이슈 워처 + **프로젝트 워처** + 담당자 + 보고자.
-
-    담당자·보고자는 이벤트 페이로드에 실려 온다. 이슈를 되짚어 읽으면
-    모듈 경계를 넘는다.
-    """
+async def _watchers(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]:
+    """이슈 워처 + **프로젝트 워처**. 아직 거르지 않은 후보다 (`_still_visible`)."""
     watches = WatchService(ctx.session)
     watchers = await watches.watchers_of(WATCH_TARGET_ISSUE, envelope.aggregate_id)
     # **프로젝트를 보고 있으면 그 안의 이슈 소식을 받는다.** 문서 쪽이 이미
@@ -181,18 +188,51 @@ async def _recipients(ctx: HandlerContext, envelope: EventEnvelope) -> set[UUID]
     project_id = envelope.uuid("project_id")
     if project_id is not None:
         watchers |= await watches.watchers_of(WATCH_TARGET_PROJECT, project_id)
+    return watchers
+
+
+def _named_recipients(envelope: EventEnvelope) -> set[UUID]:
+    """담당자 + 보고자 + 이벤트가 **지목한 사람**.
+
+    담당자·보고자는 이벤트 페이로드에 실려 온다. 이슈를 되짚어 읽으면
+    모듈 경계를 넘는다.
+
+    **워처처럼 다시 거르지 않는다.** 이 사람들은 이슈를 낸 모듈이 이 일의
+    당사자로 고른 사람이고, 그중에는 내부 권한이 아예 없는 고객(포털 요청의
+    보고자, 고객 승인자)이 있다 — `issue.view` 로 거르면 그 사람들이 자기
+    요청의 소식을 못 받는다. 멘션과 같은 자리다: 고르는 쪽이 책임진다.
+    """
+    named: set[UUID] = set()
     # `to_user_id` 는 SLA 에스컬레이션 규칙이 **지목한 사람**이다. 워처도
     # 담당자도 아닐 수 있고, 그래서 이 키를 안 읽으면 규칙이 부른 사람에게만
     # 알림이 안 간다 — 규칙 전체가 하는 일이 그것뿐인데.
     for key in ("assignee_id", "reporter_id", "to_user_id"):
         found = envelope.uuid(key)
         if found is not None:
-            watchers.add(found)
+            named.add(found)
     # **여럿을 지목하는 이벤트**도 있다 (승인 요청, C12). 승인자는 워처도
     # 담당자도 아닐 수 있고, 이 줄이 없으면 결정할 사람들에게만 알림이 안
     # 간다 — 그 알림이 이 기능이 하는 일의 전부인데.
-    watchers |= set(envelope.uuid_list("to_user_ids"))
-    return watchers
+    named |= set(envelope.uuid_list("to_user_ids"))
+    return named
+
+
+async def _still_visible(
+    ctx: HandlerContext, watchers: set[UUID], target_type: str, envelope: EventEnvelope
+) -> set[UUID]:
+    """워처 중 **지금도 이 대상을 볼 수 있는** 사람만.
+
+    구독 관문은 구독한 대상만 본다. 프로젝트를 볼 수 있으면 프로젝트를
+    구독할 수 있지만, 그 안에서 보안 레벨이 걸린 이슈는 못 볼 수 있다 —
+    스페이스와 제한 문서도 같다. 그런데 워처 목록을 그대로 수신자로 쓰니,
+    알림 제목에 실린 요약·문서 제목이 볼 수 없는 사람에게 갔다. 이슈·문서를
+    직접 구독한 사람도 구독한 뒤에 제한이 걸릴 수 있으므로 함께 거른다.
+    """
+    if not watchers:
+        return set()
+    return await WatchService(ctx.session).visible_to(
+        watchers, target_type, envelope.aggregate_id, permissions=ctx.permission_service()
+    )
 
 
 async def handle_page_event(ctx: HandlerContext, envelope: EventEnvelope) -> list[UUID]:
@@ -221,6 +261,9 @@ async def handle_page_event(ctx: HandlerContext, envelope: EventEnvelope) -> lis
     # 멘션된 사람에게는 멘션 알림 하나만 간다. 워처이기도 하다고 두 번 보내면
     # 같은 일로 알림이 두 개 쌓인다.
     watchers -= mentioned
+    # **스페이스 워처가 제한 문서의 제목을 받지 않게** 사람마다 다시 묻는다
+    # (`_still_visible`). 멘션은 wiki 가 같은 기준으로 이미 걸렀다.
+    watchers = await _still_visible(ctx, watchers, WATCH_TARGET_PAGE, envelope)
     if not watchers and not mentioned:
         return []
 

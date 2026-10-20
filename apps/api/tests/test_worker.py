@@ -514,6 +514,66 @@ class TestOneBadEventDoesNotTakeTheBatchWithIt:
         assert bad.last_error
 
 
+class TestARolledBackEventSendsNoMail:
+    """**세이브포인트가 되돌아가도 앞에서 모은 메일은 나갔다.**
+
+    핸들러들이 메일을 배치 전체의 목록에 곧바로 붙였다. 뒤 핸들러(자동화)가
+    터지면 그 이벤트의 DB 변경은 세이브포인트와 함께 되돌아가고 이벤트는
+    재시도되는데, 목록에 붙은 메일은 그대로 남아 발송됐다 — 그리고 재시도가
+    같은 메일을 또 모은다. 고객은 같은 회신을 재시도 횟수만큼 받는다.
+    """
+
+    async def test_the_mail_goes_once_after_the_retry_succeeds(
+        self,
+        worker_env: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ieum.modules.notify.mail import Mail
+        from ieum.worker import tasks as worker_tasks
+
+        # `issue.archived` 는 알림을 만들지 않는다 — 여기서 보는 메일은
+        # 아래에서 끼워 넣은 회신 메일뿐이다.
+        doomed = await seed_event(worker_env, event_type="issue.archived")
+        healthy = await seed_event(worker_env, event_type="issue.archived")
+        broken = {"yes": True}
+
+        async def reply_mail(_ctx: Any, envelope: Any) -> list[Mail]:
+            return [Mail(to=f"{envelope.aggregate_id}@example.com", subject="회신", body="b")]
+
+        async def automation(_ctx: Any, envelope: Any) -> int:
+            if broken["yes"] and envelope.aggregate_id == doomed["issue_id"]:
+                raise RuntimeError("규칙이 터졌다")
+            return 0
+
+        sent: list[Mail] = []
+
+        async def fake_send_all(_settings: Any, mails: list[Mail]) -> int:
+            sent.extend(mails)
+            return len(mails)
+
+        monkeypatch.setattr(worker_tasks, "collect_reply_mail", reply_mail)
+        monkeypatch.setattr(worker_tasks, "handle_automation", automation)
+        monkeypatch.setattr(worker_tasks, "send_all", fake_send_all)
+
+        assert await drain_outbox() == 2
+        # 터진 이벤트의 메일은 안 나갔다. 멀쩡한 쪽은 나갔다.
+        assert [m.to for m in sent] == [f"{healthy['issue_id']}@example.com"]
+        async with worker_env() as session:
+            row = (
+                await session.execute(
+                    select(OutboxEvent).where(OutboxEvent.aggregate_id == doomed["issue_id"])
+                )
+            ).scalar_one()
+        assert row.published_at is None and row.attempts == 1
+
+        # 고쳐진 뒤의 재시도에서 **한 번** 나간다.
+        broken["yes"] = False
+        assert await drain_outbox() == 1
+        assert sorted(m.to for m in sent) == sorted(
+            [f"{healthy['issue_id']}@example.com", f"{doomed['issue_id']}@example.com"]
+        )
+
+
 class TestOneBadMailDoesNotEatTheRest:
     """**읽음으로 표시된 메일은 다시 못 가져온다.**
 

@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import cast, select
+from sqlalchemy import ColumnElement, any_, cast, column, exists, func, not_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,7 @@ from ieum.core.time import utcnow
 from ieum.modules.desk import sla
 from ieum.modules.desk.calendar import BusinessCalendar, CalendarError, add_working_seconds
 from ieum.modules.desk.models import BusinessCalendarRow, SlaClock, SlaPolicy, TicketExt
+from ieum.modules.identity import contracts as identity
 from ieum.modules.issues import contracts as issues
 
 log = get_logger(__name__)
@@ -51,6 +53,7 @@ async def handle_desk_event(ctx: ClockContext, envelope: EventEnvelope) -> int:
             envelope.aggregate_id,
             actor_id=envelope.uuid("actor_id"),
             is_internal=bool(envelope.payload.get("is_internal")),
+            automated=bool(envelope.payload.get("automated")),
         )
     if envelope.event_type == "issue.transitioned":
         return await on_transition(
@@ -132,24 +135,72 @@ async def start_clocks(session: AsyncSession, issue_id: UUID) -> int:
 
 
 async def on_comment(
-    session: AsyncSession, issue_id: UUID, *, actor_id: UUID | None, is_internal: bool
+    session: AsyncSession,
+    issue_id: UUID,
+    *,
+    actor_id: UUID | None,
+    is_internal: bool,
+    automated: bool = False,
 ) -> int:
-    """공개 회신이 나가면 **첫 응답** 시계가 끝난다.
+    """**상담원의** 공개 회신이 나가면 **첫 응답** 시계가 끝난다.
 
     내부 노트는 응답이 아니다. 고객은 그것을 볼 수 없으므로, 내부 노트로
     첫 응답 SLA 를 지킬 수 있게 두면 그 지표는 아무 것도 뜻하지 않는다.
 
-    고객 자신의 회신도 응답이 아니다 — 고객이 한 번 더 물어서 우리 SLA 가
-    지켜지는 것은 거꾸로다.
+    고객 쪽의 회신도 응답이 아니다 — 고객이 한 번 더 물어서 우리 SLA 가
+    지켜지는 것은 거꾸로다. 자동화가 남긴 글도 아니다: 규칙이 "접수했습니다"
+    를 달자마자 첫 응답이 끝나면, 사람이 아무도 안 본 티켓이 SLA 를 지킨다.
+    누가 썼는지는 `reply_origin` 이 가른다.
     """
     if is_internal:
         return 0
     ticket = await session.get(TicketExt, issue_id)
     if ticket is None:
         return 0
-    if actor_id is not None and actor_id == ticket.reporter_customer_id:
+    origin = await reply_origin(session, ticket, actor_id=actor_id, automated=automated)
+    if origin != "agent":
         return 0
     return await _complete(session, issue_id, metric="first_response")
+
+
+#: 공개 회신을 누가 썼는가. `reply_origin` 이 돌려준다.
+ReplyOrigin = Literal["agent", "customer", "system"]
+
+#: 이벤트의 `actor_id` 가 "우리 사용자 중 누구도 아니다" 일 때의 값. 메일로
+#: 온 회신과 게스트(`service.guest_actor`), 자동화(`add_comment_as_system`)가
+#: 이 자리에 nil UUID 를 남긴다.
+_NOBODY = UUID(int=0)
+
+
+async def reply_origin(
+    session: AsyncSession, ticket: TicketExt, *, actor_id: UUID | None, automated: bool
+) -> ReplyOrigin:
+    """이 공개 회신이 **어느 쪽에서** 왔는가.
+
+    - `system` — 자동화 규칙이 남겼다(`automated`). 사람이 아니다.
+    - `customer` — 고객 쪽이다: 메일로 온 회신·게스트(nil UUID), 요청자 본인,
+      그리고 고객 계정(같은 조직의 동료가 포털에서 답한 경우).
+    - `agent` — 그 밖의 우리 사용자. 상담원이다.
+
+    **한 곳에서 가른다.** 처음에는 클럭과 메일 발송이 각자
+    `actor_id == reporter_customer_id` 만 봤는데, 메일 티켓은
+    `reporter_customer_id` 가 비어 있고 메일 회신의 행위자는 nil UUID 다 —
+    고객이 메일로 한 번 더 묻자 첫 응답 SLA 가 끝났고, 그 메일이 고객에게
+    도로 나갔다. 둘이 같은 질문을 하므로 답도 하나여야 한다.
+
+    nil 이 자동화 표시 없이 오면 고객 쪽으로 본다. 그 값을 남기는 길 중
+    자동화가 아닌 것은 메일 회신과 게스트뿐이다.
+    """
+    if automated:
+        return "system"
+    if actor_id is None or actor_id == _NOBODY:
+        return "customer"
+    if ticket.reporter_customer_id is not None and actor_id == ticket.reporter_customer_id:
+        return "customer"
+    user = await identity.get_user(session, actor_id)
+    if user is not None and user.is_customer:
+        return "customer"
+    return "agent"
 
 
 async def on_transition(session: AsyncSession, issue_id: UUID, *, to_state_category: str) -> int:
@@ -276,6 +327,16 @@ async def sweep_escalations(session: AsyncSession, *, limit: int = 200) -> list[
                 # 규칙이 없는 정책은 아예 안 집는다. 티켓이 쌓이면 이 조건이
                 # 없는 스윕은 클럭 전체를 읽고 달력을 파싱한다.
                 SlaPolicy.escalations != cast("[]", JSONB),
+                # **할 일이 남은 클럭만 집는다.** 규칙을 다 돌린 클럭도 안
+                # 끝났으면(위반한 채 열려 있는 티켓) 예전에는 계속 집혔다.
+                # `target_at` 순이라 그런 클럭이 늘 맨 앞이고, 그것이 상한만큼
+                # 쌓이면 스윕은 매번 할 일 없는 묶음만 읽고 끝났다 — 새 티켓의
+                # 에스컬레이션은 영원히 안 돌았다.
+                _has_pending_rule(),
+                # 목표가 0 인 클럭(목표 컬럼이 생기기 전에 걸린 것)은
+                # `consumed_percent` 가 늘 0 이라 어떤 규칙도 안 걸린다. 같은
+                # 이유로 묶음의 자리를 차지하지 않게 뺀다.
+                SlaClock.goal_seconds > 0,
             )
             .order_by(SlaClock.target_at)
             .limit(limit)
@@ -323,6 +384,18 @@ async def sweep_escalations(session: AsyncSession, *, limit: int = 200) -> list[
 
 
 # ── 내부 ────────────────────────────────────────────────────────
+
+
+def _has_pending_rule() -> ColumnElement[bool]:
+    """정책의 규칙 중 이 클럭이 **아직 안 돌린 것**이 있는가 (SQL).
+
+    실행 표시는 `EscalationRule.key` (`"75:notify"`) 로 남으므로 같은 모양을
+    SQL 에서 만들어 비교한다. 저장할 때 `validate_escalations` 가 두 값을
+    정수·이름으로 검증하므로 문자열로 이어 붙인 값이 파이썬 쪽과 같다.
+    """
+    rule = func.jsonb_array_elements(SlaPolicy.escalations).table_valued(column("value", JSONB))
+    key = rule.c.value["at_percent"].astext.concat(":").concat(rule.c.value["action"].astext)
+    return exists(select(1).select_from(rule).where(not_(key == any_(SlaClock.escalated))))
 
 
 async def _complete(session: AsyncSession, issue_id: UUID, *, metric: str) -> int:

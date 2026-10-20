@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,7 +158,12 @@ async def _comment(
 
 
 def _envelope(
-    issue_id: object, comment: IssueComment, *, internal: bool, actor_id: object = None
+    issue_id: object,
+    comment: IssueComment,
+    *,
+    internal: bool,
+    actor_id: object = None,
+    automated: bool = False,
 ) -> EventEnvelope:
     return EventEnvelope(
         id=new_id(),
@@ -168,6 +175,7 @@ def _envelope(
             "comment_id": str(comment.id),
             "is_internal": internal,
             "actor_id": str(actor_id) if actor_id else str(new_id()),
+            "automated": automated,
         },
     )
 
@@ -365,6 +373,67 @@ class TestNotSending:
             _envelope(issue_id, comment, internal=False, actor_id=customer.id),
         )
         assert mails == []
+
+    async def test_the_customers_mail_reply_is_not_mailed_back(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """**메일로 온 티켓에는 요청자 계정이 없다.** 요청자 id 만 비교하던
+        때는 고객이 메일로 답하면(행위자 nil UUID) 그 글이 그대로 고객에게
+        다시 나갔다 — 자기가 방금 쓴 메일을 우리 주소에서 돌려받는다."""
+        channel, issue_id = await _email_ticket(session, permissions)
+        raw = mail(message_id="<again-1@s.example>", headers="In-Reply-To: <in-1@s.example>")
+        result = await desk_inbound.handle_inbound(
+            session, permissions, channel=channel, parsed=parse_message(raw), raw=raw
+        )
+        assert result.issue_id == issue_id and result.created is False
+        reply = (
+            await session.execute(
+                select(IssueComment)
+                .where(IssueComment.issue_id == issue_id)
+                .order_by(IssueComment.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one()
+
+        mails = await collect_reply_mail(
+            OutboundContext(session=session, settings=settings),
+            _envelope(issue_id, reply, internal=False, actor_id=UUID(int=0)),
+        )
+        assert mails == []
+
+    async def test_a_colleague_of_the_customer_is_not_mailed_back(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """포털로 답한 고객 계정(요청자 본인이 아니어도)은 고객 쪽이다."""
+        _channel_row, issue_id = await _email_ticket(session, permissions)
+        colleague = User(
+            email=f"c-{new_id()}@school.example",
+            display_name="동료",
+            status="active",
+            is_customer=True,
+        )
+        session.add(colleague)
+        await session.flush()
+        comment = await _comment(session, issue_id, body="저도 그래요.", internal=False)
+        mails = await collect_reply_mail(
+            OutboundContext(session=session, settings=settings),
+            _envelope(issue_id, comment, internal=False, actor_id=colleague.id),
+        )
+        assert mails == []
+
+    async def test_an_automated_public_reply_still_goes_out(
+        self, session: AsyncSession, permissions: PermissionService, settings: Settings
+    ) -> None:
+        """자동화가 단 **공개** 글은 고객에게 하는 말이다. 행위자가 nil 이라고
+        고객의 회신으로 보고 막으면 "접수했습니다" 규칙이 메일 고객에게만
+        조용히 안 나간다."""
+        _channel_row, issue_id = await _email_ticket(session, permissions)
+        comment = await _comment(session, issue_id, body="접수했습니다.", internal=False)
+        mails = await collect_reply_mail(
+            OutboundContext(session=session, settings=settings),
+            _envelope(issue_id, comment, internal=False, actor_id=UUID(int=0), automated=True),
+        )
+        assert [m.body for m in mails] == ["접수했습니다."]
 
     async def test_an_unrelated_event_is_ignored_cheaply(
         self, session: AsyncSession, permissions: PermissionService, settings: Settings

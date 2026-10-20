@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from email.message import EmailMessage
 
@@ -47,20 +48,14 @@ class MailSender:
 
         메일 서버가 죽었다고 이슈 전이가 롤백되면 안 된다. 워커가 이미
         커밋된 이벤트를 처리하는 중이므로, 실패는 로그로 남기고 넘어간다.
+
+        **메시지를 만드는 것도 실패에 넣는다.** 예전에는 헤더를 채우는 줄이
+        `try` 밖에 있었고, 제목에 줄바꿈이 든 한 통(이슈 요약·메일 제목은
+        사람이 적는다)이 `ValueError` 를 `send_all` 까지 올려 **그 배치의 나머지
+        메일이 전부 안 나갔다.**
         """
-        message = EmailMessage()
-        message["From"] = mail.from_address or self._settings.mail_from
-        message["To"] = mail.to
-        message["Subject"] = mail.subject
-        for name, value in mail.headers:
-            message[name] = value
-
-        body = mail.body
-        if mail.link:
-            body = f"{body}\n\n{self._settings.base_url.rstrip('/')}{mail.link}"
-        message.set_content(body)
-
         try:
+            message = _compose(mail, self._settings)
             # 인증은 **값이 있을 때만** 건다. 빈 사용자로 AUTH 를 시도하면
             # 인증을 안 요구하는 릴레이(개발의 mailpit 이 그렇다)가 거절한다.
             #
@@ -87,6 +82,35 @@ class MailSender:
             return False
         log.info("mail.sent", to=mail.to, subject=mail.subject)
         return True
+
+
+def _compose(mail: Mail, settings: Settings) -> EmailMessage:
+    """보낼 메시지를 만든다. 헤더 값의 줄바꿈은 공백으로 바꾼다.
+
+    **거절하지 않고 고친다.** 줄바꿈이 든 제목은 사람이 여러 줄로 적은 요약일
+    뿐이고, 그 메일을 안 보내면 받아야 할 사람이 알림을 놓친다. 그대로 두면
+    `email` 이 거절한다 — 줄바꿈은 헤더를 끝내는 문자라, 통과시키면 값 뒤에
+    다른 헤더(`Bcc:`)를 끼워 넣을 수 있기 때문이다.
+    """
+    message = EmailMessage()
+    message["From"] = _header_value(mail.from_address or settings.mail_from)
+    message["To"] = _header_value(mail.to)
+    message["Subject"] = _header_value(mail.subject)
+    for name, value in mail.headers:
+        message[name] = _header_value(value)
+
+    body = mail.body
+    if mail.link:
+        body = f"{body}\n\n{settings.base_url.rstrip('/')}{mail.link}"
+    message.set_content(body)
+    return message
+
+
+_LINE_BREAKS = re.compile(r"[\r\n]+")
+
+
+def _header_value(value: str) -> str:
+    return _LINE_BREAKS.sub(" ", value).strip()
 
 
 async def send_all(settings: Settings, mails: list[Mail]) -> int:

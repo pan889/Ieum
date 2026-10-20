@@ -73,12 +73,30 @@ class SpaceRepository:
         return PageResult.from_rows(rows, request, lambda s: {"key": s.key})
 
 
+#: 문서 트리를 줄 세우는 advisory lock 의 첫 키. 둘째 키가 스페이스다.
+#: 다른 기능이 advisory lock 을 쓰게 되면 이 값과 겹치지 않게 고른다.
+_TREE_LOCK = 0x5749_4B49  # "WIKI"
+
+
 class PageRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
     async def get(self, page_id: UUID) -> Page | None:
         return await self._s.get(Page, page_id)
+
+    async def lock_tree(self, space_id: UUID) -> None:
+        """이 스페이스의 트리를 바꾸는 일을 **트랜잭션이 끝날 때까지** 혼자 한다.
+
+        행이 아니라 이름에 거는 잠금(`pg_advisory_xact_lock`)이다. 이동이 믿는
+        것은 옮길 문서와 새 부모의 조상 사슬 전체인데, 그 사슬을 다 잠그는 것보다
+        스페이스 하나를 통째로 줄 세우는 편이 단순하고 빠뜨릴 것이 없다.
+        스페이스 id 는 32비트로 접히므로 드물게 다른 스페이스와 같이 기다리지만,
+        그것은 늦어질 뿐 틀리지 않는다.
+        """
+        await self._s.execute(
+            select(func.pg_advisory_xact_lock(_TREE_LOCK, func.hashtext(str(space_id))))
+        )
 
     async def get_by_path(self, space_id: UUID, path: str) -> Page | None:
         stmt = select(Page).where(Page.space_id == space_id).where(Page.path == path)

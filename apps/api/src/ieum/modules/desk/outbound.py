@@ -13,7 +13,8 @@
 
 - **내부 노트.** 이 조건이 이 파일의 자물쇠다: 내부 노트가 고객에게 나가면
   되돌릴 방법이 없다.
-- **고객 자신의 회신.** 자기가 보낸 메일이 되돌아오면 무한 고리가 된다.
+- **고객 쪽의 회신.** 자기가 보낸 메일이 되돌아오면 무한 고리가 된다. 메일로
+  온 회신·게스트·포털 고객 모두다 (`clock.reply_origin`).
 - **반송된 주소.** 검증되지 않은 게스트 주소로 계속 보내면, 남의 주소를 적어
   넣은 경우 그 사람에게 계속 배달을 시도한다.
 - **메일로 오지 않은 티켓.** 포털로 온 요청에 메일을 보내면 고객은 왜 이
@@ -33,6 +34,7 @@ from ieum.config import Settings
 from ieum.core.events import EventEnvelope
 from ieum.core.logging import get_logger
 from ieum.core.time import utcnow
+from ieum.modules.desk.clock import reply_origin
 from ieum.modules.desk.email import thread_subject
 from ieum.modules.desk.models import EmailChannel, EmailMessage, TicketExt
 from ieum.modules.identity import contracts as identity
@@ -77,9 +79,20 @@ async def collect_reply_mail(ctx: OutboundContext, envelope: EventEnvelope) -> l
     to = await _requester_address(session, ticket)
     if not to:
         return []
-    # 고객 자신의 회신이면 되돌려 보내지 않는다. 무한 고리가 된다.
-    actor_id = envelope.uuid("actor_id")
-    if actor_id is not None and actor_id == ticket.reporter_customer_id:
+    # **고객 쪽에서 온 회신은 되돌려 보내지 않는다.** 무한 고리가 된다.
+    #
+    # 메일 티켓은 `reporter_customer_id` 가 비어 있고 메일 회신의 행위자는
+    # nil UUID 라, 요청자 id 만 비교하던 때는 고객이 보낸 메일이 그대로
+    # 고객에게 다시 나갔다. 판정은 SLA 클럭과 같은 함수가 한다 — 둘이 같은
+    # 질문("상담원이 쓴 글인가")을 하므로 답이 갈라지면 안 된다. 자동화가 단
+    # 공개 글(`system`)은 고객에게 하는 말이라 나간다.
+    origin = await reply_origin(
+        session,
+        ticket,
+        actor_id=envelope.uuid("actor_id"),
+        automated=bool(envelope.payload.get("automated")),
+    )
+    if origin == "customer":
         return []
     # **본문은 페이로드가 아니라 계약으로 읽는다.** `get_public_comment` 는
     # 내부 노트에 `None` 을 돌려주므로, 위의 `is_internal` 검사가 틀렸더라도

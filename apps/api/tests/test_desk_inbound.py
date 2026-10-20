@@ -215,6 +215,24 @@ class TestANewMessage:
         assert ticket.reporter_customer_id is None
         assert ticket.guest_email == CUSTOMER
 
+    async def test_a_claimed_domain_does_not_put_it_in_that_organization(
+        self, session: AsyncSession, permissions: PermissionService
+    ) -> None:
+        """**From 의 도메인으로 고객 조직에 붙이지 않는다.** 조직은 그 조직
+        사람들이 포털에서 티켓을 읽는 근거라, 붙이면 아무나 남의 학교 주소를
+        적어 그 학교 교사 전원의 요청 목록에 글을 꽂는다 — 계정에 붙이지 않는
+        것과 같은 판단이다."""
+        from ieum.modules.desk.models import CustomerOrganization
+
+        channel, _ = await _channel(session, permissions)
+        session.add(CustomerOrganization(name=f"학교-{new_id()}", domains=["school.example"]))
+        await session.flush()
+
+        result = await _deliver(session, permissions, channel, mail())
+        ticket = await session.get(TicketExt, result.issue_id)
+        assert ticket is not None
+        assert ticket.organization_id is None
+
     async def test_it_records_the_message(
         self, session: AsyncSession, permissions: PermissionService
     ) -> None:

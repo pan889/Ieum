@@ -1088,7 +1088,6 @@ class CustomerPortalService:
         self._types = RequestTypeRepository(session)
         self._members = CustomerMembershipRepository(session)
         self._tickets = TicketRepository(session)
-        self._orgs = CustomerOrganizationRepository(session)
 
     async def list_open_portals(self) -> list[Portal]:
         """접히지 않은 포털 전부. **로그인한 사람에게만** 낸다.
@@ -1254,6 +1253,13 @@ class CustomerPortalService:
         않는다 — 남의 주소로 욕설을 제출하면 그 사람에게 욕설이 배달되기
         때문이다. 계정이 이미 있는 주소라도 자동으로 그 계정에 붙이지 않는다:
         증명 없이 남의 이름으로 티켓을 만드는 일이 된다.
+
+        **같은 이유로 고객 조직에도 붙이지 않는다.** 티켓의 조직은 그 조직
+        사람들이 포털에서 그 티켓을 읽는 근거다(`get_my_ticket`). 도메인만 보고
+        붙이면 `누구든@그학교.example` 을 적은 사람이 그 학교 교사 전원의 요청
+        목록에 글을 꽂아 넣는다 — 링크를 누르게 하는 피싱 문구라도. 조직은
+        로그인한 고객의 **소속 행**에서만 온다(`submit`). 도메인은 관리자에게
+        보여 주는 제안일 뿐이다(`suggest_organization`).
         """
         portal = await self.info(slug)
         if not portal.is_public:
@@ -1266,9 +1272,6 @@ class CustomerPortalService:
 
         form = await self.get_form(slug, request_type_id)
         summary, description, custom = self._split_answers(form, answers)
-        # 도메인으로 조직을 붙인다. 소속 행을 만들지는 않는다 — 계정이 없으니
-        # 붙일 사람이 없고, 나중에 계정이 생기면 그때 소속이 정해진다.
-        organization = await self._orgs.find_by_domain(clean_email.rpartition("@")[2])
 
         issue = await issues.create_ticket(
             self._s,
@@ -1289,7 +1292,8 @@ class CustomerPortalService:
                 guest_email=clean_email,
                 guest_name=name.strip(),
                 channel="portal",
-                organization_id=organization.id if organization else None,
+                # 증명되지 않은 주소다. 위의 설명을 본다.
+                organization_id=None,
             )
         )
         await self._s.flush()
@@ -1309,7 +1313,6 @@ class CustomerPortalService:
                 issue_key=issue.key,
                 request_type_id=form.request_type.id,
                 guest_email=clean_email,
-                organization_id=organization.id if organization else None,
             ),
         )
         log.info("desk.ticket.created", issue=issue.key, channel="portal", guest=True)

@@ -11,6 +11,7 @@ import json
 import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from uuid import UUID
 
 import pytest
@@ -54,6 +55,7 @@ from ieum.modules.notify.service import (
 )
 from ieum.modules.org.models import Project, Role
 from ieum.modules.org.repository import OrgPermissionResolver, RoleRepository
+from role_grants import grant
 
 WEBHOOK_SECRET = "webhook-secret-at-least-16"
 
@@ -67,6 +69,90 @@ async def subscribe(session: AsyncSession, user: User, target_type: str, target_
     `TestWatchNeedsAccess` 가 진짜 프로젝트로 본다.
     """
     await WatchRepository(session).add(user.id, target_type, target_id)
+
+
+async def visible_issue(
+    session: AsyncSession, *viewers: User, level_for: list[User] | None = None
+) -> tuple[UUID, UUID]:
+    """`viewers` 가 볼 수 있는 진짜 이슈 하나. `(project_id, issue_id)`.
+
+    핸들러가 **워처마다 대상을 아직 볼 수 있는지** 다시 묻는다. 그래서 워처가
+    받는 것을 보는 시험은 없는 id 로는 안 되고, 볼 권한이 붙은 이슈가 있어야
+    한다. `level_for` 를 주면 그 사람들만 든 보안 레벨을 건다.
+    """
+    from ieum.modules.issues.models import (
+        Issue,
+        IssueType,
+        SecurityLevel,
+        Workflow,
+        WorkflowState,
+    )
+
+    project = Project(key=f"V{secrets.token_hex(3).upper()}", name="Visible")
+    workflow = Workflow(name=f"wf-{new_id()}")
+    session.add_all([project, workflow])
+    await session.flush()
+    state = WorkflowState(
+        workflow_id=workflow.id, name="Open", category="todo", position=0, is_initial=True
+    )
+    issue_type = IssueType(project_id=project.id, name="Task", workflow_id=workflow.id)
+    session.add_all([state, issue_type])
+    await session.flush()
+    issue = Issue(
+        project_id=project.id, type_id=issue_type.id, state_id=state.id, key_seq=1, summary="s"
+    )
+    session.add(issue)
+    await session.flush()
+    if level_for is not None:
+        level = SecurityLevel(
+            project_id=project.id,
+            name=f"lv-{new_id()}",
+            grantees=[{"kind": "user", "id": str(person.id)} for person in level_for],
+        )
+        session.add(level)
+        await session.flush()
+        issue.security_level_id = level.id
+        await session.flush()
+    for viewer in viewers:
+        await grant(
+            session,
+            principal_id=viewer.id,
+            permissions_granted=("org.project.view", "issue.view"),
+            scope=Scope.project(project.id),
+        )
+    return project.id, issue.id
+
+
+async def visible_page(
+    session: AsyncSession, *viewers: User, restricted_to: list[User] | None = None
+) -> tuple[UUID, UUID]:
+    """`viewers` 가 스페이스 권한을 가진 진짜 문서 하나. `(space_id, page_id)`.
+
+    `restricted_to` 를 주면 그 사람들만 볼 수 있게 열람 제한을 건다.
+    """
+    from ieum.modules.wiki.models import Page, PageRestriction, Space
+
+    space = Space(key=f"S{secrets.token_hex(3).upper()}", name="Visible")
+    session.add(space)
+    await session.flush()
+    page = Page(space_id=space.id, path="deploy", slug="deploy", title="배포", status="published")
+    session.add(page)
+    await session.flush()
+    for person in restricted_to or []:
+        session.add(
+            PageRestriction(
+                page_id=page.id, mode="view", principal_kind="user", principal_id=person.id
+            )
+        )
+    await session.flush()
+    for viewer in viewers:
+        await grant(
+            session,
+            principal_id=viewer.id,
+            permissions_granted=("wiki.page.view",),
+            scope=Scope.space(space.id),
+        )
+    return space.id, page.id
 
 
 # ── 서명·백오프 (DB 불필요) ──────────────────────────────────────
@@ -149,12 +235,93 @@ class TestApplyOutcome:
         assert delivery.status != "delivered"
 
 
+class TestOneBadHeaderDoesNotStopTheBatch:
+    """**제목에 줄바꿈이 든 메일 한 통이 그 배치의 메일을 전부 멈췄다.**
+
+    헤더를 채우는 줄이 `try` 밖에 있었다. 이슈 요약·메일 제목은 사람이 적는
+    값이라 줄바꿈이 들 수 있고, 그러면 `email` 이 `ValueError` 를 내 `send_all`
+    까지 올라갔다 — 앞의 메일만 나가고 뒤의 메일은 아무 기록도 없이 사라진다.
+    """
+
+    @pytest.fixture
+    def sent(self, monkeypatch: pytest.MonkeyPatch) -> list[EmailMessage]:
+        """SMTP 대신 메시지를 모은다."""
+        from ieum.modules.notify import mail as notify_mail
+
+        captured: list[EmailMessage] = []
+
+        async def fake_send(message: EmailMessage, **_kwargs: object) -> None:
+            captured.append(message)
+
+        monkeypatch.setattr(notify_mail.aiosmtplib, "send", fake_send)
+        return captured
+
+    async def test_a_line_break_in_the_subject_is_flattened_and_the_rest_still_go(
+        self, settings: Settings, sent: list[EmailMessage]
+    ) -> None:
+        from ieum.modules.notify.mail import Mail, send_all
+
+        mails = [
+            Mail(to="a@example.com", subject="첫째", body="1"),
+            Mail(to="b@example.com", subject="둘째\r\nBcc: victim@example.com", body="2"),
+            Mail(to="c@example.com", subject="셋째", body="3"),
+        ]
+        assert await send_all(settings, mails) == 3
+        assert [m["To"] for m in sent] == ["a@example.com", "b@example.com", "c@example.com"]
+        flattened = sent[1]
+        # 줄바꿈이 헤더를 끝내지 못한다 — 끼워 넣은 `Bcc` 는 제목의 글자일 뿐이다.
+        assert flattened["Subject"] == "둘째 Bcc: victim@example.com"
+        assert flattened["Bcc"] is None
+
+    async def test_extra_headers_are_flattened_too(
+        self, settings: Settings, sent: list[EmailMessage]
+    ) -> None:
+        """`In-Reply-To`·`References` 는 고객이 보낸 메일에서 온다."""
+        from ieum.modules.notify.mail import Mail, send_all
+
+        mail = Mail(
+            to="a@example.com",
+            subject="회신",
+            body="본문",
+            headers=(("References", "<a@x>\n<b@x>"),),
+        )
+        assert await send_all(settings, [mail]) == 1
+        assert sent[0]["References"] == "<a@x> <b@x>"
+
+    async def test_a_message_that_cannot_be_built_fails_alone(
+        self, settings: Settings, sent: list[EmailMessage]
+    ) -> None:
+        """고칠 수 없는 한 통은 실패로 세고 넘어간다. `Message-ID` 가 둘이면
+        `email` 이 메시지를 만들다 거절한다 — 줄바꿈과 같은 자리에서 터진다."""
+        from ieum.modules.notify.mail import Mail, send_all
+
+        twice = (("Message-ID", "<a@x>"), ("Message-ID", "<b@x>"))
+        mails = [
+            Mail(to="a@example.com", subject="깨짐", body="1", headers=twice),
+            Mail(to="b@example.com", subject="멀쩡", body="2"),
+        ]
+        assert await send_all(settings, mails) == 1
+        assert [m["To"] for m in sent] == ["b@example.com"]
+
+
 # ── DB 기반 ──────────────────────────────────────────────────────
 
 
 @pytest.fixture
 def permissions() -> PermissionService:
     return PermissionService(resolver=OrgPermissionResolver(), step_up_window_seconds=300)
+
+
+@pytest.fixture
+def wired(settings: Settings) -> PermissionService:
+    """기동 배선과 **같은** 권한 서비스 — 보안 레벨·문서 제한 관문까지 꽂힌다.
+
+    핸들러가 워처를 다시 거를 때 이 관문을 지난다. 관문 없는 서비스로 시험하면
+    제한을 안 보는 상태로 초록이 된다.
+    """
+    from ieum.wiring import install_permissions
+
+    return install_permissions(settings)
 
 
 @pytest_asyncio.fixture
@@ -508,14 +675,15 @@ class TestTitleFitsTheColumn:
         session: AsyncSession,
         settings: Settings,
         people: dict[str, User],
+        wired: PermissionService,
     ) -> None:
         """요약이 열 상한까지 찬 이슈 — 여기서 드레인이 죽었다."""
-        issue_id = new_id()
+        _, issue_id = await visible_issue(session, people["english"])
         await subscribe(session, people["english"], "issue", issue_id)
         await session.flush()
 
         created = await handle_issue_event(
-            HandlerContext(session=session, settings=settings),
+            HandlerContext(session=session, settings=settings, permissions=wired),
             EventEnvelope(
                 id=new_id(),
                 event_type="issue.created",
@@ -876,7 +1044,11 @@ class TestHandlers:
         assert mine[0].kind == "issue.mentioned"
 
     async def test_a_project_watcher_hears_about_its_issues(
-        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
     ) -> None:
         """**프로젝트를 보고 있으면 그 안의 이슈 소식을 받는다.**
 
@@ -885,15 +1057,16 @@ class TestHandlers:
         보이는데 소식은 하나도 안 오는 상태였다 — 기능이 없는 것보다 나쁘다,
         구독한 사람은 구독했다고 믿으니까.
         """
-        project_id = new_id()
+        project_id, issue_id = await visible_issue(session, people["english"])
         await subscribe(session, people["english"], "project", project_id)
         await session.flush()
 
-        ctx = HandlerContext(session=session, settings=settings)
+        ctx = HandlerContext(session=session, settings=settings, permissions=wired)
         created = await handle_issue_event(
             ctx,
             self._envelope(
                 "issue.created",
+                aggregate_id=issue_id,
                 issue_key="X-1",
                 summary="제목",
                 project_id=str(project_id),
@@ -907,6 +1080,79 @@ class TestHandlers:
             .all()
         )
         assert [n.user_id for n in rows] == [people["english"].id]
+
+    async def test_a_project_watcher_does_not_hear_about_an_issue_it_cannot_see(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
+    ) -> None:
+        """**프로젝트를 볼 수 있다고 그 안의 이슈를 다 볼 수 있는 것은 아니다.**
+
+        구독 관문은 구독한 대상(프로젝트)만 본다. 워처 목록을 그대로 수신자로
+        쓰면, 보안 레벨에 안 든 프로젝트 워처가 그 이슈의 키와 요약을 알림
+        제목으로 받는다 — 이슈를 열면 403 인데 알림함에는 제목이 있다.
+        """
+        project_id, issue_id = await visible_issue(
+            session, people["english"], people["korean"], level_for=[people["korean"]]
+        )
+        await subscribe(session, people["english"], "project", project_id)
+        await subscribe(session, people["korean"], "project", project_id)
+        await session.flush()
+
+        created = await handle_issue_event(
+            HandlerContext(session=session, settings=settings, permissions=wired),
+            self._envelope(
+                "issue.created",
+                aggregate_id=issue_id,
+                issue_key="X-1",
+                summary="인사 평가 결과",
+                project_id=str(project_id),
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        assert [n.user_id for n in rows] == [people["korean"].id]
+
+    async def test_an_issue_watcher_shut_out_later_hears_nothing(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
+    ) -> None:
+        """구독한 **뒤에** 보안 레벨이 걸리면 구독 관문은 다시 돌지 않는다.
+        알릴 때 다시 묻지 않으면 그 사람은 계속 제목을 받는다."""
+        _, issue_id = await visible_issue(
+            session, people["english"], people["korean"], level_for=[people["korean"]]
+        )
+        await subscribe(session, people["english"], "issue", issue_id)
+        await subscribe(session, people["korean"], "issue", issue_id)
+        await session.flush()
+
+        created = await handle_issue_event(
+            HandlerContext(session=session, settings=settings, permissions=wired),
+            self._envelope(
+                "issue.updated",
+                aggregate_id=issue_id,
+                issue_key="X-1",
+                summary="s",
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        await session.flush()
+        rows = (
+            (await session.execute(select(Notification).where(Notification.id.in_(created))))
+            .scalars()
+            .all()
+        )
+        assert [n.user_id for n in rows] == [people["korean"].id]
 
     async def test_another_projects_watcher_hears_nothing(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
@@ -970,13 +1216,17 @@ class TestHandlers:
         assert {n.user_id for n in rows} == {people["korean"].id, people["english"].id}
 
     async def test_recipients_include_watchers_and_assignee(
-        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
     ) -> None:
-        issue_id = new_id()
+        _, issue_id = await visible_issue(session, people["english"])
         await subscribe(session, people["english"], "issue", issue_id)
         await session.flush()
 
-        ctx = HandlerContext(session=session, settings=settings)
+        ctx = HandlerContext(session=session, settings=settings, permissions=wired)
         created = await handle_issue_event(
             ctx,
             self._envelope(
@@ -1367,15 +1617,19 @@ class TestPageHandlers:
         return list(result.scalars().all())
 
     async def test_page_and_space_watchers_both_get_it(
-        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
     ) -> None:
-        page_id, space_id = new_id(), new_id()
+        space_id, page_id = await visible_page(session, people["english"], people["korean"])
         await subscribe(session, people["english"], "page", page_id)
         await subscribe(session, people["korean"], "space", space_id)
         await session.flush()
 
         created = await handle_page_event(
-            HandlerContext(session=session, settings=settings),
+            HandlerContext(session=session, settings=settings, permissions=wired),
             self._envelope(
                 "wiki.page.updated",
                 aggregate_id=page_id,
@@ -1390,6 +1644,41 @@ class TestPageHandlers:
         assert {n.user_id for n in rows} == {people["english"].id, people["korean"].id}
         # 링크는 사람이 주고받는 주소다. id 로 만들면 열어 봐도 어디인지 모른다.
         assert {n.link for n in rows} == {"/wiki/ENG/deploy"}
+
+    async def test_a_space_watcher_does_not_get_a_restricted_page(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
+    ) -> None:
+        """**스페이스를 볼 수 있다고 제한된 문서를 볼 수 있는 것은 아니다.**
+
+        스페이스 워처를 그대로 수신자로 쓰면, 열람 제한에 안 든 사람이 그 문서의
+        제목을 알림으로 받는다. 멘션은 wiki 가 이미 같은 기준으로 거른다 —
+        워처만 빠져 있었다.
+        """
+        space_id, page_id = await visible_page(
+            session, people["english"], people["korean"], restricted_to=[people["korean"]]
+        )
+        await subscribe(session, people["english"], "space", space_id)
+        await subscribe(session, people["korean"], "space", space_id)
+        await session.flush()
+
+        created = await handle_page_event(
+            HandlerContext(session=session, settings=settings, permissions=wired),
+            self._envelope(
+                "wiki.page.updated",
+                aggregate_id=page_id,
+                space_id=str(space_id),
+                space_key="ENG",
+                path="deploy",
+                title="구조조정 계획",
+                actor_id=str(people["actor"].id),
+            ),
+        )
+        rows = await self._rows(session, created)
+        assert [n.user_id for n in rows] == [people["korean"].id]
 
     async def test_mention_gets_its_own_kind(
         self, session: AsyncSession, settings: Settings, people: dict[str, User]
@@ -1436,18 +1725,24 @@ class TestPageHandlers:
         assert rows[0].kind == "wiki.mentioned"
 
     async def test_actor_does_not_notify_self(
-        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
     ) -> None:
-        page_id = new_id()
+        # 볼 수 있는 문서여야 한다 — 아니면 권한에서 걸러져 "자기 자신은
+        # 빼기" 를 시험하지 못한다.
+        space_id, page_id = await visible_page(session, people["actor"])
         await subscribe(session, people["actor"], "page", page_id)
         await session.flush()
 
         created = await handle_page_event(
-            HandlerContext(session=session, settings=settings),
+            HandlerContext(session=session, settings=settings, permissions=wired),
             self._envelope(
                 "wiki.page.updated",
                 aggregate_id=page_id,
-                space_id=str(new_id()),
+                space_id=str(space_id),
                 space_key="ENG",
                 path="deploy",
                 title="배포",
@@ -1457,20 +1752,24 @@ class TestPageHandlers:
         assert created == []
 
     async def test_recipient_locale_decides_the_wording(
-        self, session: AsyncSession, settings: Settings, people: dict[str, User]
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        people: dict[str, User],
+        wired: PermissionService,
     ) -> None:
         """발신자 언어가 아니라 수신자 언어로 렌더한다 (i18n.md 3절)."""
-        page_id = new_id()
+        space_id, page_id = await visible_page(session, people["korean"], people["english"])
         await subscribe(session, people["korean"], "page", page_id)
         await subscribe(session, people["english"], "page", page_id)
         await session.flush()
 
         created = await handle_page_event(
-            HandlerContext(session=session, settings=settings),
+            HandlerContext(session=session, settings=settings, permissions=wired),
             self._envelope(
                 "wiki.page.published",
                 aggregate_id=page_id,
-                space_id=str(new_id()),
+                space_id=str(space_id),
                 space_key="ENG",
                 path="deploy",
                 title="배포 절차",

@@ -612,6 +612,76 @@ class TestTree:
             await service.move(actor_for(other), page.page.id, new_parent_id=None)
 
 
+class TestConcurrentMoves:
+    """**두 사람이 동시에 A 를 B 아래로, B 를 A 아래로 옮기면 고리가 생겼다.**
+
+    "후손 아래로는 못 간다" 는 검사는 그 순간 읽은 경로를 믿는다. 두 이동이
+    서로의 옛 경로를 보고 둘 다 통과하면 A 의 부모는 B, B 의 부모는 A 가 되고,
+    그 가지는 트리 어디에서도 안 보인다. 롤백 세션 하나로는 두 트랜잭션을 만들
+    수 없어서 실제로 커밋하고, 끝나면 스페이스째 치운다.
+    """
+
+    @pytest.mark.integration
+    async def test_the_second_move_sees_the_first_and_is_refused(
+        self, engine: object, permissions: PermissionService
+    ) -> None:
+        from sqlalchemy import delete
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from ieum.modules.wiki.models import Page
+
+        factory = async_sessionmaker(bind=engine, expire_on_commit=False)  # type: ignore[arg-type]
+        async with factory() as setup:
+            mover = User(email=f"m-{new_id()}@example.com", display_name="Mover", status="active")
+            room = Space(key=f"M{new_id().hex[-6:].upper()}", name="Moves")
+            setup.add_all([mover, room])
+            await setup.flush()
+            role = await grant(
+                setup,
+                principal_id=mover.id,
+                permissions_granted=(perms.PAGE_VIEW, perms.PAGE_EDIT, perms.PAGE_MOVE),
+                scope=Scope.space(room.id),
+            )
+            a = Page(space_id=room.id, path="a", slug="a", title="A")
+            b = Page(space_id=room.id, path="b", slug="b", title="B")
+            setup.add_all([a, b])
+            await setup.commit()
+        actor = actor_for(mover)
+
+        try:
+            async with factory() as first, factory() as second:
+                await PageService(first, permissions).move(actor, a.id, new_parent_id=b.id)
+                # 첫째는 아직 커밋하지 않았다. 둘째가 반대 방향으로 옮긴다.
+                racing = asyncio.create_task(
+                    PageService(second, permissions).move(actor, b.id, new_parent_id=a.id)
+                )
+                # 줄을 세우면 둘째는 첫째의 커밋을 기다린다. 안 세우면 곧바로
+                # 끝난다 — 옛 경로를 보고 통과한 것이다.
+                await asyncio.wait({racing}, timeout=0.5)
+                await first.commit()
+                with pytest.raises(ValidationError) as exc:
+                    await racing
+                assert exc.value.code == "wiki.move_into_descendant"
+                await second.rollback()
+
+            async with factory() as check:
+                rows = {
+                    row.id: row
+                    for row in (await check.execute(select(Page).where(Page.space_id == room.id)))
+                    .scalars()
+                    .all()
+                }
+            # 트리는 하나다: B 가 뿌리이고 A 가 그 아래다.
+            assert (rows[b.id].parent_id, rows[b.id].path) == (None, "b")
+            assert (rows[a.id].parent_id, rows[a.id].path) == (b.id, "b/a")
+        finally:
+            async with factory() as cleanup:
+                await cleanup.execute(delete(Space).where(Space.id == room.id))
+                await cleanup.execute(delete(Role).where(Role.id == role.id))
+                await cleanup.execute(delete(User).where(User.id == mover.id))
+                await cleanup.commit()
+
+
 class TestRestrictions:
     async def test_view_restriction_hides_the_page(
         self,

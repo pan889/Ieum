@@ -210,8 +210,12 @@ class WatchService:
 
         이 검사가 없으면 구독이 곧 우회로가 된다: 알림 제목에는 이슈 키와
         요약이, 본문에는 바뀐 내용이 그대로 담기므로, 아무 UUID 나 구독해
-        두면 그 프로젝트의 소식을 받아 볼 수 있다. 팬아웃 쪽에는 관문이
-        없다 — 워처 목록을 그대로 수신자로 쓴다.
+        두면 그 프로젝트의 소식을 받아 볼 수 있다.
+
+        **이것만으로는 모자란다.** 프로젝트·스페이스를 볼 수 있다고 그 안의
+        보안 레벨 이슈·제한 문서를 볼 수 있는 것은 아니고, 구독한 뒤에 제한이
+        걸리거나 권한이 빠질 수도 있다. 그래서 팬아웃 직전에 대상마다 한 번 더
+        묻는다(`visible_to`).
 
         무엇을 볼 수 있는지는 **그 모듈이 정한다**(`contracts.can_view_*`).
         여기서 `issue.view` 같은 문자열과 스코프를 직접 조립하면, 규칙이
@@ -221,6 +225,34 @@ class WatchService:
         if not await self._can_view(actor, target_type, target_id, permissions):
             raise PermissionDeniedError("볼 수 없는 대상은 구독할 수 없다.")
         return await self._watches.add(actor.user_id, target_type, target_id)
+
+    async def visible_to(
+        self,
+        user_ids: set[UUID],
+        target_type: str,
+        target_id: UUID,
+        *,
+        permissions: PermissionService,
+    ) -> set[UUID]:
+        """이 사람들 중 **지금** 이 대상을 볼 수 있는 사람만.
+
+        워처를 알림 받는 사람으로 바꾸기 직전에 부른다. 구독할 때 본 것은
+        구독한 대상(프로젝트·스페이스)이지 알림의 대상(그 안의 이슈·문서)이
+        아니다 — 프로젝트 워처가 보안 레벨이 걸린 이슈의 요약을, 스페이스
+        워처가 제한된 문서의 제목을 알림으로 받았다. 판정은 구독 관문과
+        **같은 함수**(`_can_view`)가 한다: 규칙이 둘이면 언젠가 어긋난다.
+
+        사람마다 액터를 새로 읽는다. 그룹 소속이 권한과 제한을 가르는데,
+        이벤트에는 그것이 없다.
+        """
+        visible: set[UUID] = set()
+        for user_id in user_ids:
+            actor = await identity.load_actor(self._s, user_id)
+            if actor is None or not actor.is_active:
+                continue
+            if await self._can_view(actor, target_type, target_id, permissions):
+                visible.add(user_id)
+        return visible
 
     async def _can_view(
         self,

@@ -860,12 +860,26 @@ class PageService:
     ) -> PageView:
         """문서를 옮긴다. 후손의 경로도 함께 고친다."""
         page = await self._require_page(page_id)
+
+        # **한 스페이스의 이동은 한 번에 하나씩.** 아래 검사("후손 아래로는 못
+        # 간다")는 지금 읽은 경로를 믿는다. 두 사람이 동시에 A 를 B 아래로,
+        # B 를 A 아래로 옮기면 둘 다 상대의 옛 경로를 보고 통과해, 서로가
+        # 서로의 부모인 고리가 생겼다 — 그 가지는 트리 어디에서도 안 보이고
+        # 경로도 더는 맞지 않는다. 이동은 드물어서 스페이스 단위로 줄을 세워도
+        # 아무도 기다린다고 느끼지 못한다.
+        await self._pages.lock_tree(page.space_id)
+        # 잠금을 기다리는 사이 앞의 이동이 이 문서의 경로를 바꿨을 수 있다.
+        # 권한도 **그 뒤에** 본다 — 제한은 조상에서 상속되므로, 제한된 가지
+        # 아래로 막 옮겨진 문서를 옛 경로로 판정하면 안 된다.
+        await self._s.refresh(page)
         await self._perms.require(
             self._s, actor, perms.PAGE_MOVE, scope=Scope.space(page.space_id), subject=page
         )
 
         parent = await self._resolve_parent(page.space_id, new_parent_id)
         if parent is not None:
+            # 새 부모도 같다. 세션이 이미 들고 있던 객체면 옛 경로가 남아 있다.
+            await self._s.refresh(parent)
             if parent.id == page.id:
                 raise ValidationError("자기 자신 아래로 옮길 수 없다.", code="wiki.move_into_self")
             # 후손 아래로 옮기면 트리가 끊긴 고리가 된다.
