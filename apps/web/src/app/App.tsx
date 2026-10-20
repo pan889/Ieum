@@ -93,7 +93,9 @@ export function App() {
 
   if (invited) return <AcceptInviteScreen />
   if (surveyed) return <SurveyScreen />
-  // 세션이 열리면 stage 가 바뀌므로 이 화면은 스스로 물러난다.
+  // 세션이 열리면 stage 가 바뀌므로 이 화면은 스스로 물러난다. **실패했을 때는
+  // 단계만으로는 못 물러난다** — `returning` 은 주소만 보므로, 콜백 화면이 떠날
+  // 때 주소를 `/` 로 바꾼다(`SsoCallbackScreen` 의 `leave`).
   if (returning && stage !== 'authenticated') return <SsoCallbackScreen />
   // 단계와 무관하게 포털을 그린다. `unknown` 일 때 로딩 화면을 끼우면
   // 게스트는 매번 깜빡임을 보고, `anonymous` 면 로그인 화면이 포털을

@@ -1,3 +1,4 @@
+import { dayFormatter } from '@/shared/day'
 import { i18next } from '@/shared/i18n'
 
 /** 상태 분류 뱃지 톤. 서버 문자열을 그대로 받는다. */
@@ -15,8 +16,20 @@ export function priorityLabel(priority: number): string {
   return label || String(priority)
 }
 
+/** 시각 없이 날짜만 있는 값. 기한(`due_date`)·작업일(`work_date`)이 이것이다. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * 날짜를 사람이 읽는 글자로. 시각(`created_at`)과 날짜(`due_date`)를 함께 받는다.
+ *
+ * **날짜만 있는 값은 UTC 로 쓴다.** `new Date('2026-10-01')` 은 UTC 자정이라,
+ * 로컬로 포맷하면 UTC 뒤의 시간대(아메리카 전부)에서 기한이 하루 앞당겨
+ * 적힌다 — 10월 1일까지인 일이 9월 30일까지로 보인다. 시각이 있는 값은 그
+ * 순간이 보는 사람에게 언제인지가 맞으므로 로컬로 쓴다.
+ */
 export function formatDate(value: string | null): string {
   if (!value) return ''
+  if (DATE_ONLY.test(value)) return dayFormatter(i18next.language, { dateStyle: 'medium' })(value)
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return new Intl.DateTimeFormat(i18next.language, { dateStyle: 'medium' }).format(date)

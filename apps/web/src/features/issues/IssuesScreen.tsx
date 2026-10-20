@@ -8,9 +8,11 @@ import { useTranslation } from 'react-i18next'
 import { NavIcon } from '@/app/NavIcon'
 import { searchApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { isoDay } from '@/shared/day'
 import { saveBlob } from '@/shared/download'
 import { LIST_SHORTCUTS, type ListShortcutId } from '@/shared/keys/catalog'
 import { useShortcuts } from '@/shared/keys/useHotkeys'
+import { useScopedState } from '@/shared/scopedState'
 import { Alert, Badge, Button, Card, Chip, EmptyState } from '@/shared/ui/primitives'
 
 import { BulkBar } from './BulkBar'
@@ -29,6 +31,10 @@ type ColumnId = (typeof COLUMNS)[number]
 
 const DEFAULT_COLUMNS: ColumnId[] = ['key', 'summary', 'status', 'assignee', 'priority', 'updated']
 const COLUMN_STORAGE_KEY = 'ieum.issues.columns'
+
+// 처음 값은 **매번 같은 배열**이다(`useScopedState` 주석).
+const NO_CURSORS: string[] = []
+const NO_SELECTION: string[] = []
 
 function loadColumns(): ColumnId[] {
   try {
@@ -53,8 +59,6 @@ export function IssuesScreen() {
   const search = useSearch({ from: '/issues' })
 
   const [columns, setColumns] = useState<ColumnId[]>(loadColumns)
-  const [cursors, setCursors] = useState<string[]>([])
-  const [selected, setSelected] = useState<string[]>([])
 
   /**
    * `j`/`k` 가 짚고 있는 줄. **초점을 실제로 옮긴다** — 색만 칠하면 화면
@@ -69,7 +73,6 @@ export function IssuesScreen() {
   // 짚힌 채로 그려지는 일도 없다.
   const [picked, setPicked] = useState<{ of: string; at: number }>({ of: '', at: -1 })
   const rowsRef = useRef<(HTMLTableRowElement | null)[]>([])
-  const [bulkResult, setBulkResult] = useState<BulkEditResult | null>(null)
   /**
    * IQL 상자에 타이핑 중인 내용. URL 에 넣지 않는다 — 글자마다 히스토리가
    * 쌓이고 아직 실행하지도 않은 질의가 링크에 실린다. 실행할 때 URL 로 간다.
@@ -82,6 +85,18 @@ export function IssuesScreen() {
   const iqlMode = isIqlMode(search)
   // 칩 모드면 칩이 진실이고, IQL 모드면 URL 의 `iql` 이 진실이다.
   const activeIql = iqlMode ? (search.iql ?? '') : toIql(filters)
+  /**
+   * 쪽 넘김 커서·고른 줄·일괄 편집 결과는 **이 질의의 것**이다.
+   *
+   * 아래 `go` 가 비우지만 질의를 바꾸는 길은 그것만이 아니다 — 뒤로 가기,
+   * 사이드바의 "이슈", 저장한 필터 링크가 모두 주소를 바로 바꾼다. 그 길로
+   * 오면 옛 질의의 커서가 새 질의에 붙어 새 결과의 3쪽부터 열리거나(커서가
+   * 가리키는 자리가 다른 목록의 것이다), 안 보이는 옛 줄이 고른 채로 남아
+   * 일괄 편집에 실린다. 그래서 질의가 바뀌면 저절로 처음으로 돌아가게 둔다.
+   */
+  const [cursors, setCursors] = useScopedState(activeIql, NO_CURSORS)
+  const [selected, setSelected] = useScopedState(activeIql, NO_SELECTION)
+  const [bulkResult, setBulkResult] = useScopedState<BulkEditResult | null>(activeIql, null)
   // 상자에 보이는 값: 타이핑 중이면 그것, 아니면 URL 의 질의.
   const iqlDraft = typing ?? (iqlMode ? activeIql : null)
   const cursor = cursors.at(-1)
@@ -158,7 +173,9 @@ export function IssuesScreen() {
   const exporting = useMutation({
     mutationFn: () => searchApi.exportCsv(activeIql),
     onSuccess: (blob) => {
-      saveBlob(blob, `ieum-issues-${new Date().toISOString().slice(0, 10)}.csv`)
+      // 파일 이름의 날짜도 **로컬 달력의 오늘**이다. UTC 로 찍으면 저녁에
+      // 받은 파일이 내일 날짜를 달고 나온다.
+      saveBlob(blob, `ieum-issues-${isoDay(new Date())}.csv`)
     },
   })
 

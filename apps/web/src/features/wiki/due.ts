@@ -16,13 +16,14 @@ export type Urgency = 'overdue' | 'today' | 'soon' | 'later' | 'none'
 /** 며칠 안쪽을 "곧" 으로 볼 것인가. */
 const SOON_DAYS = 3
 
-/** 그 날짜의 `YYYY-MM-DD`. **로컬 달력 기준이다** — 사람이 보는 오늘이다. */
-export function isoDay(at: Date): string {
-  const year = at.getFullYear()
-  const month = String(at.getMonth() + 1).padStart(2, '0')
-  const day = String(at.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
+/**
+ * 그 날짜의 `YYYY-MM-DD`. **로컬 달력 기준이다** — 사람이 보는 오늘이다.
+ *
+ * 처음엔 여기만 이 판단을 했고, 다른 화면들은 `toISOString()` 으로 UTC 의
+ * 오늘을 만들고 있었다. 같은 일을 하는 함수가 한 곳에 있어야 하므로 공용
+ * 자리(`shared/day`)로 옮기고, 여기서는 그대로 다시 내보낸다.
+ */
+export { isoDay } from '@/shared/day'
 
 export function urgencyOf(due: string | null, today: string): Urgency {
   if (due === null || due === '') return 'none'

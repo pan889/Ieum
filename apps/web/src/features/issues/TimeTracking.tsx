@@ -5,6 +5,7 @@ import clsx from 'clsx'
 
 import { issuesApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { isoDay } from '@/shared/day'
 import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 
 import { formatDuration, parseDuration } from './duration'
@@ -202,7 +203,9 @@ export function TimeTracking({
             <Field
               label={t('issues:time.date')}
               type="date"
-              max={new Date().toISOString().slice(0, 10)}
+              // 미래 날짜는 못 고르게 막는다. 그 "오늘" 은 **로컬 달력**이다 —
+              // UTC 로 막으면 서울에서는 아침 9시 전까지 오늘을 못 고른다.
+              max={isoDay(new Date())}
               value={workDate}
               onChange={(e) => { setWorkDate(e.target.value); }}
             />

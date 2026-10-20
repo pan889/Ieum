@@ -74,8 +74,18 @@ export function IssueDetailScreen() {
     void queryClient.invalidateQueries({ queryKey: ['issues'] })
   }
 
+  /**
+   * **이슈가 바뀌면 아래를 통째로 새로 세운다(`key`).**
+   *
+   * 라우터는 `/issues/A` 에서 `/issues/B` 로 가도 이 화면을 다시 마운트하지
+   * 않는다. 그러면 편집 중이던 요약·설명, 고치던 커스텀 필드, 쓰던 코멘트가
+   * **B 의 화면에 그대로 남고**, 저장을 누르면 A 에 쓰려던 글이 B 를 덮는다.
+   * B 를 이미 캐시에 들고 있으면(한 번 열어 본 이슈) 로딩 화면도 안 끼어서
+   * 그 사이에 저절로 지워지지도 않는다. 하위 칸마다 "이슈가 바뀌면 비워라" 를
+   * 따로 적으면 새 칸이 생길 때 한 곳이 빠지므로, 여기서 한 번에 끊는다.
+   */
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-5">
+    <section key={data.id} className="mx-auto flex max-w-5xl flex-col gap-5">
       <header className="flex flex-wrap items-baseline gap-3">
         <Link to="/issues" className="font-mono text-xs text-accent hover:underline">
           {data.key}
@@ -147,14 +157,20 @@ function SummaryAndDescription({ issue, onSaved }: { issue: Issue; onSaved: () =
    * `e` 를 누른 사람이 **버린 초안을 다시 본다** — 단추는 그때 원본으로
    * 되돌리는데 키는 안 되돌렸기 때문이다. 같은 동작에 두 길을 두면 한 길만
    * 고쳐지는 날이 온다.
+   *
+   * **이미 편집 중이면 아무것도 하지 않는다.** 원본으로 되돌리기만 하던
+   * 때는, 고치던 중 입력 칸 밖(미리보기·빈 곳)을 한 번 누른 뒤 `e` 를 치면
+   * 저장 안 한 초안이 소리 없이 사라졌다 — 되돌릴 길도 없다. 버리는 것은
+   * "취소" 단추 하나로만 한다.
    */
   const startEditing = useCallback(() => {
+    if (editing) return
     setSummary(issue.summary)
     setDescription(issue.description ?? '')
     setEditing(true)
-  }, [issue.summary, issue.description])
+  }, [editing, issue.summary, issue.description])
 
-  // 이미 편집 중이어도 원본으로 되돌릴 뿐이라 눌러 두고 있어도 멀쩡하다.
+  // 편집 중에는 위에서 멈추므로 눌러 두고 있어도 초안이 멀쩡하다.
   useShortcuts(
     EDIT_KEYS,
     { detailEdit: startEditing } satisfies Record<'detailEdit', () => void>,

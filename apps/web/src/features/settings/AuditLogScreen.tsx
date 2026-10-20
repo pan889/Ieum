@@ -16,6 +16,7 @@ import type { AuditEntry, AuditQuery } from '@ieum/api-client'
 import { formatDateTime } from '@/features/issues/format'
 import { auditApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { isoDay, isoDayFrom } from '@/shared/day'
 import { saveBlob } from '@/shared/download'
 import { SettingsNav } from '@/features/settings/SettingsNav'
 import { Alert, Button, Card, Field, Select } from '@/shared/ui/primitives'
@@ -26,10 +27,10 @@ const PAGE_SIZE = 50
 const DEFAULT_DAYS = 7
 
 function daysAgo(days: number): string {
-  const when = new Date()
-  when.setDate(when.getDate() - days)
-  // `<input type="date">` 는 `YYYY-MM-DD` 만 받는다.
-  return when.toISOString().slice(0, 10)
+  // `<input type="date">` 는 `YYYY-MM-DD` 만 받는다. 그 날짜는 **로컬 달력**이다
+  // — 아래 `boundary` 가 로컬 자정으로 읽는다. UTC 날짜로 채우면 둘이 어긋나,
+  // 저녁에 연 뉴욕의 관리자는 "7일 전부터" 가 아니라 "6일 전부터" 를 본다.
+  return isoDayFrom(new Date(), -days)
 }
 
 /**
@@ -79,7 +80,7 @@ export function AuditLogScreen() {
 
   const download = useMutation({
     mutationFn: async () => {
-      const stamp = new Date().toISOString().slice(0, 10)
+      const stamp = isoDay(new Date())
       saveBlob(await auditApi.exportCsv(filters), `ieum-audit-${stamp}.csv`)
     },
   })
