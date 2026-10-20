@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { humanize, isoDay, windowBounds } from './ReportScreen'
+import { defaultWindow, humanize, windowBounds } from './ReportScreen'
 
 describe('windowBounds', () => {
   it('끝나는 날의 하루를 통째로 포함한다', () => {
@@ -25,9 +25,29 @@ describe('windowBounds', () => {
   })
 })
 
-describe('isoDay', () => {
-  it('UTC 날짜만 남긴다', () => {
-    expect(isoDay(new Date('2026-09-08T15:30:00Z'))).toBe('2026-09-08')
+describe('defaultWindow', () => {
+  /**
+   * 시험은 뉴욕 시간대로 돈다(`vite.config.ts`). 전에는 이 창을 UTC 날짜로
+   * 채웠고, 시험도 "UTC 날짜만 남긴다" 를 확인하고 있었다 — 그래서 저녁에
+   * 열면 "오늘" 칸에 내일이 적히는 것이 시험으로는 맞는 동작이었다.
+   */
+  it('늦은 밤에도 로컬 달력의 오늘로 끝난다', () => {
+    // 뉴욕 9월 8일 22:30 은 UTC 로는 이미 9월 9일이다.
+    const lateNight = new Date(2026, 8, 8, 22, 30)
+    expect(lateNight.toISOString().slice(0, 10)).toBe('2026-09-09')
+
+    expect(defaultWindow(lateNight)).toEqual({ from: '2026-08-09', to: '2026-09-08' })
+  })
+
+  it('이른 아침에도 로컬 달력의 오늘로 끝난다', () => {
+    expect(defaultWindow(new Date(2026, 8, 8, 0, 30)).to).toBe('2026-09-08')
+  })
+
+  it('일광절약시간이 끝나는 날을 지나도 30일 전이다', () => {
+    // 뉴욕은 11월 1일에 한 시간을 돌린다. 30 × 24시간을 빼면 자정 근처에서
+    // 하루가 덜 가거나 더 간다.
+    expect(defaultWindow(new Date(2026, 10, 20, 0, 30)).from).toBe('2026-10-21')
+    expect(defaultWindow(new Date(2026, 10, 20, 23, 30)).from).toBe('2026-10-21')
   })
 })
 

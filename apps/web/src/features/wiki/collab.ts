@@ -65,6 +65,12 @@ export interface CollabHandlers {
    * 업데이트 이벤트가 아예 안 난다. 그것을 "아직 안 붙었다" 로 읽으면 빈
    * 문서에서는 **영원히** 안 붙은 것이 되고, 화면은 조용히 혼자 편집한다 —
    * 남의 화면에는 아무것도 안 뜨고, 에러도 없다. 실제로 그렇게 막혔다.
+   *
+   * **세션마다 한 번만 부른다.** 끊겼다 다시 붙을 때의 동기화는 갈아타기가
+   * 아니다 — 같은 문서를 계속 들고 있었고, 그 사이 친 글은 이미 이 문서에
+   * 들어 있어 CRDT 가 서버와 합친다. 다시 부르면 화면은 "붙는 사이에 둘 다
+   * 고쳤다" 로 읽고(내 글도 공유 문서도 게시본과 다르니까) 재연결마다 거짓
+   * 충돌 경고를 띄웠다.
    */
   onSynced: (text: string) => void
   onPeers: (peers: Peer[]) => void
@@ -85,8 +91,10 @@ export class CollabSession {
   private readonly awareness: Awareness
   private socket: WebSocket | null = null
   private retry = RETRY_MIN_MS
-  /** 공유 문서를 다 받았나. 받기 전에는 `live` 라고 말하지 않는다. */
+  /** 공유 문서를 다 받았나. 받기 전에는 `live` 라고 말하지 않는다. 끊기면 되돌린다. */
   private synced = false
+  /** 한 번이라도 다 받았나. `onSynced` 를 두 번 부르지 않는 데 쓴다. 안 되돌린다. */
+  private adopted = false
   private timer: ReturnType<typeof setTimeout> | null = null
   private closed = false
 
@@ -194,7 +202,11 @@ export class CollabSession {
       if (kind2 === messageYjsSyncStep2 && !this.synced) {
         this.synced = true
         this.handlers.onStatus('live')
-        this.handlers.onSynced(_textOf(this.text))
+        // 다시 붙은 것이면 `live` 라고만 말한다(`CollabHandlers.onSynced`).
+        if (!this.adopted) {
+          this.adopted = true
+          this.handlers.onSynced(_textOf(this.text))
+        }
       }
     } else if (kind === MESSAGE_AWARENESS) {
       applyAwarenessUpdate(this.awareness, decoding.readVarUint8Array(reader), 'remote')

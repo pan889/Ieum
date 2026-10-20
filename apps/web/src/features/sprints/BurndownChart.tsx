@@ -2,6 +2,8 @@ import { useTranslation } from 'react-i18next'
 
 import type { BurndownPoint } from '@ieum/api-client'
 
+import { dayFormatter } from '@/shared/day'
+
 import { plot, toPolyline } from './burndown'
 
 const WIDTH = 560
@@ -32,8 +34,9 @@ export function BurndownChart({ points, endsOn }: Props) {
     return <p className="text-sm text-muted">{t('sprints:burndown.empty')}</p>
   }
 
-  const dates = new Intl.DateTimeFormat(i18n.language, { month: 'numeric', day: 'numeric' })
-  const short = (iso: string) => dates.format(new Date(`${iso}T00:00:00Z`))
+  // 점의 날짜는 시각이 없다. UTC 자정으로 읽었으니 UTC 로 쓴다 — 로컬로 쓰면
+  // UTC 뒤의 시간대에서 눈금이 하루씩 앞당겨 적힌다.
+  const short = dayFormatter(i18n.language, { month: 'numeric', day: 'numeric' })
 
   return (
     <div className="flex flex-col gap-3">

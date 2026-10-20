@@ -30,14 +30,20 @@ import { useUserNames } from '@/features/issues/hooks'
 import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { deskApi, projectsApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { isoDay, isoDayFrom } from '@/shared/day'
 import { Alert, Button, Card, Field } from '@/shared/ui/primitives'
 
 /** 기본 창은 **지난 30일**이다. 열자마자 볼 것이 있어야 한다. */
 const DEFAULT_DAYS = 30
 
-export function isoDay(at: Date): string {
-  const parts = at.toISOString().split('T')
-  return parts[0] ?? ''
+/**
+ * 열자마자 보이는 창. **로컬 달력으로** 오늘과 30일 전이다.
+ *
+ * 날짜 칸은 사람이 보는 달력의 날을 받는다. UTC 의 날짜로 채우면 서울에서는
+ * 아침 9시까지, 뉴욕에서는 저녁 8시부터 "오늘" 칸에 어제·내일이 적힌다.
+ */
+export function defaultWindow(now: Date): { from: string; to: string } {
+  return { from: isoDayFrom(now, -DEFAULT_DAYS), to: isoDay(now) }
 }
 
 /**
@@ -68,10 +74,9 @@ export function humanize(
 
 export function ReportScreen() {
   const { t } = useTranslation(['desk', 'common'])
-  const today = new Date()
-  const back = new Date(today.getTime() - DEFAULT_DAYS * 86_400_000)
-  const [from, setFrom] = useState(isoDay(back))
-  const [to, setTo] = useState(isoDay(today))
+  const [initial] = useState(() => defaultWindow(new Date()))
+  const [from, setFrom] = useState(initial.from)
+  const [to, setTo] = useState(initial.to)
   const [picked, setPicked] = useState<Project | null>(null)
   /**
    * **물어본 창은 따로 들고 있는다.** 입력 값을 그대로 질의에 쓰면 날짜를
@@ -79,7 +84,7 @@ export function ReportScreen() {
    * 고쳤는데 빨간 경고가 뜬다. 처음 값으로 채워 두는 이유는 열자마자 볼
    * 것이 있어야 하기 때문이다.
    */
-  const [range, setRange] = useState({ from: isoDay(back), to: isoDay(today) })
+  const [range, setRange] = useState(initial)
 
   const first = useQuery({
     queryKey: ['projects', 'first'],

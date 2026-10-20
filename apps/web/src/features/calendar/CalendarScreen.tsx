@@ -8,17 +8,14 @@ import type { CalendarEntry, CalendarSprint, Project } from '@ieum/api-client'
 import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { calendarApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { dayFormatter, isoDay } from '@/shared/day'
 import { Alert, Badge, Button, Card, EmptyState, Field } from '@/shared/ui/primitives'
 
-import { WEEK_STARTS_ON, isoOf, monthWindow, stackIn, weeksOf } from './grid'
+import { WEEK_STARTS_ON, monthWindow, stackIn, weeksOf } from './grid'
 
 /** 0~6 을 격자 열 이름으로. Tailwind 는 문자열을 조립해 만든 클래스를 못 본다. */
 const COL_START = ['col-start-1', 'col-start-2', 'col-start-3', 'col-start-4', 'col-start-5', 'col-start-6', 'col-start-7'] as const
 const COL_SPAN = ['', 'col-span-1', 'col-span-2', 'col-span-3', 'col-span-4', 'col-span-5', 'col-span-6', 'col-span-7'] as const
-
-function todayIso(): string {
-  return isoOf(Math.floor(Date.now() / 86_400_000))
-}
 
 export function CalendarScreen() {
   const { t } = useTranslation(['calendar', 'common', 'issues'])
@@ -30,7 +27,10 @@ export function CalendarScreen() {
 
   const window = monthWindow(cursor.year, cursor.month)
   const weeks = weeksOf(window)
-  const today = todayIso()
+  // **로컬 달력의 오늘**이다. epoch 일(`Date.now() / 하루`)로 세면 UTC 의
+  // 오늘이 되어, 서울에서는 아침 9시까지 어제 칸에, 뉴욕에서는 저녁 8시부터
+  // 내일 칸에 "오늘" 표시가 붙는다.
+  const today = isoDay(now)
 
   const found = useQuery({
     queryKey: ['calendar', project?.id, window.startsOn, window.endsOn, iql],
@@ -51,11 +51,11 @@ export function CalendarScreen() {
     else setCursor({ ...cursor, month })
   }
 
-  const monthName = new Intl.DateTimeFormat(useTranslation().i18n.language, { month: 'long' })
-  const heading = t('calendar:month', {
-    year: cursor.year,
-    month: monthName.format(new Date(Date.UTC(cursor.year, cursor.month - 1, 1))),
-  })
+  // 그 달 1일을 **UTC 로 읽어 UTC 로 쓴다**(`shared/day`). 로컬로 쓰면 UTC 뒤의
+  // 시간대에서 1일 0시(UTC)가 전달 말일이 되어, 10월 격자 위에 "9월" 이 적힌다.
+  const monthName = dayFormatter(useTranslation().i18n.language, { month: 'long' })
+  const firstOfMonth = `${String(cursor.year).padStart(4, '0')}-${String(cursor.month).padStart(2, '0')}-01`
+  const heading = t('calendar:month', { year: cursor.year, month: monthName(firstOfMonth) })
 
   return (
     <section className="flex flex-col gap-4">

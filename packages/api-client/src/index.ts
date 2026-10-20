@@ -1,6 +1,6 @@
 export { ApiClient, type ClientOptions } from './client'
 export { ApiError, isApiError, type ApiErrorBody } from './errors'
-export { tokenStore, type TokenPair } from './tokens'
+export { claimTab, tokenStore, type TabDeps, type TokenPair } from './tokens'
 export {
   createAuditApi,
   type AuditApi,

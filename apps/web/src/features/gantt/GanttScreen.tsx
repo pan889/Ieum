@@ -8,6 +8,7 @@ import type { GanttConflict, GanttRow, Project } from '@ieum/api-client'
 import { ProjectPicker } from '@/features/projects/ProjectPicker'
 import { ganttApi } from '@/shared/api'
 import { describeError } from '@/shared/api/errors'
+import { dayFormatter } from '@/shared/day'
 import { Alert, Badge, Button, Card, EmptyState, Field, Select } from '@/shared/ui/primitives'
 
 import { arrowsOf, barOf, conflictedIds, daysIn, monthSpan } from './bars'
@@ -46,8 +47,9 @@ export function GanttScreen() {
     else setCursor({ ...cursor, month })
   }
 
-  const monthName = new Intl.DateTimeFormat(i18n.language, { month: 'long', year: 'numeric' })
-  const heading = monthName.format(new Date(Date.UTC(cursor.year, cursor.month - 1, 1)))
+  // 그 달 1일을 **UTC 로 읽어 UTC 로 쓴다**(`shared/day`). 로컬로 쓰면 UTC 뒤의
+  // 시간대에서 1일 0시(UTC)가 전달 말일이 되어, 10월을 보면서 "9월" 이라고 적힌다.
+  const heading = dayFormatter(i18n.language, { month: 'long', year: 'numeric' })(startsOn)
 
   return (
     <section className="flex flex-col gap-4">
@@ -180,8 +182,9 @@ function Bars({
 }) {
   const { t, i18n } = useTranslation(['gantt'])
   const total = daysIn(window)
-  const dates = new Intl.DateTimeFormat(i18n.language, { month: 'numeric', day: 'numeric' })
-  const day = (iso: string) => dates.format(new Date(`${iso}T00:00:00Z`))
+  // 막대의 날짜는 시각이 없다. UTC 자정으로 읽었으니 UTC 로 쓴다 — 로컬로 쓰면
+  // 아메리카에서는 모든 막대가 하루 일찍 시작하는 것으로 적힌다.
+  const day = dayFormatter(i18n.language, { month: 'numeric', day: 'numeric' })
   const arrows = arrowsOf(rows)
 
   return (

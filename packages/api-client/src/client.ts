@@ -1,5 +1,5 @@
 import { ApiError } from './errors'
-import { tokenStore } from './tokens'
+import { settleTab, tokenStore } from './tokens'
 
 export interface ClientOptions {
   baseUrl?: string
@@ -32,6 +32,9 @@ export class ApiClient {
   constructor(options: ClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? '').replace(/\/$/, '')
     this.onSessionLost = options.onSessionLost
+    // 복제된 탭인지 **지금부터** 알아본다. 첫 리프레시가 이것을 기다리므로
+    // 일찍 시작할수록 그 기다림이 부팅의 `me` 왕복 뒤로 숨는다(`tokens.ts`).
+    void settleTab()
   }
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -173,6 +176,9 @@ export class ApiClient {
   }
 
   private async doRefresh(): Promise<boolean> {
+    // 복제된 탭이면 물려받은 토큰을 버린 뒤에 읽어야 한다. 먼저 읽어 내밀면
+    // 원본 탭과 같은 토큰을 두 번 쓰게 되고, 서버는 두 탭을 함께 끊는다.
+    await settleTab()
     const refreshToken = tokenStore.refresh
     if (!refreshToken) return false
 
