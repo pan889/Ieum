@@ -5,7 +5,17 @@
  * 거짓말이라서, 여기서도 만드는 방법을 코드로 둔다: 제품의 실제 화면 사진과
  * 저장소가 싣는 글꼴로 카드를 조판하고 브라우저로 찍는다.
  *
- *   node manual/tools/make-og.mjs
+ *   node manual/tools/make-og.mjs          # 두 장 다
+ *   node manual/tools/make-og.mjs en       # 영어판 것만
+ *
+ * **판마다 한 장이다.** 카드의 글이 그 언어로 적혀 있어야 링크를 붙인 사람이
+ * 읽는다 — 영어판 링크에 한국어 카드가 뜨면 무엇에 대한 것인지 모른다.
+ * 영어판 것은 `og.en.png` 로 두고, i18n 플러그인이 그것을 `en/assets/og.png`
+ * 로 낸다(`overrides/main.html` 이 판마다 고른다). 오른쪽 제품 화면은 두 장이
+ * 같다 — 한국어 화면 사진뿐이라서다.
+ *
+ * 하나만 다시 찍을 수 있게 언어를 인자로 받는다. 그림은 찍을 때마다 바이트가
+ * 조금씩 달라서, 안 바뀐 쪽까지 다시 찍으면 의미 없는 변경이 커밋에 낀다.
  *
  * 글꼴을 밖에서 가져오지 않는 것이 중요하다. 이 카드는 `apps/web/public` 을
  * 뿌리로 하는 작은 서버 위에서 그려지고, Pretendard 는 그 안에서 온다 —
@@ -29,8 +39,21 @@ const TMP = join(ROOT, '__og')
 // 보여 주는 화면이기 때문이다 — 문서 본문 안에 이슈 표가 살아서 그려져 있다.
 // 첫 화면 사진은 "내게 배정된" 목록이라 이 주장을 못 보여 준다.
 const SHOT = join(REPO, 'assets/readme/05-wiki.png')
-const OUT = join(REPO, 'manual/docs/assets/og.png')
 const PORT = 8931
+
+/** 판마다 카드 하나. `mark` 옆의 "이음" 은 두 판 다 둔다 — 이름의 일부다. */
+const CARDS = {
+  ko: {
+    out: join(REPO, 'manual/docs/assets/og.png'),
+    tag: '이슈 · 위키 · 서비스데스크를<br>하나로 잇습니다',
+    sub: '셀프호스팅 · 데이터는 여러분의 서버에만',
+  },
+  en: {
+    out: join(REPO, 'manual/docs/assets/og.en.png'),
+    tag: 'Issues, wiki, and service desk<br>joined in one place',
+    sub: 'Self-hosted · your data stays on your servers',
+  },
+}
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -40,7 +63,8 @@ const TYPES = {
 }
 
 /** 카드. 글자는 왼쪽, 제품 화면은 오른쪽에서 잘려 나간다. */
-const CARD = `<!doctype html>
+const card = (lang, { tag, sub }) => `<!doctype html>
+<html lang="${lang}">
 <meta charset="utf-8">
 <link rel="stylesheet" href="./pretendard.css">
 <style>
@@ -73,8 +97,8 @@ const CARD = `<!doctype html>
 </style>
 <div class="left">
   <div class="mark">Ieum<small>이음</small></div>
-  <div class="tag">이슈 · 위키 · 서비스데스크를<br>하나로 잇습니다</div>
-  <div class="sub">셀프호스팅 · 데이터는 여러분의 서버에만</div>
+  <div class="tag">${tag}</div>
+  <div class="sub">${sub}</div>
 </div>
 <div class="shot"><img src="./shot.png" alt=""></div>
 `
@@ -102,13 +126,22 @@ async function serve() {
 }
 
 async function main() {
+  const langs = process.argv.slice(2)
+  for (const lang of langs) {
+    if (!CARDS[lang])
+      throw new Error(`모르는 언어: ${lang} (${Object.keys(CARDS).join(', ')} 중에서)`)
+  }
+  const wanted = langs.length ? langs : Object.keys(CARDS)
+
   await mkdir(TMP, { recursive: true })
   await mkdir(join(REPO, 'manual/docs/assets'), { recursive: true })
   // 글꼴 규칙은 제품이 쓰는 그 파일이다. 안의 `url()` 은 `/fonts/...` 로
   // 절대 경로라, 뿌리가 `apps/web/public` 인 이 서버에서 그대로 풀린다.
   await copyFile(join(REPO, 'apps/web/src/styles/pretendard.css'), join(TMP, 'pretendard.css'))
   await copyFile(SHOT, join(TMP, 'shot.png'))
-  await writeFile(join(TMP, 'card.html'), CARD, 'utf-8')
+  for (const lang of wanted) {
+    await writeFile(join(TMP, `card.${lang}.html`), card(lang, CARDS[lang]), 'utf-8')
+  }
 
   const server = await serve()
   const browser = await chromium.launch({
@@ -116,13 +149,16 @@ async function main() {
   })
   try {
     const page = await browser.newPage({ viewport: { width: 1200, height: 630 } })
-    await page.goto(`http://127.0.0.1:${PORT}/__og/card.html`)
-    // **글꼴이 실제로 온 뒤에 찍는다.** 안 기다리면 대체 글꼴로 한 번 그려진
-    // 화면이 찍히고, 그건 우리가 고른 글꼴이 아니다.
-    await page.evaluate(() => document.fonts.ready)
-    await page.waitForTimeout(300)
-    await page.screenshot({ path: OUT })
-    console.log(`${OUT} (1200×630)`)
+    for (const lang of wanted) {
+      const { out } = CARDS[lang]
+      await page.goto(`http://127.0.0.1:${PORT}/__og/card.${lang}.html`)
+      // **글꼴이 실제로 온 뒤에 찍는다.** 안 기다리면 대체 글꼴로 한 번 그려진
+      // 화면이 찍히고, 그건 우리가 고른 글꼴이 아니다.
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: out })
+      console.log(`${out} (1200×630)`)
+    }
   } finally {
     await browser.close()
     server.close()

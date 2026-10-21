@@ -51,7 +51,8 @@ jobs:
       - name: 내부 링크 전수 확인
         # `--strict` 는 마크다운 소스의 링크를 본다. 이건 **결과물의 href** 를
         # 따라가서 nav·테마가 만든 경로와 절대 경로까지 본다 — 베이스 경로가
-        # `/Ieum/` 이라 거기가 먼저 깨진다.
+        # `/Ieum/` 이라 거기가 먼저 깨진다. 영어판(`site/en/`)도 같이 보고,
+        # 본문 링크가 다른 언어판으로 새는 것도 잡는다.
         run: python3 tools/check-links.py site
         working-directory: manual
 
@@ -63,6 +64,10 @@ jobs:
         # 이 확인이 없으면 **조용히 사라진다.** `custom_dir: overrides` 한 줄만
         # 지워도 og 태그가 통째로 없어지는데 화면은 아무렇지도 않고, 몇 달 뒤
         # 검색 결과가 이상한 것을 보고서야 안다. 되돌려 확인해 두었다.
+        #
+        # **번역이 빠진 쪽도 여기서 멈춘다.** 영어판(`*.en.md`)이 없는 쪽은
+        # i18n 플러그인이 한국어 원본으로 채우고 `--strict` 도 그대로 통과한다 —
+        # 영어판 주소에 한국어 글이 나가는 것을 잡는 곳이 여기뿐이다.
         run: node tools/check-seo.mjs site
         working-directory: manual
 
@@ -75,14 +80,20 @@ jobs:
         # 붙잡는 것 중 제일 중요한 건 "밖으로 나가는 요청이 없는가" 다 —
         # 테마를 올리면 되살아나기 쉽고, 되살아나도 화면은 멀쩡해 보인다.
         # 자체 인프라에 두고 쓰는 제품의 문서가 방문자마다 밖에 알리면 안 된다.
+        #
+        # **공개 사이트와 같은 경로(`/Ieum/`) 밑에 띄운다.** 언어 메뉴의 첫 화면
+        # 링크와 404 쪽은 그 경로를 통째로 적는다 — 뿌리에 띄우면 거기만 깨지고,
+        # 그건 공개 사이트에는 없는 실패다.
         working-directory: manual
         run: |
-          python3 -m http.server 8899 --bind 127.0.0.1 --directory site &
+          mkdir -p "$RUNNER_TEMP/pages"
+          ln -sfn "$PWD/site" "$RUNNER_TEMP/pages/Ieum"
+          python3 -m http.server 8899 --bind 127.0.0.1 --directory "$RUNNER_TEMP/pages" &
           for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8899/ >/dev/null && break
+            curl -sf http://127.0.0.1:8899/Ieum/ >/dev/null && break
             sleep 1
           done
-          CHECK_SITE_REQUIRED=1 node tools/check-site.mjs http://127.0.0.1:8899
+          CHECK_SITE_REQUIRED=1 node tools/check-site.mjs http://127.0.0.1:8899/Ieum
 
       - uses: actions/upload-pages-artifact@v3
         with:

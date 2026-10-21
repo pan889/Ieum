@@ -4,8 +4,8 @@
   검색에 걸리기 위해 필요한 머리말.
 
   테마가 이미 내주는 것: `<meta name="description">`(쪽마다), `canonical`,
-  `sitemap.xml`, `404.html`, `lang="ko"`. **확인하고 적은 것이다** — 빌드
-  결과를 열어 보고 없는 것만 여기서 채운다.
+  `sitemap.xml`, `404.html`, `<html lang>`(판 언어를 따른다). **확인하고 적은
+  것이다** — 빌드 결과를 열어 보고 없는 것만 여기서 채운다.
 
   여기서 채우는 것:
   - Open Graph / 트위터 카드. 링크를 붙였을 때 제목·설명·그림이 뜬다.
@@ -14,14 +14,110 @@
   - JSON-LD. 이 사이트가 **무엇에 대한 것인지**를 기계에 직접 말한다.
   - 검색 콘솔 소유 확인 태그. 값은 `mkdocs.yml` 의 `extra` 에서 온다.
 
+  **두 언어다.** 한국어판이 뿌리, 영어판이 `/en/` 밑이다(`mkdocs.yml` 의
+  `plugins.i18n`). 언어에 따라 바뀌는 것 — og:locale, og 그림, 문구,
+  JSON-LD 의 `inLanguage` — 은 전부 i18n 플러그인이 넘겨 주는 변수에서 고른다.
+  hreflang 은 여기가 아니라 사이트맵(`overrides/sitemap.xml`)이 맡는다 —
+  까닭은 아래 `site_meta` 에 적었다.
+
   **그림은 우리 것만 쓴다.** 밖에서 가져오면 `tools/check-site.mjs` 가
   잡는다 — 이 문서는 폐쇄망에서도 열려야 하고, 방문자마다 밖에 알리지
   않겠다는 것이 제품이 한 약속이다.
 -#}
 
+{#-
+  이 쪽의 언어. **둘이 다를 수 있다.**
+  - 판 언어: 어느 판에 실렸나. `/en/` 밑이면 en 이고 `<html lang>` 이 이것이다.
+  - 글 언어: 실제로 쓰인 언어. 영어 번역(`*.en.md`)이 없어 한국어 원본으로
+    떨어진 쪽은 영어판에 실려도 ko 다.
+  i18n 플러그인이 쪽마다 `i18n_page_locale`·`i18n_file_locale` 을 넘긴다.
+  404 처럼 쪽이 아닌 것에는 `i18n_current_language` 만 온다.
+
+  블록마다 다시 계산하지 않으려고 매크로로 둔다 — Jinja 는 블록끼리 변수를
+  나누지 않는다.
+-#}
+{%- macro site_locale() -%}
+  {{- i18n_page_locale | d(i18n_current_language, true) | d(config.theme.language, true) -}}
+{%- endmacro -%}
+
+{#- 이 판의 첫 화면 경로(`""` 또는 `"en/"`). 언어 설정의 `link` 에서 온다. -#}
+{%- macro home_path() -%}
+  {%- if i18n_config is defined -%}
+    {%- set here = i18n_config.languages | selectattr("locale", "equalto", site_locale()) | first -%}
+    {{- here.link[1:] if here else "" -}}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- 첫 화면인가. 테마의 `page.is_homepage` 는 **뿌리의 첫 화면만** 참이다 —
+    영어판 첫 화면(`en/`)은 그냥 쪽으로 친다. 그래서 판마다 따로 본다. -#}
+{%- macro is_home() -%}
+  {{- "1" if page and (page.is_homepage or (page.url == home_path())) else "" -}}
+{%- endmacro -%}
+
+{#-
+  Material 기본판에서 **언어별 `<link rel="alternate" hreflang>` 를 뺐다.**
+  그 밖에는 RSS 줄(플러그인을 안 쓴다)과 generator 의 테마 판 번호(옮겨 적으면
+  테마를 올려도 그대로 남는 거짓말이 된다)만 뺐고, 나머지는 기본판(9.7.7)
+  그대로다 — 테마를 올리면 기본판의 이 블록과 견줘 본다.
+
+  i18n 플러그인을 켜면 테마가 언어 수만큼 그 줄을 쓰는데, 둘이 문제다.
+  1. **상대 주소다**(`../en/install/`). 구글은 hreflang 을 온전한 주소로만
+     받는다.
+  2. **테마의 JS 가 그 주소마다 `sitemap.xml` 을 받으러 간다**(언어 메뉴를
+     "같은 쪽의 다른 언어"로 잇는 기능). 우리 사이트맵은 뿌리에 하나뿐이라
+     쪽마다 404 가 둘씩 나고, 콘솔에 오류가 찍힌다. 온전한 주소로 바꿔 써도
+     같다 — 테마는 `rel=alternate` 이면 무엇이든 받으러 간다.
+
+  그래서 hreflang 은 사이트맵에만 둔다(구글이 머리말과 같은 무게로 읽는
+  방법이다). 언어 메뉴는 플러그인이 쪽마다 맞는 주소를 넣어 주므로 그 JS 가
+  없어도 같은 쪽의 다른 언어로 간다.
+-#}
+{% block site_meta %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  {% if page.meta and page.meta.description %}
+    <meta name="description" content="{{ page.meta.description }}">
+  {% elif config.site_description %}
+    <meta name="description" content="{{ config.site_description }}">
+  {% endif %}
+  {% if page.meta and page.meta.author %}
+    <meta name="author" content="{{ page.meta.author }}">
+  {% elif config.site_author %}
+    <meta name="author" content="{{ config.site_author }}">
+  {% endif %}
+  {% if page.canonical_url %}
+    <link rel="canonical" href="{{ page.canonical_url }}">
+  {% endif %}
+  {% if page.previous_page %}
+    <link rel="prev" href="{{ page.previous_page.url | url }}">
+  {% endif %}
+  {% if page.next_page %}
+    <link rel="next" href="{{ page.next_page.url | url }}">
+  {% endif %}
+  <link rel="icon" href="{{ config.theme.favicon | url }}">
+  <meta name="generator" content="mkdocs-{{ mkdocs_version }}, mkdocs-material">
+{% endblock %}
+
+{#- 쪽 제목. 기본판과 같되 **영어판 첫 화면도 첫 화면으로 친다** — 안 그러면
+    "Ieum (이음) - Ieum" 이 된다. -#}
+{% block htmltitle %}
+  {%- if page.meta and page.meta.title %}
+  <title>{{ page.meta.title }} - {{ config.site_name }}</title>
+  {%- elif page.title and not is_home() %}
+  <title>{{ page.title | striptags }} - {{ config.site_name }}</title>
+  {%- else %}
+  <title>{{ config.site_name }}</title>
+  {%- endif %}
+{% endblock %}
+
 {% block extrahead %}
+  {%- set locale = site_locale() -%}
+  {%- set text_locale = i18n_file_locale | d(locale, true) -%}
+  {%- set og_locales = {"ko": "ko_KR", "en": "en_US"} -%}
+  {%- set home = config.site_url ~ home_path() -%}
+
   {#- 쪽 제목. 첫 화면은 사이트 이름 하나로 둔다 — "Ieum · Ieum" 은 우습다. -#}
-  {%- if page and page.title and not page.is_homepage -%}
+  {%- if page and page.title and not is_home() -%}
     {%- set og_title = page.title | striptags ~ " · " ~ config.site_name -%}
   {%- else -%}
     {%- set og_title = config.site_name ~ " — " ~ config.site_description -%}
@@ -31,26 +127,52 @@
   {%- else -%}
     {%- set og_description = config.site_description -%}
   {%- endif -%}
-  {%- set og_url = page.canonical_url if page and page.canonical_url else config.site_url -%}
-  {%- set og_image = config.site_url ~ "assets/og.png" -%}
+  {%- set og_url = page.canonical_url if page and page.canonical_url else home -%}
+  {#- 그림은 판마다 다르다 — 카드의 글이 그 언어로 적혀 있다. 영어판 그림의
+      원본은 `docs/assets/og.en.png` 이고, 플러그인이 그것을 `en/assets/og.png`
+      로 낸다(`tools/make-og.mjs` 가 둘 다 만든다). -#}
+  {%- set og_image = home ~ "assets/og.png" -%}
+  {%- set og_image_alt = {
+        "ko": "Ieum 의 위키 문서 — 본문 안에 이슈 목록이 표로 살아서 그려져 있다",
+        "en": "An Ieum wiki page with a live table of issues rendered inside the page",
+      }[locale] | d("") -%}
+
+  {#- **번역이 없어 한국어 원본으로 떨어진 영어판 쪽은 색인하지 않는다.**
+      한국어판과 같은 글이 다른 주소로 한 벌 더 있는 셈이고, `lang="en"` 이라
+      검색 엔진에 언어를 거짓으로 말한다. `tools/check-seo.mjs` 가 이런 쪽을
+      실패로 잡으므로 공개 사이트에는 원래 없어야 한다 — 이건 그 확인을
+      건너뛰고 냈을 때의 안전판이다. -#}
+  {%- if page and text_locale != locale %}
+  <meta name="robots" content="noindex">
+  {%- endif %}
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{{ config.site_name }}">
-  <meta property="og:locale" content="ko_KR">
+  <meta property="og:locale" content="{{ og_locales[text_locale] | d(text_locale) }}">
+  {#- 이 쪽에 **번역이 실제로 있는** 다른 언어만. 원본으로 떨어진 것은
+      다른 언어판이 아니다. -#}
+  {%- if page and page.file and page.file.alternates is defined %}
+    {%- for other, alternate in page.file.alternates | dictsort %}
+      {%- if other != text_locale and alternate.locale == other %}
+  <meta property="og:locale:alternate" content="{{ og_locales[other] | d(other) }}">
+      {%- endif %}
+    {%- endfor %}
+  {%- endif %}
   <meta property="og:title" content="{{ og_title }}">
   <meta property="og:description" content="{{ og_description }}">
   <meta property="og:url" content="{{ og_url }}">
   <meta property="og:image" content="{{ og_image }}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Ieum 의 위키 문서 — 본문 안에 이슈 목록이 표로 살아서 그려져 있다">
+  <meta property="og:image:alt" content="{{ og_image_alt }}">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ og_title }}">
   <meta name="twitter:description" content="{{ og_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
 
   {#- 소유 확인. 값을 안 넣으면 태그 자체를 안 쓴다 — 빈 `content` 를 두면
-      검색 콘솔이 "확인 실패" 를 돌려주고 원인이 안 보인다. -#}
+      검색 콘솔이 "확인 실패" 를 돌려주고 원인이 안 보인다. 영어판에도 같은
+      태그를 단다 — 검색 콘솔 속성이 `/Ieum/` 접두어라 `/Ieum/en/` 도 그 안이다. -#}
   {%- if config.extra.google_site_verification %}
   <meta name="google-site-verification" content="{{ config.extra.google_site_verification }}">
   {%- endif %}
@@ -59,8 +181,8 @@
   {%- endif %}
 
   {#- 첫 화면에서만 제품 자체를 설명한다. 속쪽까지 같은 것을 반복하면
-      "이 쪽이 무엇인가" 가 흐려진다. -#}
-  {%- if page and page.is_homepage %}
+      "이 쪽이 무엇인가" 가 흐려진다. 영어판 첫 화면도 첫 화면이다. -#}
+  {%- if is_home() %}
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -71,16 +193,16 @@
       "applicationSubCategory": "Issue tracking, wiki, service desk",
       "operatingSystem": "Linux (Docker)",
       "description": {{ config.site_description | tojson }},
-      "url": {{ config.site_url | tojson }},
+      "url": {{ home | tojson }},
       "image": {{ og_image | tojson }},
-      "inLanguage": "ko",
+      "inLanguage": {{ text_locale | tojson }},
       {#- 이제 `LICENSE` 가 실제로 있으므로 적는다. 없을 때는 비워 두었다 —
           없는 것을 구조화 데이터로 단언하면 기계에게 거짓말이다. -#}
       "license": "https://www.gnu.org/licenses/agpl-3.0.html",
       "codeRepository": "https://github.com/pan889/Ieum"
     }
   </script>
-  {%- else %}
+  {%- elif page %}
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -88,11 +210,12 @@
       "headline": {{ (page.title | striptags) | tojson }},
       "description": {{ og_description | tojson }},
       "url": {{ og_url | tojson }},
-      "inLanguage": "ko",
+      "inLanguage": {{ text_locale | tojson }},
       "isPartOf": {
         "@type": "WebSite",
         "name": {{ config.site_name | tojson }},
-        "url": {{ config.site_url | tojson }}
+        "url": {{ home | tojson }},
+        "inLanguage": {{ locale | tojson }}
       }
     }
   </script>

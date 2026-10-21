@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+{#
+  사이트맵. **hreflang 은 여기가 맡는다** — 쪽 머리말에서 뺀 까닭은
+  `overrides/main.html` 의 `site_meta` 에 적었다. 구글은 사이트맵의 hreflang 을
+  머리말의 것과 같은 무게로 읽는다.
+
+  mkdocs-static-i18n 1.3.1 이 넣는 `custom_i18n_sitemap/sitemap.xml` 을 옮겨 와
+  셋을 고쳤다. 이 파일이 `custom_dir` 에 있으면 플러그인은 제 것을 안 쓴다.
+  플러그인을 올리면 그쪽 템플릿과 견줘 본다.
+
+  1. **번역이 없어 원본으로 떨어진 쪽은 싣지 않는다.** 그 쪽은 `noindex` 이고,
+     색인하지 말라는 주소를 사이트맵에 올리면 검색 콘솔이 오류로 센다.
+  2. hreflang 도 **번역이 실제로 있는 언어만** 단다. 떨어진 쪽을 "영어판" 이라고
+     말하면 영어로 찾은 사람에게 한국어 글을 내민다.
+  3. `x-default` 를 단다 — 한국어도 영어도 아닌 사람에게는 영어판을 준다.
+     영어판이 없으면 기본 언어(뿌리) 쪽이다.
+
+  플러그인은 언어마다 이 템플릿을 그리고, 매번 뿌리의 `sitemap.xml` 을 덮어쓴다.
+  마지막(영어판) 빌드 때는 모든 언어의 쪽을 알고 있으므로 결과에 둘 다 실린다.
+-#}
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+
+{%- macro href(file) -%}
+    {%- if file.page and file.page.canonical_url -%}
+        {{- file.page.canonical_url | e -}}
+    {%- elif file.page and file.page.abs_url -%}
+        {{- file.page.abs_url | e -}}
+    {%- elif file.url == "./" -%}
+        {{- config.site_url -}}
+    {%- else -%}
+        {{- config.site_url ~ file.url -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- for locale, i18n_files in i18n_alternates.items() %}
+
+{%- for file in i18n_files %}
+    {%- if not file.page or file.page.is_link %}
+        {%- continue %}
+    {%- endif %}
+
+    {#- 1. 원본으로 떨어진 쪽 -#}
+    {%- if file.locale != locale %}
+        {%- continue %}
+    {%- endif %}
+
+    {#-
+        Warning! Don't align the XML tags based on the Jinja2 statements.
+        It will cause whitespace misalignment in the output.
+    #}
+    <url>
+        <loc>{{ href(file) }}</loc>
+    {%- if file.page.update_date %}
+        <lastmod>{{ file.page.update_date }}</lastmod>
+    {%- endif %}
+        <changefreq>daily</changefreq>
+    {%- set ns = namespace(x_default=none, fallback=none) %}
+    {%- for i18n_locale, i18n_file in file.alternates | dictsort %}
+        {#- 2. 번역이 실제로 있는 언어만 -#}
+        {%- if i18n_file.locale != i18n_locale %}
+            {%- continue %}
+        {%- endif %}
+        {%- if i18n_locale == "en" %}
+            {%- set ns.x_default = i18n_file %}
+        {%- endif %}
+        {%- if i18n_file.localization is none %}
+            {%- set ns.fallback = i18n_file %}
+        {%- endif %}
+        <xhtml:link rel="alternate" hreflang="{{ i18n_locale }}" href="{{ href(i18n_file) }}"/>
+    {%- endfor %}
+    {%- set x_default = ns.x_default or ns.fallback %}
+    {%- if x_default %}
+        <xhtml:link rel="alternate" hreflang="x-default" href="{{ href(x_default) }}"/>
+    {%- endif %}
+    </url>
+{%- endfor %}
+{%- endfor %}
+</urlset>
