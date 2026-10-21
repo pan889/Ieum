@@ -37,4 +37,4 @@
 {{- end }}
 
 이 차트는 Postgres·Redis·S3·SMTP 를 만들지 않습니다. 왜 그런지는
-`deploy/helm/ieum/README.md` 에 있습니다.
+`deploy/helm/ieum/README.ko.md` 에 있습니다.

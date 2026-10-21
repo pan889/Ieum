@@ -100,9 +100,9 @@ it at.
 Images are **pulled, not built** (`ghcr.io/pan889/ieum-api`, `ieum-web`). We can
 only answer "what exactly is running?" if you and we are running the same bytes.
 
-→ **[Install guide](deploy/install/README.md)** (Korean) — running behind a proxy,
+→ **[Install guide](deploy/install/README.md)** — running behind a proxy,
 upgrading, what to back up, and what this installer **doesn't** do. The
-[English manual](https://pan889.github.io/Ieum/en/) covers installing and upgrading
+[manual](https://pan889.github.io/Ieum/en/) covers installing and upgrading
 too.
 → To scale out across several nodes, see the [Helm chart](deploy/helm/ieum/).
 

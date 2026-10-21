@@ -521,9 +521,18 @@ class TestTheReadmePointsAtThisVersion:
     한 줄을 두 파일에 적으니 판을 올릴 때 한쪽만 고치는 날이 온다. 그래서
     둘 다 본다. 본문의 판 올리기 예시(`install.sh --version X`)도 같은 판이어야
     한다 — 낡으면 그 줄을 따라 친 사람이 옛 판을 받는다.
+
+    **설치 안내(`deploy/install/`)도 같은 한 줄과 같은 판 올리기 예시를 든다.**
+    그 파일은 이 게이트 밖에 있었는데, 영어·한국어 두 벌이 되면서 판을 올릴 때
+    고쳐야 할 자리가 넷이 됐다. 넷 다 본다.
     """
 
-    READMES: ClassVar[tuple[str, ...]] = ("README.md", "README.ko.md")
+    READMES: ClassVar[tuple[str, ...]] = (
+        "README.md",
+        "README.ko.md",
+        "deploy/install/README.md",
+        "deploy/install/README.ko.md",
+    )
 
     @staticmethod
     def _text(name: str) -> str:

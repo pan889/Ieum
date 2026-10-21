@@ -90,9 +90,9 @@ sh install.sh --url https://ieum.example.com
 `ieum-web`). 깐 사람과 우리가 같은 바이트를 돌아야 "무엇이 돌고 있냐" 에
 답할 수 있기 때문입니다.
 
-→ **[설치 안내](deploy/install/README.md)** — 프록시 뒤에 두기, 판 올리기,
+→ **[설치 안내](deploy/install/README.ko.md)** — 프록시 뒤에 두기, 판 올리기,
 백업할 것, 이 설치본이 **하지 않는 것**.
-→ 여러 대로 늘리려면 [Helm 차트](deploy/helm/ieum/)를 봅니다.
+→ 여러 대로 늘리려면 [Helm 차트](deploy/helm/ieum/README.ko.md)를 봅니다.
 
 ## 고쳐 보기
 
@@ -148,7 +148,7 @@ pnpm --filter @ieum/web exec playwright test    # 브라우저 267개
 | 명령 목록 | `make help` |
 | 커밋 전 전체 검사 | `make check` (ruff · mypy --strict · bandit · 시험 · i18n) |
 | 로컬 스택 | `make dev` · `make infra` · `make reset-db` |
-| 배포 | [`deploy/install/`](deploy/install/) (한 줄) · [`deploy/compose/`](deploy/compose/) (소스 빌드) · [`deploy/helm/`](deploy/helm/ieum/) |
+| 배포 | [`deploy/install/`](deploy/install/README.ko.md) (한 줄) · [`deploy/compose/`](deploy/compose/README.ko.md) (소스 빌드) · [`deploy/helm/`](deploy/helm/ieum/README.ko.md) |
 
 판마다 바뀐 것과 **어디까지 실제로 확인했는지**는 [CHANGELOG.md](CHANGELOG.md)
 에 있습니다. 기능 목록보다 그쪽이 중요합니다 — "구현했다" 와 "실제로 그렇게
