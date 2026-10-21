@@ -18,7 +18,7 @@ docker compose exec api python -m ieum.cli seed      # 멱등합니다
 역할에 그것을 더해 주는 일이고, 안 돌리면 새 기능이 관리자에게도 403 으로
 보입니다.
 
-쿠버네티스에서는 이 셋이 훅 Job 으로 자동입니다 —
+쿠버네티스에서는 마이그레이션과 시드가 훅 Job 으로 자동입니다 —
 `pre-upgrade` 가 마이그레이션, `post-upgrade` 가 시드입니다.
 
 ## 마이그레이션을 먼저 보고 싶다면
