@@ -1,108 +1,122 @@
-# 한 노드에 깔기
+# Single-node install
 
-한 줄이면 선다. Docker 와 Compose(v2)만 있으면 된다.
+**English** · [한국어](README.ko.md)
+
+One command brings it up. All you need is Docker and Compose (v2).
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.2/deploy/install/install.sh
 sh install.sh --url https://ieum.example.com
 ```
 
-> 남이 준 스크립트를 그냥 파이프로 넘기지 말고 **한 번 열어 보는 쪽**을 권한다.
-> 400줄 남짓이고 하는 일이 다 적혀 있다. 저장소를 받아 뒀다면
-> `deploy/install/install.sh` 를 그대로 쓰면 된다 — 옆의 `compose.yml` 을
-> 알아서 집는다.
+> Rather than piping a script someone handed you straight into a shell, we
+> recommend **opening it and reading it once**. It's a little over 400 lines, and
+> everything it does is written down. If you've already cloned the repository,
+> you can run `deploy/install/install.sh` as is — it picks up the `compose.yml`
+> next to it on its own.
 
-물어보는 것은 **주소 하나**다. 나머지(비밀 키·DB 비밀번호·스토리지 열쇠)는
-그 자리에서 만들어 `.env` 에 넣는다.
+It asks for **just one thing: the URL**. Everything else (the secret key, the
+database password, the storage keys) is generated on the spot and written to
+`.env`.
 
-## 무엇이 서는가
+## What it runs
 
 | | |
 |---|---|
-| `web` | 화면. **밖으로 나가는 포트는 이것 하나뿐이다** |
-| `api`·`worker` | 앱과 배경 작업 |
-| `postgres` | PGroonga 가 든 이미지 (한국어 검색이 이 위에 선다) |
-| `redis` | 큐와 캐시 |
-| `minio` | 첨부 저장소 |
-| `migrate`·`seed`·`minio-init` | 한 번 돌고 끝나는 것들 |
+| `web` | The UI. **This is the only port exposed to the outside** |
+| `api`, `worker` | The app and its background jobs |
+| `postgres` | An image with PGroonga built in (Korean search runs on top of it) |
+| `redis` | Queues and cache |
+| `minio` | Attachment storage |
+| `migrate`, `seed`, `minio-init` | One-shot jobs that run once and exit |
 
-포트가 하나인 이유: 앞에 TLS 를 세울 때 **붙일 곳이 한 군데**여야 하기
-때문이다. 첨부도 같은 오리진으로 나간다 — `web` 의 nginx 가 버킷 경로
-(`/ieum-attachments/`)를 스토리지로 그대로 넘긴다. 경로를 고치지 않는 것이
-중요하다: presigned 서명에 경로와 Host 가 들어 있어서 한 글자만 달라져도
-스토리지가 403 을 낸다.
+Why a single port: when you put TLS in front, there should be **exactly one
+place to point it at**. Attachments are served from the same origin too — the
+nginx in `web` passes the bucket path (`/ieum-attachments/`) through to storage
+as is. Leaving the path untouched matters: a presigned signature covers the path
+and the Host header, so if even one character changes, storage answers with 403.
 
-## 앞에 프록시를 세울 때
+## Putting a proxy in front
 
 ```
 https://ieum.example.com  →  127.0.0.1:8080
 ```
 
-`.env` 에서 `IEUM_HTTP_BIND=127.0.0.1` 로 바꾸면 밖에서 8080 을 직접 못 연다.
-`IEUM_PUBLIC_URL` 은 **사람이 치는 주소**(`https://…`)여야 한다 — 이 값이
-쿠키·첨부 링크·메일 링크에 그대로 들어간다.
+Set `IEUM_HTTP_BIND=127.0.0.1` in `.env`, and port 8080 can no longer be reached
+directly from outside. `IEUM_PUBLIC_URL` must be **the address people actually
+type** (`https://…`) — this value goes as is into cookies, attachment links, and
+links in emails.
 
-`IEUM_TRUSTED_PROXY_HOPS` 는 접속자 IP 를 읽을 때 믿는 프록시 수다. 이 설치본의
-nginx 하나와 앞의 TLS 프록시 하나를 합쳐 **2** 가 기본이다(https 주소로 깔면
-`.env` 에도 2 가 적힌다). 프록시 없이 http 로 바로 연다면 1 로 고친다. 프록시
-뒤인데 1 이면 모든 접속자가 프록시 주소 하나로 보여, 로그인 실패 제한이 전원을
-한꺼번에 막는다.
+`IEUM_TRUSTED_PROXY_HOPS` is the number of proxies trusted when reading the
+client's IP address. The default is **2**: the nginx in this install bundle plus
+one TLS proxy in front of it (if you install with an https URL, `.env` gets 2 as
+well). If you serve it directly over plain http with no proxy, change it to 1. If
+it's 1 while you're behind a proxy, every client appears to come from the
+proxy's single address, and the login-failure limit locks everyone out at once.
 
-## 판 올리기
+## Upgrading
 
 ```bash
 sh install.sh --version 1.2.2
 ```
 
-비밀은 다시 만들지 않는다. `compose.yml` 은 **그 판의 것으로 갈아 끼운다** —
-이미지만 새것이 되고 설정이 옛것으로 남으면 몇 달 뒤 엉뚱한 증상이 된다.
-그래서 **`compose.yml` 은 우리 것**이다. 고칠 것이 있으면 옆에
-`compose.override.yml` 을 두면 compose 가 겹쳐 읽고, 설치 스크립트는 그
-파일을 건드리지 않는다.
+Secrets aren't regenerated. `compose.yml` is **replaced with the one from that
+version** — if the images get updated but the configuration stays old, months
+later it shows up as baffling symptoms. That's why **`compose.yml` is ours**. If
+you need to change something, put a `compose.override.yml` next to it: compose
+layers it on top, and the installer never touches that file.
 
-설치 자리에서 치면 `compose.yml` 과 `install.sh` 를 **그 판의 태그에서 받아**
-갈아 끼운다(`raw.githubusercontent.com/…/v<판>/deploy/install/`). 그래서 그
-주소로 나갈 수 있어야 한다. 받지 못하면 `.env` 의 판도 안 바꾸고 멈춘다 — 판만
-새것이고 `compose.yml` 은 옛것인 어중간한 상태를 남기지 않는다.
+When you run it from the install directory, it **downloads `compose.yml` and
+`install.sh` from that version's tag** and swaps them in
+(`raw.githubusercontent.com/…/v<version>/deploy/install/`), so the machine needs
+to be able to reach that address. If the download fails, it stops without
+changing the version in `.env` either — it never leaves you halfway, with a new
+version number and an old `compose.yml`.
 
-> 1.2.1 까지의 `install.sh` 는 설치 자리에서 친 판올림에서 `compose.yml` 을 안
-> 바꿨다("이미 이 자리에 있다"). 그 스크립트로는 몇 번을 쳐도 안 바뀌므로,
-> **올릴 판의 `install.sh` 를 먼저 받아서** 친다:
+> Up to 1.2.1, `install.sh` did not replace `compose.yml` when you upgraded from
+> the install directory (it printed "이미 이 자리에 있다" — "already in place").
+> With that script nothing changes no matter how many times you run it, so
+> **download the `install.sh` of the version you're upgrading to first**, then
+> run it:
 >
 > ```bash
-> cd <설치한 자리>
-> curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v<판>/deploy/install/install.sh
-> sh install.sh --version <판>
+> cd <install-dir>
+> curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v<version>/deploy/install/install.sh
+> sh install.sh --version <version>
 > ```
 
-## 백업할 것
+## What to back up
 
 | | |
 |---|---|
-| `.env` | **`IEUM_SECRET_KEY` 가 여기 있다.** 잃으면 MFA·웹훅 시크릿을 못 되살린다 |
-| `ieum_pgdata` 볼륨 | 데이터 전부 |
-| `ieum_miniodata` 볼륨 | 첨부 파일 |
+| `.env` | **`IEUM_SECRET_KEY` lives here.** Lose it and MFA and webhook secrets can't be recovered |
+| `ieum_pgdata` volume | All of your data |
+| `ieum_miniodata` volume | Attachments |
 
-`docker compose down` 은 볼륨을 지우지 않는다. `down -v` 는 **지운다.**
+`docker compose down` doesn't delete volumes. `down -v` **does.**
 
-## 같은 기계에서 소스도 돌린다면
+## If you also run from source on the same machine
 
-compose 프로젝트 이름이 둘 다 `ieum` 이다. 그러면 저장소에서 친
-`docker compose` 가 **이 설치본의 컨테이너를 자기 것으로 알고 치운다.**
-한 기계에서 둘 다 굴리려면 한쪽에 다른 이름을 준다:
+Both compose projects are named `ieum`. So a `docker compose` run from the
+repository **treats this install's containers as its own and removes them.** To
+run both on one machine, give one of them a different name:
 
 ```bash
-COMPOSE_PROJECT_NAME=ieum-dev docker compose up -d   # 저장소 쪽에서
+COMPOSE_PROJECT_NAME=ieum-dev docker compose up -d   # in the repository checkout
 ```
 
-## 안 하는 것
+## What it doesn't do
 
-- **이미지를 빌드하지 않는다.** 판을 붙여 낸 것을 레지스트리에서 당긴다 —
-  그래야 깐 사람과 우리가 같은 바이트를 돈다. 소스에서 빌드해 돌리려면
-  저장소 루트의 `docker-compose.yml` 과 `deploy/compose/prod.yml` 을 쓴다.
-- **TLS 를 대신 끝내 주지 않는다.** 인증서는 배포마다 다르다(사내 CA,
-  Let's Encrypt, 로드밸런서). 앞에 이미 있는 것을 쓰는 편이 낫다.
-- **메일 서버를 세우지 않는다.** `.env` 의 `IEUM_SMTP_*` 를 채운다.
-  비워 두면 앱은 뜨지만 초대·알림 메일이 안 나간다.
-- **여러 대로 못 늘린다.** 이 파일은 한 노드짜리다. 여러 대는 Helm 차트
-  (`deploy/helm/`)와 문서의 HA 안내를 본다.
+- **It doesn't build images.** It pulls the released, version-tagged images
+  from the registry — that way you and we run the same bytes. To build and run
+  from source, use `docker-compose.yml` at the repository root together with
+  `deploy/compose/prod.yml`.
+- **It doesn't terminate TLS for you.** Certificates differ from one deployment
+  to the next (an internal CA, Let's Encrypt, a load balancer). You're better off
+  using whatever already sits in front.
+- **It doesn't run a mail server.** Fill in `IEUM_SMTP_*` in `.env`. If you leave
+  them empty, the app still starts, but invitation and notification emails don't
+  go out.
+- **It doesn't scale out.** This setup is for a single node. For multiple nodes,
+  see the Helm chart (`deploy/helm/`) and the
+  [HA guide in the manual](https://pan889.github.io/Ieum/en/operations/#6-running-multiple-instances-ha).

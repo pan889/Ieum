@@ -230,7 +230,7 @@ PITR 까지 하면 "어제 밤 백업" 이 아니라 "사고 직전" 으로 돌�
 
 ## 5. 쿠버네티스에 올린다 (Helm)
 
-차트는 `deploy/helm/ieum` 에 있고, 그 `README.md` 가 쓰는 법과 **정한 이유**를
+차트는 `deploy/helm/ieum` 에 있고, 그 `README.ko.md` 가 쓰는 법과 **정한 이유**를
 담고 있다. 여기서는 운영에서 먼저 알아야 할 것만 옮긴다.
 
 ### 이 차트는 붙는 것을 만들지 않는다
@@ -253,7 +253,7 @@ Postgres·Redis·S3·SMTP 는 주소만 받는다. `helm uninstall` 이 데이�
 (`secrets.s3AccessKey`·`s3SecretKey`), 첫 관리자(`seed.adminEmail`·
 `secrets.seedAdminPassword`)도 값으로 받는다. **첫 관리자의 비밀번호를 안 주면
 관리자가 안 만들어진다.** 메일은 `config.extra`·`secrets.extra` 의 `IEUM_SMTP_*`
-로 준다. 표는 차트의 `README.md` 에 있다.
+로 준다. 표는 차트의 `README.ko.md` 에 있다.
 
 ### 스키마는 훅 Job 이 올린다
 

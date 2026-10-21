@@ -1,69 +1,79 @@
-# 배포 (Docker Compose) — **소스에서 빌드해 올리는 쪽**
+# Deployment (Docker Compose) — **building from source**
 
-> 그냥 깔고 싶으면 여기가 아니다. **[`deploy/install/`](../install/)** 이
-> 판을 붙여 낸 이미지를 당겨서 한 줄로 세운다. 이 디렉터리는 **소스를 고쳐
-> 자기 이미지로 올리는** 사람을 위한 것이다.
+**English** · [한국어](README.ko.md)
 
-`docker-compose.yml`(루트)이 개발용, 여기 파일들이 운영 오버라이드다.
+> If you just want to install Ieum, you're in the wrong place.
+> **[`deploy/install/`](../install/)** pulls the released, version-tagged images
+> and brings everything up with one command. This directory is for people who
+> **modify the source and deploy their own images**.
+
+`docker-compose.yml` (at the repository root) is for development; the files here
+are the production overrides.
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/compose/prod.yml up -d
 ```
 
-이 경로는 **마이그레이션을 대신 돌려 주지 않는다.** 띄운 뒤에 한 번 친다:
+This path **doesn't run migrations for you.** Run this once after it's up:
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/compose/prod.yml \
     run --rm api alembic -c alembic.ini upgrade head
 ```
 
-| 파일 | 용도 |
+| File | Purpose |
 |---|---|
-| `postgres-init/01-extensions.sql` | 최초 기동 시 확장 설치 (citext, pg_trgm, ltree, pgroonga) |
-| `prod.yml` | 운영 오버라이드: 코드 마운트 제거, 리로드 끄기, 레플리카 |
+| `postgres-init/01-extensions.sql` | Installs extensions on first start (citext, pg_trgm, ltree, pgroonga) |
+| `prod.yml` | Production override: removes the code mounts, turns off reload, sets replicas |
 
-## 운영에서 반드시 넣어야 하는 값
+## Values you must set in production
 
-없으면 `docker compose` 가 **기동 전에** 멈춘다. 조용히 잘못된 기본값으로
-도는 것보다 낫다.
+If any of these is missing, `docker compose` stops **before anything starts**.
+That beats quietly running on wrong defaults.
 
-| 변수 | 뜻 | 예 |
+| Variable | Meaning | Example |
 |---|---|---|
-| `IEUM_SECRET_KEY` | 애플리케이션 암호화 키 파생의 뿌리 | `make secret` |
-| `IEUM_BASE_URL` | 사람이 브라우저에 치는 앱 주소. 메일 안의 링크와 SSO 의 돌아올 주소 | `https://ieum.example.com` |
-| `IEUM_S3_PUBLIC_ENDPOINT_URL` | **브라우저가** 볼 스토리지 주소 | `https://files.example.com` |
-| `IEUM_WEB_ORIGINS` | API·스토리지가 허용할 웹 오리진(CORS) | `https://ieum.example.com` |
-| `IEUM_DB_PASSWORD` | Postgres 비밀번호 (개발 기본값 `postgres` 를 안 물려받는다) | `make secret` |
-| `IEUM_S3_ACCESS_KEY`·`IEUM_S3_SECRET_KEY` | 번들 MinIO 의 열쇠 (`minioadmin` 을 안 물려받는다) | |
-| `IEUM_SMTP_HOST` | 메일 서버. **비워 두려면 `IEUM_SMTP_HOST=` 로 적는다**(안 보낸다는 뜻) | `smtp.example.com` |
+| `IEUM_SECRET_KEY` | The root from which the application's encryption keys are derived | `make secret` |
+| `IEUM_BASE_URL` | The app URL people type into their browser. Used for links in emails and as the SSO return address | `https://ieum.example.com` |
+| `IEUM_S3_PUBLIC_ENDPOINT_URL` | The storage URL **as the browser sees it** | `https://files.example.com` |
+| `IEUM_WEB_ORIGINS` | Web origins the API and storage accept (CORS) | `https://ieum.example.com` |
+| `IEUM_DB_PASSWORD` | The Postgres password (the development default `postgres` is not carried over) | `make secret` |
+| `IEUM_S3_ACCESS_KEY`, `IEUM_S3_SECRET_KEY` | Keys for the bundled MinIO (`minioadmin` is not carried over) | |
+| `IEUM_SMTP_HOST` | The mail server. **To leave it empty, write `IEUM_SMTP_HOST=`** (meaning "don't send mail") | `smtp.example.com` |
 
-메일은 `IEUM_SMTP_PORT`(기본 587)·`IEUM_SMTP_TLS`(기본 true)·`IEUM_SMTP_USER`·
-`IEUM_SMTP_PASSWORD`·`IEUM_MAIL_FROM` 도 받는다. 밑바탕(`docker-compose.yml`)은
-개발용 mailpit 을 박아 두는데, 운영 오버라이드가 그것을 덮지 않던 동안 운영의
-초대·알림 메일이 전부 mailpit 의 상자로 들어가 아무에게도 안 갔다 — 오류도
-없었다. 그래서 이제는 **안 적으면 기동 전에 멈춘다.** `.env.example` 을 베껴
-`.env` 를 만들었다면 그 안의 `IEUM_SMTP_HOST=localhost` 를 꼭 고친다.
+Mail also takes `IEUM_SMTP_PORT` (default 587), `IEUM_SMTP_TLS` (default true),
+`IEUM_SMTP_USER`, `IEUM_SMTP_PASSWORD`, and `IEUM_MAIL_FROM`. The base file
+(`docker-compose.yml`) hard-wires mailpit for development, and for as long as the
+production override didn't replace it, every invitation and notification email in
+production landed in mailpit's inbox and reached no one — without a single error.
+That's why it now **stops before starting if you don't set it.** If you created
+`.env` by copying `.env.example`, be sure to change the `IEUM_SMTP_HOST=localhost`
+in it.
 
-운영 오버라이드가 **일부러 안 받는 것**도 있다:
+There are also values the production override **deliberately ignores**:
 
-- `IEUM_API_URL` 은 빈 값으로 박는다. 이 스택은 api 의 포트를 닫으므로 API 는
-  화면과 같은 오리진으로만 나가고, 비우면 앱이 `IEUM_BASE_URL` 을 쓴다.
-- `SEED_MFA_ADMIN_*` 은 빈 값으로 박는다. 개발·E2E 용 2FA 관리자라 비밀번호와
-  TOTP 시크릿이 저장소에 적혀 있다. 운영에 넘어가면 시드를 한 번 돌리는 순간
-  **누구나 아는 2FA 관리자**가 생긴다. 시드도 `IEUM_ENV=production` 에서는 이
-  계정을 만들지 않는다.
+- `IEUM_API_URL` is pinned to an empty value. This stack closes the api port, so
+  the API is served only from the same origin as the UI, and when the value is
+  empty the app uses `IEUM_BASE_URL`.
+- `SEED_MFA_ADMIN_*` is pinned to empty values. It's a 2FA admin for development
+  and E2E tests, so its password and TOTP secret are written in the repository.
+  If it carried over into production, running the seed even once would create **a
+  2FA admin whose credentials anyone knows**. The seed also refuses to create this
+  account when `IEUM_ENV=production`.
 
-> **이미 이 경로로 운영 중이었다면** `mfa-admin@example.com` 계정이 있는지
-> 본다. 예전 오버라이드로 시드를 돌렸다면 만들어져 있다 — 비활성화하고
-> 감사 기록을 확인한다.
+> **If you were already running production this way,** check whether a
+> `mfa-admin@example.com` account exists. If you ran the seed with the old
+> override, it was created — deactivate it and review the audit log.
 
-`IEUM_S3_PUBLIC_ENDPOINT_URL` 이 왜 따로 있나: 첨부는 브라우저가 스토리지로
-**직접** 올린다(서버는 바이트를 경유하지 않는다). 컨테이너 안에서 보는 주소
-(`http://minio:9000`)로 presigned URL 을 서명하면 브라우저는 그 호스트를
-못 찾는다. 서버용과 브라우저용 주소를 따로 준다.
+Why `IEUM_S3_PUBLIC_ENDPOINT_URL` is a separate setting: the browser uploads
+attachments **directly** to storage (the bytes never pass through the server). If
+presigned URLs are signed with the address seen from inside the containers
+(`http://minio:9000`), the browser can't resolve that host. So you give one
+address for the server and another for the browser.
 
-MinIO 의 CORS 는 `mc cors set` 으로 못 바꾼다 — MinIO 가 S3 의 CORS API 를
-구현하지 않는다. `MINIO_API_CORS_ALLOW_ORIGIN` 환경변수가 유일한 경로다.
+You can't change MinIO's CORS with `mc cors set` — MinIO doesn't implement S3's
+CORS API. The `MINIO_API_CORS_ALLOW_ORIGIN` environment variable is the only way.
 
-여러 대로 늘리려면 Helm 차트(`deploy/helm/ieum/`)를 본다. 한 노드면
-Compose 로 충분하다 — 그것이 이 프로젝트의 1급 배포 경로다.
+To scale out across several nodes, see the Helm chart (`deploy/helm/ieum/`). For
+a single node, Compose is enough — it's this project's first-class deployment
+path.

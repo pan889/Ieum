@@ -1,7 +1,7 @@
 # 바뀐 것
 
 판 번호는 `MAJOR.MINOR.PATCH` 입니다. 올리는 방법은
-[설치 안내](deploy/install/README.md)의 "판 올리기" 에 있습니다.
+[설치 안내](deploy/install/README.ko.md)의 "판 올리기" 에 있습니다.
 
 ## 1.2.2 — 2026-10-20
 
