@@ -170,7 +170,7 @@ SP 키. 백업이 아니라 비밀 관리의 일이지만, 잊으면 복구가 �
 pg_dump -h $HOST -U $USER -d ieum -Fc -f ieum-$(date +%F).dump
 
 # 첨부 — 버킷 통째로.
-aws s3 sync s3://ieum-attachments./attachments-$(date +%F)/
+aws s3 sync s3://ieum-attachments ./attachments-$(date +%F)/
 ```
 
 `pg_dump` 는 **일관된 스냅샷**을 뜬다(하나의 트랜잭션에서 읽는다). 앱을 멈출
@@ -181,7 +181,7 @@ aws s3 sync s3://ieum-attachments./attachments-$(date +%F)/
 ```console
 createdb -h $HOST -U $USER ieum_restored
 pg_restore -h $HOST -U $USER -d ieum_restored --no-owner ieum-2026-09-07.dump
-aws s3 sync./attachments-2026-09-07/ s3://ieum-attachments
+aws s3 sync ./attachments-2026-09-07/ s3://ieum-attachments
 ```
 
 `--no-owner` 를 붙인다. 덤프에는 원본의 소유자 이름이 들어 있고, 복원하는
@@ -337,7 +337,7 @@ API 를 여러 개 띄워도 된다. **그 말이 성립하려면 프로세스�
 | A 에서 발급한 편집 표(ticket)를 **B 의 웹소켓**에 냄 | 받아 준다. 두 번째는 거절(한 번 쓰기) |
 | A 에서 만들고 고친 스페이스를 B 에서 조회 | 즉시 보인다 |
 
-마지막 줄에서 두 번째가 중요하다: 재사용 탐지는 **침해 신호**여서 세션을
+**옛 refresh 재사용** 줄이 중요하다: 재사용 탐지는 **침해 신호**여서 세션을
 끊는데, 그 끊김이 인스턴스를 넘는다. 프로세스 메모리에 세션을 뒀다면 다른
 파드는 계속 통과시켰을 것이다.
 
@@ -493,7 +493,7 @@ ieum_search_mirror_oldest_age_seconds > 120
 
 # 2. 미러 작업이 죽었다. 죽으면 아무 오류도 안 나고 검색만 점점 낡는다.
 time() - ieum_worker_last_run_timestamp_seconds{task="search_mirror"} > 60
-ieum_worker_failing{task="search_mirror"} == 1
+ieum_worker_last_failed{task="search_mirror"} == 1
 ```
 
 `/readyz` 는 OpenSearch 를 **백엔드로 쓸 때만** 본다(`checks.search`). 안 쓰는

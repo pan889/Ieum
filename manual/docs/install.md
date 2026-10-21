@@ -5,7 +5,6 @@ description: Ieum 설치하기 — docker compose 로 한 판 세웁니다. 서�
 # 설치하기
 
 !!! warning "치는 순서는 여기가 아니라 코드 저장소에 있습니다"
-    이 저장소는 **공개하지 않습니다** — 개발의 핵심 내용과 의사결정 창구입니다.
     깔려는 사람이 읽어야 하는 단계는 코드 저장소의
     [`deploy/install/README.md`](https://github.com/pan889/Ieum/tree/main/deploy/install)
     에 있고, **거기가 정본입니다.** 여기에 옮겨 적지 않습니다 — 두 벌을 두면
@@ -59,11 +58,8 @@ https://ieum.example.com  →  127.0.0.1:8080
 
 ## 살아 있는지 본다
 
-```bash
-curl -s https://ieum.example.com/api/v1/../readyz | python3 -m json.tool
-```
-
-컨테이너 안에서 직접 보려면:
+`/readyz` 는 공개 주소로 나가지 않습니다 — 운영 엔드포인트라 web 의 nginx 가
+넘기지 않습니다. 서버에서 컨테이너 안으로 물어봅니다:
 
 ```bash
 docker compose exec api python -c \
