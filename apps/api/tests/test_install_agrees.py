@@ -516,23 +516,42 @@ class TestTheReadmePointsAtThisVersion:
     **새로 까는 사람은 계속 옛 판을 깐다.** 그 스크립트의 `VERSION_DEFAULT`
     가 옛 판이라 이미지까지 옛것으로 간다. 우리 화면에는 아무것도 안 나타나고,
     "최신을 깔았는데 왜 그 버그가 있냐" 로만 돌아온다.
+
+    **README 가 둘이다** — 영어 `README.md` 와 한국어 `README.ko.md`. 같은
+    한 줄을 두 파일에 적으니 판을 올릴 때 한쪽만 고치는 날이 온다. 그래서
+    둘 다 본다. 본문의 판 올리기 예시(`install.sh --version X`)도 같은 판이어야
+    한다 — 낡으면 그 줄을 따라 친 사람이 옛 판을 받는다.
     """
 
-    README = REPO / "README.md"
+    READMES: ClassVar[tuple[str, ...]] = ("README.md", "README.ko.md")
 
-    def _pins(self) -> list[str]:
-        text = self.README.read_text(encoding="utf-8")
+    @staticmethod
+    def _text(name: str) -> str:
+        return (REPO / name).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _pins(text: str) -> list[str]:
         return re.findall(r"raw\.githubusercontent\.com/[^/]+/[^/]+/v(\d+\.\d+\.\d+)/", text)
 
-    def test_there_is_at_least_one_pin_to_check(self) -> None:
-        """0개를 0개와 견주면서 통과하는 것을 막는다."""
-        assert self._pins(), "README 에 고정 URL 이 없다 — 이 시험이 아무것도 안 본다"
+    @staticmethod
+    def _version_flags(text: str) -> list[str]:
+        return re.findall(r"install\.sh --version v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)", text)
 
-    def test_every_pin_is_this_version(self) -> None:
+    @pytest.mark.parametrize("name", READMES)
+    def test_there_is_at_least_one_pin_to_check(self, name: str) -> None:
+        """0개를 0개와 견주면서 통과하는 것을 막는다."""
+        assert self._pins(self._text(name)), (
+            f"{name} 에 고정 URL 이 없다 — 이 시험이 아무것도 안 본다"
+        )
+
+    @pytest.mark.parametrize("name", READMES)
+    def test_every_pin_is_this_version(self, name: str) -> None:
         declared = tomllib.loads(
             (REPO / "apps" / "api" / "pyproject.toml").read_text(encoding="utf-8")
         )["project"]["version"]
-        assert set(self._pins()) == {declared}, self._pins()
+        text = self._text(name)
+        found = self._pins(text) + self._version_flags(text)
+        assert set(found) == {declared}, (name, found)
 
 
 class TestTheInstallerPullsWhatTheReleasePushes:
