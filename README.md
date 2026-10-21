@@ -1,186 +1,210 @@
 # Ieum (이음)
 
-> *이음* — 한국어로 "잇는 것". 흩어진 이슈·문서·요청을 하나로 잇는다는 뜻.
-> 영어권 발음 안내: **ee-eum**.
+**English** · [한국어](README.ko.md)
 
-Jira + Confluence + JSM(서비스데스크)를 대체하는 **셀프호스팅** 팀 협업 플랫폼.
-외부 SaaS 없이 자기 서버에서 통째로 돕니다.
+> *Ieum* (이음) is Korean for "that which joins" — it joins your scattered issues,
+> docs, and requests into one place.
+> Pronounced **ee-eum**.
 
-📖 **[설명서 — 설치부터 쓰는 법까지](https://pan889.github.io/Ieum/)**
+A **self-hosted** team collaboration platform that replaces Jira, Confluence, and
+Jira Service Management. The whole thing runs on your own server, with no external
+SaaS.
 
-![문서 안에서 살아 있는 이슈 표](assets/readme/05-wiki.png)
+📖 **[Manual — from installation to everyday use](https://pan889.github.io/Ieum/en/)**
 
-세 제품이 **하나의 권한 모델, 하나의 검색, 하나의 알림** 위에 있습니다. 이슈에
-붙은 문서와 문서에 붙은 이슈가 같은 검색 상자에서 나오고, 같은 역할 설정을
-따릅니다.
+![A live issue table inside a wiki page](assets/readme/05-wiki.png)
 
-- **이슈** — 프로젝트 계층, 커스텀 필드, 워크플로우, 시간 추적, 간트·캘린더,
-  이슈 관계, 저장 필터, 칸반, 스프린트
-- **위키** — 스페이스와 문서 트리, 판 비교, 인라인 코멘트, 템플릿, 매크로,
-  동시 편집, `.md` 가져오기·내보내기
-- **서비스데스크** — 고객 포털, 요청 유형, 큐, SLA, 이메일 채널, 승인 관문, CSAT
+The three products share **one permission model, one search, and one notification
+system**. The pages attached to an issue and the issues attached to a page come up
+in the same search box and follow the same role settings.
 
----
-
-## 화면
-
-### 질의가 곧 목록이다
-
-목록·큐·저장 필터·문서 안의 이슈 표가 **전부 같은 질의 언어(IQL)** 를 씁니다.
-한 곳에서 만든 질의를 다른 곳에 붙여 쓸 수 있습니다.
-
-![이슈 목록](assets/readme/03-issues.png)
-
-### 이슈 하나
-
-설명은 마크다운이고 본문의 체크박스는 할 일로 셉니다. 상태는 **워크플로가 주는
-전이**로만 움직입니다 — 아무 상태로나 바꾸지 못합니다.
-
-![이슈 상세](assets/readme/04-issue.png)
-
-### 문서가 이슈를 안다
-
-문서 안에 `::issues{query="..."}` 를 적으면 **살아 있는 표**가 됩니다. 맨 위
-사진의 "이번 분기에 남은 일" 이 그것 — 손으로 적은 목록이 아니라 그 문서를 열 때
-질의한 결과입니다.
-
-### 한 상자에서 둘 다 찾는다
-
-이슈와 문서가 같은 결과 목록에 섞여 나옵니다. 한국어는 형태소로 색인합니다
-(PGroonga).
-
-![통합 검색](assets/readme/06-search.png)
-
-### 마우스 없이
-
-`Cmd/Ctrl+K` 팔레트, `c` 새 이슈, `/` 검색, `j`/`k`/`o` 목록 훑기, 이슈에서
-`e`·`a`·`s`·`p`. **`?` 가 지금 화면에서 실제로 도는 것만** 보여 줍니다.
-
-글을 쓰는 중에는 한 글자 단축키가 꺼집니다 — 코멘트에 "create" 를 쳐도 `c` 가
-새 이슈를 열지 않습니다.
-
-![단축키 도움말](assets/readme/07-shortcuts.png)
-
-### 들어오면 보이는 것
-
-![대시보드](assets/readme/02-dashboard.png)
+- **Issues** — project hierarchy, custom fields, workflows, time tracking, Gantt
+  and calendar views, issue links, saved filters, Kanban, sprints
+- **Wiki** — spaces and page trees, version diffs, inline comments, templates,
+  macros, real-time co-editing, `.md` import and export
+- **Service Desk** — customer portal, request types, queues, SLAs, email channel,
+  approval gates, CSAT
 
 ---
 
-## 깔아 보기
+## Screenshots
 
-Docker 와 Compose(v2)만 있으면 한 줄로 섭니다.
+*The screenshots show the Korean UI. Ieum ships in English as well.*
+
+### Every list is a query
+
+Issue lists, queues, saved filters, and the issue tables inside pages **all speak
+the same query language (IQL)**. A query you build in one place can be pasted into
+any of the others.
+
+![Issue list](assets/readme/03-issues.png)
+
+### A single issue
+
+Descriptions are Markdown, and checkboxes in the body count as to-dos. Status only
+moves along **the transitions the workflow allows** — you can't jump to an
+arbitrary status.
+
+![Issue detail](assets/readme/04-issue.png)
+
+### Pages know about issues
+
+Write `::issues{query="..."}` in a page and it becomes a **live table**. The
+"이번 분기에 남은 일" (*left to do this quarter*) table in the screenshot at the top
+is one of these — not a list someone typed up, but the result of a query run each
+time the page opens.
+
+### One search box for both
+
+Issues and pages come back mixed in a single result list. Korean text is indexed
+by morpheme (PGroonga).
+
+![Unified search](assets/readme/06-search.png)
+
+### Keyboard first
+
+`Cmd/Ctrl+K` for the command palette, `c` for a new issue, `/` to search,
+`j`/`k`/`o` to move through lists, and `e`·`a`·`s`·`p` on an issue. **`?` shows
+only the shortcuts that actually work on the current screen.**
+
+Single-key shortcuts switch off while you're typing — typing "create" in a comment
+won't make `c` open a new issue.
+
+![Keyboard shortcut help](assets/readme/07-shortcuts.png)
+
+### What you see when you sign in
+
+![Dashboard](assets/readme/02-dashboard.png)
+
+---
+
+## Try it
+
+All you need is Docker and Compose (v2), and it's up with a single command.
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/pan889/Ieum/v1.2.2/deploy/install/install.sh
 sh install.sh --url https://ieum.example.com
 ```
 
-물어보는 것은 **주소 하나**입니다. 비밀 키·DB 비밀번호·스토리지 열쇠는 그
-자리에서 만들어 `.env`(0600)에 넣고, 스키마를 올리고 관리자를 만든 다음 주소와
-첫 비밀번호를 찍어 줍니다. 판을 올릴 때도 같은 명령입니다
-(`sh install.sh --version 1.2.2`) — 비밀은 다시 만들지 않습니다.
+The installer asks for **just one thing: the URL**. It generates the secret key,
+database password, and storage keys on the spot and writes them to `.env` (mode
+0600), migrates the schema, creates an admin account, and then prints the URL and
+the initial password. Upgrading is the same command
+(`sh install.sh --version 1.2.2`) — your existing secrets are kept, not regenerated.
 
-**밖으로 여는 포트는 하나**입니다. 화면도 API 도 첨부도 같은 오리진으로
-나가서, 앞에 TLS 를 세울 때 붙일 곳이 한 군데입니다.
+**Only one port is exposed.** The UI, the API, and attachments are all served from
+the same origin, so when you put TLS in front there's exactly one thing to point
+it at.
 
-이미지는 **빌드하지 않고 당깁니다**(`ghcr.io/pan889/ieum-api`,
-`ieum-web`). 깐 사람과 우리가 같은 바이트를 돌아야 "무엇이 돌고 있냐" 에
-답할 수 있기 때문입니다.
+Images are **pulled, not built** (`ghcr.io/pan889/ieum-api`, `ieum-web`). We can
+only answer "what exactly is running?" if you and we are running the same bytes.
 
-→ **[설치 안내](deploy/install/README.md)** — 프록시 뒤에 두기, 판 올리기,
-백업할 것, 이 설치본이 **하지 않는 것**.
-→ 여러 대로 늘리려면 [Helm 차트](deploy/helm/ieum/)를 봅니다.
+→ **[Install guide](deploy/install/README.md)** (Korean) — running behind a proxy,
+upgrading, what to back up, and what this installer **doesn't** do. The
+[English manual](https://pan889.github.io/Ieum/en/) covers installing and upgrading
+too.
+→ To scale out across several nodes, see the [Helm chart](deploy/helm/ieum/).
 
-## 고쳐 보기
+## Hack on it
 
-소스에서 띄우는 쪽입니다. 코드가 마운트되고 고치면 바로 반영됩니다.
+This runs Ieum from source. The code is mounted into the containers, so your edits
+take effect right away.
 
 ```bash
 git clone https://github.com/pan889/Ieum.git && cd Ieum
 cp .env.example .env
-make secret          # 나온 값을 .env 의 IEUM_SECRET_KEY 에 넣습니다
-make dev             # Postgres·Redis·MinIO·API·워커·웹이 함께 뜹니다
+make secret          # put the printed value into IEUM_SECRET_KEY in .env
+make dev             # starts Postgres, Redis, MinIO, the API, the worker, and the web app
 ```
 
-<http://localhost:5173> 을 열고 `.env` 에 적은 관리자 계정으로 들어갑니다.
+Open <http://localhost:5173> and sign in with the admin account you set in `.env`.
 
-## 처음 할 일
+## First steps
 
 | | |
 |---|---|
-| 프로젝트를 만든다 | 왼쪽 **프로젝트** → 새 프로젝트. 키(`WEB`)가 이슈 번호가 됩니다 |
-| 사람을 부른다 | **설정 → 사람** 에서 초대. SSO(OIDC·SAML)와 SCIM 도 여기 |
-| 위키 스페이스를 연다 | **위키** → 새 스페이스. `.md` 묶음을 그대로 올려도 됩니다 |
-| 고객 창구를 연다 | **설정 → 포털**. 요청 유형이 곧 폼이고, 들어온 요청은 **서비스데스크** 의 큐에 담깁니다 |
+| Create a project | **Projects** in the sidebar → New project. Its key (`WEB`) becomes the prefix of every issue number |
+| Invite people | Invite them from **Settings → People**. SSO (OIDC, SAML) and SCIM live here too |
+| Open a wiki space | **Wiki** → New space. You can upload a bundle of `.md` files as is |
+| Set up a customer portal | **Settings → Portals**. Each request type is a form, and incoming requests land in a queue under **Service Desk** |
 
-화면 안에서 `?` 를 누르면 **그 화면에서 실제로 도는 단축키**가 나옵니다.
-막히는 곳이 있으면 이슈로 알려 주세요.
+Press `?` on any screen to see **the shortcuts that actually work on that screen**.
+If you get stuck anywhere, let us know in an issue.
 
-## 옮겨 오기
+## Migrating in
 
-Redmine 에서 프로젝트를 옮기는 어댑터가 있습니다. **우리 서버는 소스 쪽으로
-나가지 않습니다** — 관리자가 자기 기계에서 묶음을 뽑아 올립니다. 서버가 남의
-Redmine 으로 나가려면 그 주소와 API 키를 우리가 들고 있어야 하는데, 그건
-SSRF 통로이자 **남의 열쇠를 우리 DB 에 두는 일**입니다. 어댑터는 표준
-라이브러리만 씁니다 — 관리자 기계에 우리 서버도 서드파티도 없기 때문입니다.
+There's an adapter for moving projects over from Redmine. **The Ieum server never
+reaches out to the source system** — an admin exports a bundle on their own machine
+and uploads it. For our server to call someone else's Redmine, it would have to
+hold that instance's URL and API key, which is both an SSRF vector and
+**someone else's credentials sitting in our database**. The adapter uses only the
+Python standard library, because the admin's machine has neither our server nor
+any third-party packages on it.
 
 ```bash
-export REDMINE_API_KEY=...      # 명령줄 인자는 프로세스 목록에 남습니다
+export REDMINE_API_KEY=...      # command-line arguments show up in the process list
 uv run --project apps/api python -m ieum.migrate.redmine \
     --url https://redmine.example.com --project my-project --out my-project.zip
 ```
 
-Jira·Confluence·Zammad 어댑터는 아직 없습니다. 받는 쪽(묶음을 적재하는 화면)도
-만드는 중입니다 — [CHANGELOG](CHANGELOG.md) 의 "빠진 것" 에 지금 상태가 있습니다.
+There are no Jira, Confluence, or Zammad adapters yet, and the receiving side (the
+screen that loads a bundle) is still being built — the "빠진 것" (*What's missing*)
+section of the [CHANGELOG](CHANGELOG.md) (Korean) has the current status.
 
-## 만드는 사람에게
+## For contributors
 
 ```bash
-make test            # API 3,041개 + 웹 단위 580개
-pnpm --filter @ieum/web exec playwright test    # 브라우저 267개
+make test            # 3,041 API tests + 580 web unit tests
+pnpm --filter @ieum/web exec playwright test    # 267 browser tests
 ```
 
 | | |
 |---|---|
-| 명령 목록 | `make help` |
-| 커밋 전 전체 검사 | `make check` (ruff · mypy --strict · bandit · 시험 · i18n) |
-| 로컬 스택 | `make dev` · `make infra` · `make reset-db` |
-| 배포 | [`deploy/install/`](deploy/install/) (한 줄) · [`deploy/compose/`](deploy/compose/) (소스 빌드) · [`deploy/helm/`](deploy/helm/ieum/) |
+| List of commands | `make help` |
+| Full check before committing | `make check` (ruff · mypy --strict · bandit · tests · i18n) |
+| Local stack | `make dev` · `make infra` · `make reset-db` |
+| Deployment | [`deploy/install/`](deploy/install/) (one-liner) · [`deploy/compose/`](deploy/compose/) (build from source) · [`deploy/helm/`](deploy/helm/ieum/) |
 
-판마다 바뀐 것과 **어디까지 실제로 확인했는지**는 [CHANGELOG.md](CHANGELOG.md)
-에 있습니다. 기능 목록보다 그쪽이 중요합니다 — "구현했다" 와 "실제로 그렇게
-돈다" 는 다르고, 그 차이가 이 프로젝트에서 고장을 가장 많이 냈습니다.
+What changed in each release — and **how much of it was actually verified** — is
+in [CHANGELOG.md](CHANGELOG.md) (Korean). That matters more than the feature list:
+"implemented" and "actually works that way" are not the same thing, and the gap
+between them has caused more breakage in this project than anything else.
 
-그 고장들을 하나씩 풀어 쓴 개발 일지가 있습니다 — **[Peter Pan · 이슈트래커
-이음(Ieum)](https://panbakery.tistory.com/category/%ED%94%84%EB%A1%9C%EA%B7%B8%EB%9E%98%EB%B0%8D/%EC%9D%B4%EC%8A%88%ED%8A%B8%EB%9E%98%EC%BB%A4-%EC%9D%B4%EC%9D%8C%28Ieum%29)**.
-초대 링크 하나로 계정을 가져갈 수 있었던 일, `WAS NOT` 이 미배정 이슈를 조용히
-숨긴 일, 정의만 해 두고 끝내 켜지 않은 기능들. 기능 소개가 아니라 고장 기록입니다.
+There's a dev blog that walks through those failures one at a time —
+**[Peter Pan · 이슈트래커
+이음(Ieum)](https://panbakery.tistory.com/category/%ED%94%84%EB%A1%9C%EA%B7%B8%EB%9E%98%EB%B0%8D/%EC%9D%B4%EC%8A%88%ED%8A%B8%EB%9E%98%EC%BB%A4-%EC%9D%B4%EC%9D%8C%28Ieum%29)**
+(Korean). An invite link that was enough to take over an account, `WAS NOT`
+quietly hiding unassigned issues, features that were defined but never actually
+switched on. It's a record of breakage, not a feature tour.
 
-설계 판단(ADR)과 로드맵은 **비공개 저장소**에서 관리합니다. 무엇을 왜 그렇게
-했는지 궁금하면 이슈로 물어봐 주세요 — 답이 필요한 것은 여기로 옮겨 적겠습니다.
+Design decisions (ADRs) and the roadmap are kept in a **private repository**. If
+you want to know why something was done the way it was, ask in an issue — anything
+that needs an answer will be written up here.
 
-위 사진은 `node tools/screenshots.mjs` 가 실제로 도는 앱에서 찍습니다. 화면이
-바뀌면 손으로 고치지 말고 다시 돌리세요.
+The screenshots above are taken from a running app by `node tools/screenshots.mjs`.
+When the UI changes, re-run it instead of editing the images by hand.
 
-## 라이선스
+## License
 
 **[AGPL-3.0-only](LICENSE)** — GNU Affero General Public License v3.0.
 
-쉬운 말로:
+In plain terms:
 
-- **써도 됩니다.** 개인이든 회사든, 사내에 깔아 쓰는 것에 돈을 받지 않습니다.
-- **고쳐도 됩니다.** 마음대로 고치고, 고친 것을 돌려도 됩니다.
-- **다만 고쳐서 남에게 서비스하면 그 소스를 공개해야 합니다.** 이것이 13조이고,
-  이 라이선스를 고른 이유입니다. 웹 앱은 배포 없이 서비스만 해도 남이 쓰게
-  되는데, 보통의 GPL 은 그 자리에서 아무것도 요구하지 못합니다.
+- **You can use it.** Individual or company, running it in-house costs nothing.
+- **You can modify it.** Change whatever you like, and run your modified version.
+- **But if you modify it and offer it to others as a service, you must publish
+  that source.** That's Section 13, and it's the reason we chose this license. A
+  web app gets used by other people without ever being distributed, and the
+  ordinary GPL asks nothing of you in that situation.
 
-그래서 **고쳐서 돌리는 곳은 화면에 자기 소스 주소를 걸어야 합니다.** 웹을
-빌드할 때 `VITE_SOURCE_URL` 로 주면 사이드바 아래 링크가 그리로 바뀝니다.
-안 고치고 그대로 쓰는 곳은 아무것도 안 해도 됩니다 — 기본값이 이 저장소를
-가리키고, 그게 그 판의 소스가 맞습니다.
+So **if you run a modified version, the UI must link to your source.** Set
+`VITE_SOURCE_URL` when you build the web app and the link at the bottom of the
+sidebar will point there. If you run it unmodified, there's nothing to do — the
+default points at this repository, which is the right source for that release.
 
-의존성은 전부 이것과 어긋나지 않습니다(MIT·BSD·Apache·MPL·ISC). 다만 조판에
-쓰는 `pyphen` 은 GPL2+/LGPL2.1+/MPL1.1 삼중 라이선스라 LGPL 쪽으로 받고,
-한글 글꼴 Pretendard 는 SIL OFL 1.1 로 따로 동봉합니다
+All dependencies are compatible with this license (MIT, BSD, Apache, MPL, ISC).
+Two notes: `pyphen`, used for typesetting, is triple-licensed
+GPL2+/LGPL2.1+/MPL1.1 and we take it under the LGPL; and the Korean font
+Pretendard is bundled separately under the SIL OFL 1.1
 (`apps/web/public/fonts/pretendard/OFL.txt`).

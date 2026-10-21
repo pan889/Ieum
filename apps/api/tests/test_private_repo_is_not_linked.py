@@ -15,6 +15,7 @@ README 에 여섯 개, CHANGELOG 에 하나, 그리고 **SCIM 이 IdP 관리자�
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -116,3 +117,22 @@ def test_the_public_manual_is_not_mistaken_for_the_private_site() -> None:
     assert not any(needle in manual for needle in NEEDLES), (
         f"공개 매뉴얼 주소가 비공개 조각에 걸린다: {manual}"
     )
+
+
+#: 공개 매뉴얼. 한국어 판이 사이트 루트에, 영어 판이 `en/` 아래에 있다.
+MANUAL = "https://pan889.github.io/Ieum/"
+
+
+@pytest.mark.parametrize(("readme", "english"), [("README.md", True), ("README.ko.md", False)])
+def test_each_readme_points_at_the_manual_in_its_own_language(readme: str, english: bool) -> None:
+    """**README 는 공개 매뉴얼을 가리킨다** — 규칙 2절 15항이 그리로 보내라고 한다.
+
+    README 가 영어(`README.md`)와 한국어(`README.ko.md`) 둘이 되면서 갈래가
+    하나 더 생겼다. 한쪽 링크를 다른 쪽에 복사해 붙이면 영어 독자가 한국어
+    매뉴얼에 떨어지는데, 링크는 살아 있으니 **아무 검사도 안 붉어진다.**
+    """
+    text = (REPO / readme).read_text(encoding="utf-8")
+    links = re.findall(re.escape(MANUAL) + r"[^\s)>\]]*", text)
+    assert links, f"{readme} 가 공개 매뉴얼을 안 가리킨다"
+    wrong = [link for link in links if link.startswith(MANUAL + "en/") != english]
+    assert wrong == [], f"{readme} 의 매뉴얼 링크가 다른 언어 판으로 간다: {wrong}"
