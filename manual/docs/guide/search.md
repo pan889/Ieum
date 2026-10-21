@@ -52,19 +52,17 @@ project = ENG AND status IN ("진행 중", "검토")
 
 | 분류 | 필드 |
 |---|---|
-| 기본 | `project` `key` `type` `status` `statusCategory` `priority` `assignee` `reporter` `labels` `component` `fixVersion` `parent` `resolution` |
+| 기본 | `project` `key` `type` `status` `statusCategory` (`todo`/`in_progress`/`done`) `priority` (1~5) `assignee` `reporter` `labels` `parent` `archived` |
+| 글 | `summary` `description` (`~` 로 포함 검색) |
 | 날짜 | `created` `updated` `due` `startDate` `resolved` |
-| 수치 | `estimate` `timeSpent` `progress` `votes` `commentCount` |
-| 관계 | `linkedIssue` `subtaskOf` `watcher` |
+| 수치 | `estimate` `timeSpent` (분) `progress` (0~100) |
 | 스프린트 | `sprint` `sprintState` (`future`/`active`/`closed`) |
-| 데스크 | `requestType` `organization` `slaBreached` `channel` |
-| 커스텀 | `cf["필드키"]` 또는 등록한 별칭 |
+| 커스텀 | `cf["필드키"]` |
 
 ### 함수
 
 `currentUser()` · `now()` · `startOfDay(±n)` · `endOfDay(±n)` ·
-`startOfWeek(±n)` · `endOfWeek(±n)` · `startOfMonth(±n)` · `endOfMonth(±n)` ·
-`membersOf("그룹")` · `projectsWhereRole("역할")` · `watchedByMe()`
+`startOfWeek(±n)` · `endOfWeek(±n)` · `startOfMonth(±n)` · `endOfMonth(±n)`
 
 `endOfWeek(-1)` 은 지난주 끝입니다. 날짜를 손으로 적지 않으면 저장 필터가
 계속 맞습니다.
@@ -72,11 +70,18 @@ project = ENG AND status IN ("진행 중", "검토")
 ### 이력으로 찾기
 
 ```
-status WAS "진행 중" BY 지훈 DURING (startOfMonth(), now())
-status CHANGED AFTER -7d
+status WAS "진행 중" DURING (startOfMonth(), now())
+status CHANGED AFTER startOfDay(-7)
+assignee CHANGED TO currentUser() AFTER startOfDay(-7)
 ```
 
-"한때 이 상태였던 것" 과 "최근에 바뀐 것" 입니다.
+"이번 달 중 한때 이 상태였던 것", "최근 7일 안에 상태가 바뀐 것", "최근 7일
+안에 나에게 넘어온 것" 입니다. `CHANGED` 에는 `FROM 값`·`TO 값` 을 붙여 어디서
+어디로 바뀌었는지까지 좁힐 수 있고, 시간 창은
+`DURING (시작, 끝)`·`AFTER`·`BEFORE` 에 날짜나 날짜 함수를 씁니다.
+이력으로 물을 수 있는 필드는 `status`·`assignee`·`reporter`·`priority`
+입니다 — 이력에 이름이 남지 않는 필드를 열어 두면 조건이 오류 없이 0건만
+내기 때문입니다.
 
 ### 틀렸을 때
 

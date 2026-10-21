@@ -577,8 +577,10 @@ async function main() {
   await page.getByRole('button', { name: /^(sign in|로그인)$/i }).click()
   await page.getByRole('button', { name: /sign out|로그아웃/i }).waitFor()
 
-  // **화면 언어는 서버가 사람마다 기억한다.** README 가 한국어이므로 사진도
-  // 한국어여야 한다 — 브라우저 로케일이 아니라 이 선택이 화면을 정한다.
+  // **화면 언어는 서버가 사람마다 기억한다.** 사진은 한국어 화면으로 찍는다 —
+  // 데모 데이터가 한국어이고, README 두 판(영어 기본 `README.md`·한국어
+  // `README.ko.md`)이 같은 사진을 함께 쓴다(영어판은 사진이 한국어 화면이라고
+  // 밝혀 둔다). 브라우저 로케일이 아니라 이 선택이 화면을 정한다.
   await page.getByLabel(/language|언어/i).selectOption('ko')
   await page.getByRole('button', { name: /로그아웃/i }).waitFor()
 
